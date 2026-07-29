@@ -331,7 +331,7 @@ export const ReviewCommentCreateRequestV1Schema = z.object({
   linkedRefs: z.array(ReviewCommentLinkedRefV1Schema).optional(),
   suggestedFix: ReviewCommentSuggestedFixV1Schema.optional(),
   evidence: z.array(ReviewCommentEvidenceV1Schema).optional(),
-  clientMutationId: z.string().min(1),
+  clientMutationId: z.string().min(1).max(191),
   authorDeviceId: z.string().min(1).optional(),
   clientLamport: z.number().int().nonnegative().optional(),
   metadata: ReviewCommentMetadataV1Schema.optional(),

@@ -3,7 +3,7 @@ import { lstat, readdir, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-import type { ExternalSessionsSource } from '@happier-dev/plugin-sdk/sessions';
+import type { ExternalSessionsSource } from '@happier-dev/plugin-sdk/experimental/sessions';
 import { expandHomePath, readTrimmedString as readEnvString } from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
 
 export type CodexExternalSessionHomeEntry = Readonly<{

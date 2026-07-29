@@ -1,4 +1,4 @@
-import type { ReviewFinding } from '@happier-dev/plugin-sdk/reviews';
+import type { ReviewFinding } from '@happier-dev/plugin-sdk/experimental/reviews';
 
 type ParsedCodeRabbitFinding = {
   filePath?: string;
@@ -187,5 +187,30 @@ export function buildCodeRabbitReviewJsonOutput(rawText: string): string {
     findings,
     questions: [],
     assumptions: [],
+    proposedComments: findings.flatMap((finding) => {
+      const filePath = finding.filePath?.trim();
+      const body = finding.summary.trim();
+      if (!filePath || !body) return [];
+      const anchor = typeof finding.startLine === 'number'
+        ? typeof finding.endLine === 'number' && finding.endLine > finding.startLine
+          ? { kind: 'range' as const, filePath, startLine: finding.startLine, endLine: finding.endLine }
+          : { kind: 'line' as const, filePath, line: finding.startLine }
+        : { kind: 'file' as const, filePath };
+      const severity = finding.severity === 'blocker'
+        ? 'critical' as const
+        : finding.severity === 'high'
+          ? 'error' as const
+          : finding.severity === 'medium'
+            ? 'warning' as const
+            : 'info' as const;
+      return [{
+        findingId: finding.id,
+        body,
+        anchor,
+        severity,
+        taxonomyIds: [`coderabbit.${finding.category}`],
+        tags: ['coderabbit'],
+      }];
+    }),
   });
 }

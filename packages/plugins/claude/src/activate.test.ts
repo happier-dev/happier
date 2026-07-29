@@ -3,17 +3,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type {
-    PluginApiHookRegistrationV1,
-    RegisterDaemonAuthBridgeV1,
-} from '@happier-dev/plugin-sdk';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 
 import { activate } from './activate.js';
-import {
-    createEventsFixture,
-    createPluginContextFixture,
-    createTerminalHostFixture,
-} from './agent/runtime/engine.testkit.js';
+import { PLUGIN_MANIFEST } from './manifest.js';
+import { CLAUDE_PROVIDER_BINDING_ADAPTER_V1 } from './agent/providerBinding/adapter.js';
+import { claudeExternalSessionsContribution } from './agent/surfaces/sessions/external/contribution.js';
+import { claudeExternalSessionHooksContribution } from './agent/surfaces/sessions/external/hooks.js';
+import { claudeExternalSessionObservationContribution } from './agent/surfaces/sessions/external/observation.js';
+import { claudeExternalSessionTakeoverContribution } from './agent/surfaces/sessions/external/takeover.js';
 
 describe('activate', () => {
     afterEach(() => {
@@ -39,71 +37,51 @@ describe('activate', () => {
         vi.stubEnv('HOME', root);
         vi.stubEnv('CLAUDE_CONFIG_DIR', configRoot);
 
-        const registerAgentRuntime = vi.fn();
-        const daemonAuthBridgeRegistrations: RegisterDaemonAuthBridgeV1[] = [];
-        const registerMcpDiscoveryProvider = vi.fn();
-        const hookRegistrations: PluginApiHookRegistrationV1[] = [];
-        activate({
-            registerAgentRuntime,
-            registerDaemonAuthBridge: (registration) => {
-                daemonAuthBridgeRegistrations.push(registration);
-                return { dispose: () => undefined };
-            },
-            registerMcpDiscoveryProvider,
-            registerHook: (registration) => {
-                hookRegistrations.push(registration);
-                return { dispose: () => undefined };
-            },
-        });
+        const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+        const agent = activation.registration('agents', 'claude');
 
-        expect(registerAgentRuntime).toHaveBeenCalledWith(expect.objectContaining({
-            agentId: 'claude',
-            create: expect.any(Function),
+        expect(agent).toEqual(expect.objectContaining({
+            factory: expect.any(Function),
+            providerBinding: CLAUDE_PROVIDER_BINDING_ADAPTER_V1,
+            externalSessions: claudeExternalSessionsContribution,
+            externalSessionTakeover: claudeExternalSessionTakeoverContribution,
+            externalSessionObservation: claudeExternalSessionObservationContribution,
+            externalSessionHooks: claudeExternalSessionHooksContribution,
         }));
-        const backendRegistration = registerAgentRuntime.mock.calls[0]?.[0] as Readonly<{
-            create: (ctx: unknown) => Promise<unknown>;
-        }>;
-        const pluginContext = createPluginContextFixture(
-            createTerminalHostFixture().service,
-            createEventsFixture().service,
-        );
-        await expect(backendRegistration.create(pluginContext)).resolves.toEqual(expect.objectContaining({
-            runtimeCore: expect.any(Object),
-        }));
-        expect(pluginContext.logger.debug).toHaveBeenCalledWith('[plugins/claude] Creating backend engine');
-        expect(pluginContext.logger.info).not.toHaveBeenCalled();
-        expect(daemonAuthBridgeRegistrations).toEqual([
-            expect.objectContaining({
-                serviceId: 'claude-subscription',
-                refresh: expect.any(Function),
-            }),
+        expect(Object.keys(
+            agent?.externalSessions ?? {},
+        ).sort()).toEqual([
+            'listCandidates',
+            'pageTranscript',
+            'readAfterTranscript',
+            'resolveLinkIdentity',
+            'resolveLinkedIdentity',
+            'resolveSource',
         ]);
-        expect(registerMcpDiscoveryProvider).toHaveBeenCalledWith(expect.objectContaining({
-            id: 'claude.config',
-            discover: expect.any(Function),
-        }));
-        expect(hookRegistrations.map((registration) => registration.hookId)).toEqual([
-            'agent.resolvePrerequisites',
-            'agent.spawnEnv.augment',
+        expect(Object.keys(
+            agent?.externalSessionObservation ?? {},
+        ).sort()).toEqual([
+            'describeResource',
+            'observeResource',
+            'reconcileResource',
         ]);
-        expect(hookRegistrations).toEqual([
-            expect.objectContaining({
-                hookId: 'agent.resolvePrerequisites',
-                filters: { agentId: 'claude' },
-            }),
-            expect.objectContaining({
-                hookId: 'agent.spawnEnv.augment',
-                filters: { agentId: 'claude' },
-            }),
+        expect(Object.keys(
+            agent?.externalSessionHooks ?? {},
+        ).sort()).toEqual([
+            'installationVariants',
+            'mapHookEvent',
+            'resolveInstallation',
         ]);
+        expect(activation.registrations()).toEqual(expect.arrayContaining([
+            { family: 'mcp.discoveryProviders', localId: 'config' },
+            { family: 'hooks', localId: 'resolve-prerequisites' },
+            { family: 'hooks', localId: 'augment-spawn-env' },
+        ]));
 
-        const discovery = registerMcpDiscoveryProvider.mock.calls[0]?.[0] as {
-            discover: () => Promise<Readonly<{
-                servers: readonly unknown[];
-                warnings: readonly unknown[];
-            }>>;
-        };
-        await expect(discovery.discover()).resolves.toEqual({
+        const discovery = activation.registration('mcp.discoveryProviders', 'config');
+        if (!discovery) throw new Error('Missing Claude MCP discovery registration');
+        await expect(Reflect.apply(discovery, undefined, [{}])).resolves.toEqual({
+            items: [],
             servers: [
                 expect.objectContaining({
                     id: 'claude.config.review',
@@ -120,6 +98,7 @@ describe('activate', () => {
             ],
             warnings: [],
         });
+        await activation.dispose();
     });
 
     it('propagates Claude MCP discovery warnings through the plugin API', async () => {
@@ -131,23 +110,13 @@ describe('activate', () => {
         vi.stubEnv('HOME', root);
         vi.stubEnv('CLAUDE_CONFIG_DIR', configRoot);
 
-        const registerAgentRuntime = vi.fn();
-        const registerMcpDiscoveryProvider = vi.fn();
-        activate({
-            registerAgentRuntime,
-            registerDaemonAuthBridge: vi.fn(),
-            registerMcpDiscoveryProvider,
-            registerHook: vi.fn(),
-        });
+        const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
 
-        const discovery = registerMcpDiscoveryProvider.mock.calls[0]?.[0] as {
-            discover: () => Promise<Readonly<{
-                servers: readonly unknown[];
-                warnings: readonly unknown[];
-            }>>;
-        };
+        const discovery = activation.registration('mcp.discoveryProviders', 'config');
+        if (!discovery) throw new Error('Missing Claude MCP discovery registration');
 
-        await expect(discovery.discover()).resolves.toEqual({
+        await expect(Reflect.apply(discovery, undefined, [{}])).resolves.toEqual({
+            items: [],
             servers: [],
             warnings: [{
                 provider: 'claude',
@@ -155,31 +124,53 @@ describe('activate', () => {
                 path: settingsPath,
             }],
         });
+        await activation.dispose();
     });
 
     it('passes direct activation-hook payloads through to Claude spawn env augmentation', async () => {
-        const hookRegistrations: PluginApiHookRegistrationV1[] = [];
+        const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
 
-        activate({
-            registerAgentRuntime: vi.fn(),
-            registerDaemonAuthBridge: vi.fn(),
-            registerMcpDiscoveryProvider: vi.fn(),
-            registerHook: (registration) => {
-                hookRegistrations.push(registration);
-                return { dispose: () => undefined };
-            },
-        });
+        const envHook = activation.registration('hooks', 'augment-spawn-env');
 
-        const envHook = hookRegistrations.find(
-            (registration) => registration.hookId === 'agent.spawnEnv.augment',
-        );
-
-        await expect(Promise.resolve(envHook?.handler({
+        await expect(Promise.resolve(envHook?.({
             env: {
                 HAPPIER_CLAUDE_CONFIG_DIR: '/tmp/claude-direct',
             },
         }))).resolves.toEqual({
             CLAUDE_CONFIG_DIR: '/tmp/claude-direct',
         });
+        await activation.dispose();
+    });
+    it('registers a native AgentRuntime rather than the V1 compatibility carrier', async () => {
+        const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+
+        const factory = activation.registration('agents', 'claude')?.factory;
+        if (!factory) throw new Error('Missing Claude Agent registration');
+        const runtime = await factory({
+            plugin: { id: 'happier.agent.claude', version: '0.0.0' },
+            agent: { id: 'claude' },
+            signal: new AbortController().signal,
+        });
+
+        expect(runtime.sessions?.open).toBeTypeOf('function');
+        expect(runtime.executionRuns?.open).toBeTypeOf('function');
+        await activation.dispose();
+    });
+
+    it('declares exact qualified subscription and API-key purposes for the Claude Agent', () => {
+        expect(PLUGIN_MANIFEST.contributes.agents[0]?.connectedAccounts).toEqual([
+            {
+                purpose: 'model_upstream',
+                service: 'claude-subscription',
+                required: false,
+                materializationKinds: ['environment', 'files'],
+            },
+            {
+                purpose: 'model_upstream_api_key',
+                service: 'anthropic',
+                required: false,
+                materializationKinds: ['environment'],
+            },
+        ]);
     });
 });

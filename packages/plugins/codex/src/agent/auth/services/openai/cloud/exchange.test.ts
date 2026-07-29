@@ -1,8 +1,8 @@
 import type {
-  FetchRuntimeRequestV1,
-  FetchRuntimeResponseV1,
-  FetchRuntimeServiceV1,
-} from '@happier-dev/plugin-sdk';
+  CodexRuntimeFetch as FetchRuntimeServiceV1,
+  CodexRuntimeFetchRequest as FetchRuntimeRequestV1,
+  CodexRuntimeFetchResponse as FetchRuntimeResponseV1,
+} from '../../runtimeFetch.js';
 import { describe, expect, it, vi } from 'vitest';
 
 import {

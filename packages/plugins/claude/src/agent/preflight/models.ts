@@ -1,4 +1,4 @@
-import type { ExecRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
+import type { PluginExecService } from '@happier-dev/plugin-sdk/runtime';
 import { AGENT_MODEL_CONFIG, type AgentModelDescriptor } from '@happier-dev/plugin-sdk/experimental/agents';
 
 export type ClaudePreflightModel = Readonly<{
@@ -46,24 +46,29 @@ export async function probeClaudePreflightModels(params: Readonly<{
 }
 
 export async function probeClaudePreflightModelsRaw(params: Readonly<{
-    exec: ExecRuntimeServiceV1;
+    exec: PluginExecService;
     cwd: string;
     timeoutMs: number;
     env?: NodeJS.ProcessEnv;
 }>): Promise<ClaudePreflightModel[] | null> {
-    const result = await params.exec.run({
-        kind: 'agent-cli',
-        agentId: 'claude',
-        args: CLAUDE_CLI_HELP_COMMAND_ARGS,
+    const resolved = await params.exec.systemTools.resolve({
+        toolId: 'claude-cli',
+        purpose: 'Probe Claude models',
         cwd: params.cwd,
+    });
+    const result = await params.exec.run({
+        executable: resolved.executable,
+        args: CLAUDE_CLI_HELP_COMMAND_ARGS,
+        cwd: { root: 'workspace', relativePath: '' },
         env: buildClaudePreflightEnv(params.env),
-    }, {
         maxStderrBytes: PREFLIGHT_OUTPUT_MAX_BYTES,
         maxStdoutBytes: PREFLIGHT_OUTPUT_MAX_BYTES,
         timeoutMs: Math.max(MIN_PREFLIGHT_MODELS_TIMEOUT_MS, params.timeoutMs),
     });
-    if (result.exitCode !== 0) return null;
-    const helpText = result.stdout.trim() ? result.stdout : result.stderr;
+    if (result.termination.observed.kind !== 'exit' || result.termination.observed.exitCode !== 0) return null;
+    const decoder = new TextDecoder();
+    const stdout = decoder.decode(result.stdout);
+    const helpText = stdout.trim() ? stdout : decoder.decode(result.stderr);
     return await probeClaudePreflightModels({
         cwd: params.cwd,
         timeoutMs: params.timeoutMs,

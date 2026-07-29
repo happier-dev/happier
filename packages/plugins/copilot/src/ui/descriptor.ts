@@ -8,7 +8,7 @@ export const COPILOT_UI_DESCRIPTOR = Object.freeze({
     subtitleKey: 'profiles.aiBackend.copilotSubtitleExperimental',
     permissionModeI18nPrefix: 'agentInput.codexPermissionMode',
     availability: { experimental: true },
-    connectedService: { serviceId: null, labelKey: 'agentInput.agent.copilot', connectRoute: null },
+    connectedService: { serviceId: null, labelKey: 'agentInput.connectedServiceLabel.copilot', connectRoute: null },
     flavorAliases: ['copilot', 'github-copilot', 'copilot-cli'],
     permissions: {
       modeGroup: 'codexLike',
@@ -23,7 +23,7 @@ export const COPILOT_UI_DESCRIPTOR = Object.freeze({
     },
     picker: {
       iconName: 'code-slash-outline',
-      cliGlyphTokenId: 'agentGlyph.copilot',
+      cliGlyph: 'CP',
       cliGlyphScale: 1.0,
       profileCompatibilityGlyphScale: 1.0,
     },
@@ -37,9 +37,6 @@ export const COPILOT_UI_DESCRIPTOR = Object.freeze({
     mcpDelivery: 'experimental',
     modelSelection: 'experimental',
     resume: 'experimental',
-  },
-  settings: {
-    descriptorId: 'copilot.agentSettings.v1',
   },
   behavior: {},
   session: {},

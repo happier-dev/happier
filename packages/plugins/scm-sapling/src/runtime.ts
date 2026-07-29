@@ -5,7 +5,9 @@ import {
     ScmSelectedMutationPathSchema,
     resolveScmBackendCommandMaxOutputBytes,
     runScmBackendCommand,
-} from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm';
+
+import { SAPLING_INSTALLABLE_DEP_ID } from './installables/saplingInstallable.js';
 
 export type SaplingExecResult = Readonly<{
     success: boolean;
@@ -34,7 +36,7 @@ export function runSaplingCommand(input: Readonly<{
     maxOutputBytes?: number;
 }>): Promise<SaplingExecResult> {
     return runScmBackendCommand({
-        installableKey: 'dep.sapling',
+        installableKey: SAPLING_INSTALLABLE_DEP_ID,
         command: 'sl',
     }, {
         cwd: input.cwd,

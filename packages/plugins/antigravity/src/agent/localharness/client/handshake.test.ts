@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   LOCALHARNESS_DESCRIPTOR_SHA256,
   LOCALHARNESS_PROTOCOL_FINGERPRINT,
+  decodeAntigravityLocalharnessEndpoint,
   decodeOutputConfigFrame,
   encodeInputConfigFrame,
 } from './handshake.js';
@@ -46,5 +47,16 @@ describe('Antigravity localharness handshake codec', () => {
     expect(() => decodeOutputConfigFrame(fromHex('12036b6579'))).toThrow(/port/i);
     expect(() => decodeOutputConfigFrame(fromHex('087b'))).toThrow(/api key/i);
     expect(() => decodeOutputConfigFrame(fromHex('08ffffffff0f12036b6579'))).toThrow(/port/i);
+  });
+
+  it('projects child-discovered connection facts into the stable loopback endpoint contract', () => {
+    expect(decodeAntigravityLocalharnessEndpoint(
+      fromHex(HANDSHAKE_FIXTURE.outputConfigPayloadHex),
+    )).toEqual({
+      host: '127.0.0.1',
+      port: 43123,
+      path: '/',
+      headers: [{ name: 'x-goog-api-key', value: 'loopback-key', sensitive: true }],
+    });
   });
 });

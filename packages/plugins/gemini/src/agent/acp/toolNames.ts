@@ -1,7 +1,7 @@
 import {
   CHANGE_TITLE_TOOL_NAME_ALIASES,
-  type AcpToolNameInferenceV1,
-} from '@happier-dev/plugin-sdk/experimental/acp';
+} from '@happier-dev/protocol/tools/v2';
+import type { AgentAcpRuntimeDefinition } from '@happier-dev/plugin-sdk/agent-runtime';
 
 export const GEMINI_TOOL_NAME_INFERENCE = Object.freeze({
   preferLongestPattern: true,
@@ -53,7 +53,7 @@ export const GEMINI_TOOL_NAME_INFERENCE = Object.freeze({
       inputFields: ['todos', 'items'],
     },
   ],
-} satisfies AcpToolNameInferenceV1);
+} satisfies NonNullable<AgentAcpRuntimeDefinition['toolNameInference']>);
 
 export function hasGeminiChangeTitlePromptInstruction(prompt: string): boolean {
   const normalized = prompt.toLowerCase();

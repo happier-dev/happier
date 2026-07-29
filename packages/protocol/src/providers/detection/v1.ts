@@ -2,6 +2,8 @@ import { z } from 'zod';
 
 import { ProviderCatalogProbeV1Schema } from '../catalog/descriptorV1.js';
 import { ProviderEndpointUrlSyntaxSchema } from '../endpointUrlSchema.js';
+import { canonicalizeProviderContributionKeyV1 } from '../contributionIdentityV1.js';
+import { createProviderFingerprintV1 } from '../fingerprints.js';
 import {
   ProviderConnectionIdSchema,
   ProviderContributionKeySchema,
@@ -83,6 +85,26 @@ const ProviderDiscoveryCandidateConnectionV1Schema = z.discriminatedUnion('statu
   z.object({ status: z.literal('requires_named_connection') }).strict(),
 ]);
 
+export const ProviderDiscoveryCandidateIdV1Schema = z.string().trim().min(1).max(256)
+  .startsWith('discovery-candidate:v1:');
+export type ProviderDiscoveryCandidateIdV1 = z.infer<typeof ProviderDiscoveryCandidateIdV1Schema>;
+
+export function createProviderDiscoveryCandidateIdV1(input: Readonly<{
+  machineId: string;
+  contributionKey: string;
+  endpointTemplateId: string;
+  normalizedEndpointUrl: string;
+}>): ProviderDiscoveryCandidateIdV1 {
+  return ProviderDiscoveryCandidateIdV1Schema.parse(createProviderFingerprintV1('discovery-candidate', {
+    machineId: ProviderMachineIdSchema.parse(input.machineId),
+    contributionKey: canonicalizeProviderContributionKeyV1(
+      ProviderContributionKeySchema.parse(input.contributionKey),
+    ),
+    endpointTemplateId: ProviderLocalIdSchema.parse(input.endpointTemplateId),
+    normalizedEndpointUrl: ProviderEndpointUrlSyntaxSchema.parse(input.normalizedEndpointUrl),
+  }));
+}
+
 /**
  * Redacted pre-connection evidence derived from the daemon's local-listener inventory.
  * A candidate is not endpoint availability and deliberately carries no process facts,
@@ -95,6 +117,9 @@ export const ProviderDiscoveryCandidateV1Schema = z.object({
   providerName: z.string().trim().min(1).max(128),
   endpointTemplateId: ProviderLocalIdSchema,
   normalizedEndpointUrl: ProviderEndpointUrlSyntaxSchema,
+  // Optional only for mixed-version reads. Current daemons always issue it;
+  // callers must fail closed rather than deriving authority when it is absent.
+  candidateId: ProviderDiscoveryCandidateIdV1Schema.optional(),
   evidence: ProviderDiscoveryCandidateEvidenceV1Schema,
   ownership: ManagedProviderProcessOwnershipSchema,
   connection: ProviderDiscoveryCandidateConnectionV1Schema,

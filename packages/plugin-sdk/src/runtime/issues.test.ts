@@ -2,36 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import { SessionRuntimeIssueV1Schema } from '@happier-dev/protocol';
 
-import * as runtimeSession from './session.js';
-
-type BuildSessionRuntimeIssueV1 = (params: Readonly<{
-  code: string;
-  source: 'usage_limit';
-  occurredAt: number;
-  agentId?: string | null;
-  agentTurnId?: string | null;
-  sanitizedPreview?: string | null;
-  usageLimit?: Readonly<{
-    v: 1;
-    resetAtMs: number | null;
-    retryAfterMs: number | null;
-    quotaScope: 'account';
-    recoverability: 'wait';
-    limitCategory: 'usage_limit';
-  }> | null;
-}>) => unknown;
-
-function readBuilder(): BuildSessionRuntimeIssueV1 {
-  const build = (runtimeSession as Readonly<{
-    buildSessionRuntimeIssueV1?: unknown;
-  }>).buildSessionRuntimeIssueV1;
-  expect(typeof build).toBe('function');
-  return build as BuildSessionRuntimeIssueV1;
-}
+import { buildSessionRuntimeIssueV1 } from './issues.js';
 
 describe('buildSessionRuntimeIssueV1', () => {
   it('builds normalized schema-valid primary-session runtime issues', () => {
-    const buildSessionRuntimeIssueV1 = readBuilder();
     const usageLimit = {
       v: 1,
       resetAtMs: null,

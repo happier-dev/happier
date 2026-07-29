@@ -1,5 +1,27 @@
 import { z } from 'zod';
 
+export const SessionStoredMessageContentEnvelopeSchema = z.discriminatedUnion('t', [
+  z.object({
+    t: z.literal('encrypted'),
+    c: z.string().min(1),
+  }),
+  z.object({
+    t: z.literal('plain'),
+    v: z.unknown(),
+  }),
+]);
+
+export const StrictSessionStoredMessageContentEnvelopeSchema = z.discriminatedUnion('t', [
+  z.object({
+    t: z.literal('encrypted'),
+    c: z.string().min(1),
+  }).strict(),
+  z.object({
+    t: z.literal('plain'),
+    v: z.unknown(),
+  }).strict(),
+]);
+
 export const SessionStoredMessageContentSchema = z.preprocess((value) => {
   // Backwards compatibility: older clients/servers stored message content as a bare ciphertext string.
   if (typeof value === 'string') {
@@ -15,15 +37,12 @@ export const SessionStoredMessageContentSchema = z.preprocess((value) => {
     }
   }
   return value;
-}, z.discriminatedUnion('t', [
-  z.object({
-    t: z.literal('encrypted'),
-    c: z.string().min(1),
-  }),
-  z.object({
-    t: z.literal('plain'),
-    v: z.unknown(),
-  }),
-]));
+}, SessionStoredMessageContentEnvelopeSchema);
 
 export type SessionStoredMessageContent = z.infer<typeof SessionStoredMessageContentSchema>;
+export type SessionStoredMessageContentEnvelope = z.infer<
+  typeof SessionStoredMessageContentEnvelopeSchema
+>;
+export type StrictSessionStoredMessageContentEnvelope = z.infer<
+  typeof StrictSessionStoredMessageContentEnvelopeSchema
+>;

@@ -4,8 +4,8 @@ import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import type { ScmBackendRuntimeContext as ScmBackendContext } from '@happier-dev/plugin-sdk';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
+import type { ScmBackendRuntimeContext as ScmBackendContext } from '@happier-dev/plugin-sdk/experimental/scm/backend';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/experimental/scm';
 import { saplingChangeDiscard } from './changeOperations';
 
 describe('saplingChangeDiscard', () => {

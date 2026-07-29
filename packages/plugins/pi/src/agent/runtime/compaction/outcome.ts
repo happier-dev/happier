@@ -18,6 +18,7 @@ function isTerminalCompactionFailure(end: NonNullable<PiCompactionTurnState['las
 }
 
 export function resolvePiCompactionTurnOutcome(state: PiCompactionTurnState): PiCompactionTurnOutcome {
+  if (!state.agentSettled) return 'pause';
   const end = state.lastCompactionEnd;
 
   if (end?.willRetry === false && state.lastAssistantStopReason === 'stop') {

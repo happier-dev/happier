@@ -1,12 +1,13 @@
-import type { PluginContextV1, RuntimeEventV1 } from '@happier-dev/plugin-sdk';
-import type { SessionRuntimeIssueV1 } from '@happier-dev/plugin-sdk/experimental/runtime/session';
+import type { ClaudeRuntimeLogger } from '../../dependencies.js';
+import type { ClaudeSessionRuntimeIssue } from '../../issues/runtimeIssues.js';
+import type { ClaudeProviderEvent } from '../../providerEvents.js';
 
-export type ClaudeUnifiedRuntimeEventHandler = (event: RuntimeEventV1) => void;
+export type ClaudeUnifiedRuntimeEventHandler = (event: ClaudeProviderEvent) => void;
 
 export function publishClaudeUnifiedRuntimeEvent(params: Readonly<{
   handlers: ReadonlySet<ClaudeUnifiedRuntimeEventHandler>;
-  logger: PluginContextV1['logger'];
-  event: RuntimeEventV1;
+  logger: Pick<ClaudeRuntimeLogger, 'warn'>;
+  event: ClaudeProviderEvent;
 }>): void {
   for (const handler of Array.from(params.handlers)) {
     try {
@@ -30,7 +31,7 @@ export const CLAUDE_UNIFIED_RUNTIME_ISSUE_TURN_STARTED_BY = 'session_runtime_iss
 
 export function publishClaudeUnifiedTurnStart(params: Readonly<{
   handlers: ReadonlySet<ClaudeUnifiedRuntimeEventHandler>;
-  logger: PluginContextV1['logger'];
+  logger: Pick<ClaudeRuntimeLogger, 'warn'>;
   sessionId: string;
   turnId: string;
   emittedAtMs: number;
@@ -51,10 +52,10 @@ export function publishClaudeUnifiedTurnStart(params: Readonly<{
 
 export function publishClaudeUnifiedTurnFailed(params: Readonly<{
   handlers: ReadonlySet<ClaudeUnifiedRuntimeEventHandler>;
-  logger: PluginContextV1['logger'];
+  logger: Pick<ClaudeRuntimeLogger, 'warn'>;
   sessionId: string;
   turnId: string;
-  issue: SessionRuntimeIssueV1;
+  issue: ClaudeSessionRuntimeIssue;
 }>): void {
   publishClaudeUnifiedRuntimeEvent({
     handlers: params.handlers,
@@ -71,7 +72,7 @@ export function publishClaudeUnifiedTurnFailed(params: Readonly<{
 
 export function publishClaudeUnifiedTurnComplete(params: Readonly<{
   handlers: ReadonlySet<ClaudeUnifiedRuntimeEventHandler>;
-  logger: PluginContextV1['logger'];
+  logger: Pick<ClaudeRuntimeLogger, 'warn'>;
   sessionId: string;
   turnId: string;
   emittedAtMs: number;
@@ -90,7 +91,7 @@ export function publishClaudeUnifiedTurnComplete(params: Readonly<{
 
 export function publishClaudeUnifiedTurnCancelled(params: Readonly<{
   handlers: ReadonlySet<ClaudeUnifiedRuntimeEventHandler>;
-  logger: PluginContextV1['logger'];
+  logger: Pick<ClaudeRuntimeLogger, 'warn'>;
   sessionId: string;
   turnId: string;
   emittedAtMs: number;

@@ -64,6 +64,7 @@ export const SessionUsageLimitRecoveryV1Schema = z
     resumePromptMode: SessionUsageLimitRecoveryResumePromptModeV1Schema.default('standard'),
     issueFingerprint: z.string().trim().min(1),
     armedAtMs: z.number().int().nonnegative(),
+    runtimeAuthRecoveryAttemptId: z.string().trim().min(1).optional(),
     resetAtMs: z.number().int().nonnegative().nullable(),
     nextCheckAtMs: z.number().int().nonnegative().nullable(),
     attemptCount: z.number().int().nonnegative(),

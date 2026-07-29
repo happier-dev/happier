@@ -1,8 +1,7 @@
-import { createScmCapabilitiesFromBackendCapabilities } from '@happier-dev/plugin-sdk/scm';
+import { createScmCapabilitiesFromBackendCapabilities } from '@happier-dev/plugin-sdk/experimental/scm';
 import type {
-    PluginApiV1,
     ScmBackendRuntimeRegistration,
-} from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/experimental/scm/backend';
 
 import { saplingChangeDiscard } from './operations/changeOperations.js';
 import { saplingCommitBackout, saplingCommitCreate } from './operations/commitOperations.js';
@@ -11,6 +10,7 @@ import { saplingRemoteFetch, saplingRemotePull, saplingRemotePush } from './oper
 import { mapSaplingErrorCode } from './parsing/errorCodes.js';
 import { SAPLING_SCM_BACKEND_CAPABILITIES } from './capabilities.js';
 import { detectSaplingRepo, getSaplingSnapshot } from './repository.js';
+import { SAPLING_INSTALLABLE_DEP_ID } from './installables/saplingInstallable.js';
 
 export const SAPLING_SCM_BACKEND_ID = 'sapling';
 
@@ -36,6 +36,11 @@ function isSaplingAdministrativeWorkspacePath(input: Readonly<{
 export function createSaplingScmBackendRegistration(): ScmBackendRuntimeRegistration {
     return {
         id: SAPLING_SCM_BACKEND_ID,
+        runtime: {
+            repoModes: ['.sl', '.git'],
+            capabilities: SAPLING_SCM_BACKEND_CAPABILITIES,
+            commands: [{ installableKey: SAPLING_INSTALLABLE_DEP_ID, command: 'sl' }],
+        },
         handlers: {
             detection: {
                 detectRepo: detectSaplingRepo,
@@ -93,8 +98,4 @@ export function createSaplingScmBackendRegistration(): ScmBackendRuntimeRegistra
             },
         },
     };
-}
-
-export function registerSaplingScmBackend(api: Pick<PluginApiV1, 'registerScmBackend'>): void {
-    api.registerScmBackend(createSaplingScmBackendRegistration());
 }

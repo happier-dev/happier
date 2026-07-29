@@ -120,6 +120,13 @@ describe('rpc wire compatibility', () => {
     expect((SESSION_RPC_METHODS as any).SESSION_TERMINAL_COMPOSER_CLEAR).toBe('session.terminalComposer.clear');
   });
 
+  it('exposes only the live session generation-apply seam', () => {
+    expect((RPC_METHODS as Record<string, string>).DAEMON_CONNECTED_SERVICE_AUTH_GROUP_GENERATION_APPLY).toBeUndefined();
+    expect((SESSION_RPC_METHODS as Record<string, string>).SESSION_CONNECTED_SERVICE_AUTH_APPLY_GENERATION).toBe(
+      'session.connectedServiceAuth.applyGeneration',
+    );
+  });
+
   it('classifies and parses session-write socket RPC authorization context', () => {
     expect(SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_WRITE).toBe('session.write');
     expect(resolveSocketRpcSessionWriteAuthorizationMethod(
@@ -128,6 +135,12 @@ describe('rpc wire compatibility', () => {
     expect(resolveSocketRpcSessionWriteAuthorizationMethod(
       `machine-1:${RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART}`,
     )).toBe(RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART);
+    expect(resolveSocketRpcSessionWriteAuthorizationMethod(
+      RPC_METHODS.STOP_SESSION,
+    )).toBe(RPC_METHODS.STOP_SESSION);
+    expect(resolveSocketRpcSessionWriteAuthorizationMethod(
+      `machine-1:${RPC_METHODS.STOP_SESSION}`,
+    )).toBe(RPC_METHODS.STOP_SESSION);
     expect(resolveSocketRpcSessionWriteAuthorizationMethod(
       RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART_ALL,
     )).toBeNull();

@@ -1,139 +1,108 @@
+import { ingestPluginManifestV2 } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
 
 import { PLUGIN_MANIFEST } from './manifest.js';
+import { ANTIGRAVITY_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
 
 describe('Antigravity plugin manifest', () => {
-  it('declares agent settings as plugin-authored contribution data', () => {
-    const contribution = PLUGIN_MANIFEST.contributes.agentSettings?.find((entry) => entry.agentId === 'antigravity');
+  it('round-trips through canonical Plugin Manifest v2 ingestion', () => {
+    const objectIngestion = ingestPluginManifestV2(PLUGIN_MANIFEST);
+    const jsonIngestion = ingestPluginManifestV2(JSON.parse(JSON.stringify(PLUGIN_MANIFEST)));
 
-    expect(contribution).toEqual(expect.objectContaining({
-      id: 'antigravity.agentSettings.v1',
-      kind: 'agentSettings.v1',
-      storageScope: 'agentAccount',
-    }));
-    expect(contribution?.fields.map((field) => field.id)).toEqual(['antigravityRuntimeMode']);
-    expect(contribution?.fields[0]).toMatchObject({
-      default: 'auto',
-      schema: {
-        kind: 'enum',
-        values: ['auto', 'cliPrint', 'sdk'],
-      },
-    });
-    expect(contribution?.ui.sections).toEqual([
-      expect.objectContaining({
-        id: 'antigravityRuntime',
-        fields: ['antigravityRuntimeMode'],
-      }),
-    ]);
+    expect(objectIngestion).toMatchObject({ ok: true });
+    expect(jsonIngestion).toEqual(objectIngestion);
   });
 
-  it('declares Antigravity as one canonical agent with plugin runtime-core ownership', () => {
-    const agent = PLUGIN_MANIFEST.contributes.agents?.find((entry) => entry.id === 'antigravity');
-    const agentRuntime = PLUGIN_MANIFEST.contributes.agents?.find((entry) => entry.id === 'antigravity');
-    const agentIds = PLUGIN_MANIFEST.contributes.agents?.map((entry) => entry.id) ?? [];
-
-    expect(PLUGIN_MANIFEST.id).toBe('happier.agent.antigravity');
-    expect(PLUGIN_MANIFEST.uses).toEqual(expect.arrayContaining(['agents']));
-    expect(agent).toMatchObject({
-      kindVersion: 1,
-      id: 'antigravity',
-      settingsBackendId: 'antigravity',
-      ownedBackendIds: ['antigravity'],
-      display: {
-        name: 'Antigravity',
-      },
-      ui: {
-        modelSelection: 'supported',
+  it('declares one canonical custom agent while runtime implementation stays daemon-owned', () => {
+    expect(PLUGIN_MANIFEST).toMatchObject({
+      id: 'happier.agent.antigravity',
+      entrypoints: { daemon: './dist/index.js' },
+      hostAccess: {
+        required: expect.arrayContaining([expect.objectContaining({
+          id: 'antigravity-external-session-transcripts',
+          capability: 'filesystem',
+          scope: {
+            locations: [{ root: 'workspace' }],
+            access: ['read'],
+          },
+        }), expect.objectContaining({
+          id: 'localharness-process',
+          capability: 'process',
+        }), expect.objectContaining({
+          id: 'antigravity-cli-process',
+          capability: 'process',
+        })]),
+        optional: [],
       },
     });
-    expect(agentIds).toEqual(['antigravity']);
-    expect(agentIds).not.toEqual(expect.arrayContaining([
-      'antigravity-localharness',
-      'antigravity-terminal',
-    ]));
-    expect(agentRuntime).toMatchObject({
-      kindVersion: 1,
-      id: 'antigravity',
-      runtime: { kind: 'custom' },
-      runtimeOwner: {
-        selectedOwner: 'plugin_engine',
-        acceptedBy: '2026-06-19-antigravity-runtime-unification',
-      },
-      launch: {
-        binaryName: 'localharness',
-        args: [],
-        resolutionPolicy: 'managed-installable',
-      },
-      install: {
-        managedInstall: {
-          installableKey: 'dep.antigravity.localharness',
-          command: 'localharness',
-        },
-        sourcePreference: 'managed-first',
-      },
-      capabilities: {
-        executionRun: { supported: true },
-        session: {
-          media: {
-            acceptsImageInput: { supported: false },
-            emitsSessionMedia: { supported: false },
-            nativeImageGeneration: { supported: false },
+    expect(PLUGIN_MANIFEST).not.toHaveProperty('activation');
+    expect(PLUGIN_MANIFEST.contributes.agents).toEqual([
+      expect.objectContaining({
+        id: 'antigravity',
+        title: 'Antigravity',
+        runtime: { kind: 'custom' },
+        primary: 'sessions',
+        capabilities: expect.objectContaining({
+          surfaces: ['terminal', 'externalSessions'],
+          sessions: {
+            open: ['create', 'resume'],
+            delivery: ['newTurn'],
+            cancel: true,
+          },
+        }),
+        surfaces: {
+          externalSession: {
+            externalLinkedTakeover: {
+              writerSafety: 'unsupported',
+            },
+            sources: [{
+              sourceKind: 'antigravityCliPrint',
+              schema: {
+                fields: [
+                  { kind: 'literal', name: 'kind', value: 'antigravityCliPrint' },
+                  { kind: 'string', name: 'brainDir', min: 1, max: 10_000, nullish: true },
+                ],
+                passthrough: true,
+              },
+              key: {
+                segments: [
+                  { kind: 'literal', value: 'antigravityCliPrint' },
+                  { kind: 'field', field: 'brainDir' },
+                ],
+              },
+              instances: [{ kind: 'default', constants: {} }],
+            }],
           },
         },
-      },
-    });
-    expect(agentRuntime).not.toHaveProperty('providerId');
-  });
-
-  it('declares managed localharness installable and terminal runtime host launch surface on the canonical agent', () => {
-    const agentRuntime = PLUGIN_MANIFEST.contributes.agents?.find((entry) => entry.id === 'antigravity');
-    const launchSurface = agentRuntime?.surfaceHandlers?.find((entry) => (
-      entry.kind === 'terminalRuntime' && entry.operation === 'launch'
-    ));
-
-    expect(PLUGIN_MANIFEST.contributes.managedDependencies?.map((entry) => entry.key) ?? []).toEqual([
-      'dep.antigravity.localharness',
+      }),
     ]);
-    expect(agentRuntime).toMatchObject({
-      id: 'antigravity',
-    });
-    expect(launchSurface).toMatchObject({
-      id: 'antigravity.terminalRuntime.launch',
-      kind: 'terminalRuntime',
-      operation: 'launch',
-      support: 'supported',
-      handler: {
-        target: 'daemon',
-        exportName: 'resolveAntigravityTerminalRuntimeLaunch',
-      },
-      staticMetadata: {
-        topology: 'exclusive',
-        attachStrategy: 'terminal_host',
-        transcript: 'terminal_mirror',
-        structuredTranscript: false,
-        providerNativeStatusLine: false,
-        printMode: false,
-        runtimeCore: 'localharness',
-        runtimeSurface: 'terminalRuntime',
-        backendMode: 'terminal',
-      },
-    });
   });
 
-  it('declares a localharness daemon spawn prerequisite hook', () => {
-    expect(PLUGIN_MANIFEST.contributes.hooks).toEqual(expect.arrayContaining([
+  it('declares canonical localharness dependency and hook identities', () => {
+    expect(PLUGIN_MANIFEST.contributes.managedDependencies).toEqual([
       expect.objectContaining({
-        id: 'agent.resolvePrerequisites',
-        hookApiVersion: 1,
-        category: 'decision',
-        scope: 'agent',
+        id: 'localharness',
+        executable: 'localharness',
+        platforms: ['macos', 'linux', 'windows'],
+        sources: [expect.objectContaining({
+          kind: 'managedPypiWheelAsset',
+          installId: 'dep.antigravity.localharness',
+          distribution: 'google-antigravity',
+          versionSpecifier: '>=0.1.4,<0.2.0',
+        })],
+      }),
+    ]);
+    expect(PLUGIN_MANIFEST.contributes).not.toHaveProperty('agentSettings');
+    expect(PLUGIN_MANIFEST.contributes.settings).toEqual([
+      ANTIGRAVITY_AGENT_SETTINGS_CONTRIBUTION,
+    ]);
+    expect(PLUGIN_MANIFEST.contributes.hooks).toEqual([
+      expect.objectContaining({
+        id: 'resolve-prerequisites',
+        on: 'agent.resolvePrerequisites',
         filters: { agentId: 'antigravity' },
         executionKind: 'decide',
-        handler: {
-          target: 'plugin',
-          exportName: 'resolveAntigravityDaemonSpawnPrerequisites',
-        },
       }),
-    ]));
+    ]);
   });
 });

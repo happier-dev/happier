@@ -1,10 +1,10 @@
 import type {
   ScmRemoteRequest,
   ScmRemoteResponse,
-} from '@happier-dev/plugin-sdk/scm';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
-import { normalizeScmRemoteRequest } from '@happier-dev/plugin-sdk/scm';
-import type { ScmBackendRuntimeContext as ScmBackendContext } from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/experimental/scm';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/experimental/scm';
+import { normalizeScmRemoteRequest } from '@happier-dev/plugin-sdk/experimental/scm';
+import type { ScmBackendRuntimeContext as ScmBackendContext } from '@happier-dev/plugin-sdk/experimental/scm/backend';
 
 function unsupportedSaplingRemoteMutation(kind: 'fetch' | 'pull' | 'push'): ScmRemoteResponse {
     return {

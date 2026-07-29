@@ -1,44 +1,34 @@
-import {
-  toPluginHookObjectContext,
-  toPluginHookPayloadEnvelope,
-} from '@happier-dev/plugin-sdk';
+import type { PluginApi } from '@happier-dev/plugin-sdk';
 import type {
-  PluginApi,
-  McpServerSpecV1,
-  PluginApiHookRegistrationV1,
-  PluginHookHandler,
-  RegisterDaemonAuthBridgeV1,
-} from '@happier-dev/plugin-sdk';
+  HookHandler,
+  PluginMcpDiscoveryResult,
+} from '@happier-dev/plugin-sdk/runtime';
 
 import { readCodexMcpConfigServers } from './agent/mcp/configServers.js';
-import { createCodexBackendEngine } from './agent/engine/createCodexBackendEngine.js';
 import { CODEX_PROVIDER_BINDING_ADAPTER_V1 } from './agent/providerBinding/adapter.js';
+import { createCodexAgentRuntime } from './agent/runtime/engine.js';
+import { codexExternalSessionsContribution } from './agent/surfaces/sessions/external/contribution.js';
+import { codexExternalSessionHooksContribution } from './agent/surfaces/sessions/external/externalSessionHooks.js';
+import { codexExternalSessionObservationContribution } from './agent/surfaces/sessions/external/observation.js';
+import { codexExternalSessionTakeoverContribution } from './agent/surfaces/sessions/external/takeover.js';
 import {
   augmentCodexDaemonSpawnEnv,
   resolveCodexDaemonSpawnPrerequisites,
 } from './agent/lifecycle/spawnHooks.js';
+import { openAiCodexConnectedAccountRuntime } from './connectedAccounts/openAiCodexRuntime.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
 
-type CodexSpawnPrerequisiteHookEvent = Parameters<typeof resolveCodexDaemonSpawnPrerequisites>[0];
-type CodexSpawnPrerequisiteHookContext = NonNullable<Parameters<typeof resolveCodexDaemonSpawnPrerequisites>[1]>;
-type CodexSpawnEnvHookEvent = Parameters<typeof augmentCodexDaemonSpawnEnv>[0];
+type CodexMcpServerSpec = NonNullable<PluginMcpDiscoveryResult['servers']>[number];
 
-const resolveCodexDaemonSpawnPrerequisitesHook: PluginHookHandler = (event, context) =>
-  resolveCodexDaemonSpawnPrerequisites(
-    toPluginHookPayloadEnvelope<CodexSpawnPrerequisiteHookEvent>(event),
-    toPluginHookObjectContext<CodexSpawnPrerequisiteHookContext>(context),
-  );
+const resolveCodexDaemonSpawnPrerequisitesHook: HookHandler = (event, context) =>
+  resolveCodexDaemonSpawnPrerequisites(event, context);
 
-const augmentCodexDaemonSpawnEnvHook: PluginHookHandler = (event) =>
-  augmentCodexDaemonSpawnEnv(toPluginHookPayloadEnvelope<CodexSpawnEnvHookEvent>(event));
-
-const refreshCodexDaemonAuthBridge: RegisterDaemonAuthBridgeV1['refresh'] = async () => {
-  throw new Error('openai-codex daemon auth bridge is unavailable until the daemon binds registered bridges');
-};
+const augmentCodexDaemonSpawnEnvHook: HookHandler = (event) =>
+  augmentCodexDaemonSpawnEnv(event);
 
 function toCodexMcpServerSpec(
   server: Awaited<ReturnType<typeof readCodexMcpConfigServers>>['servers'][number],
-): McpServerSpecV1 | null {
+): CodexMcpServerSpec | null {
   if (server.enabled === false) return null;
   if (server.transport !== 'stdio' || !server.stdio) return null;
   return {
@@ -56,7 +46,7 @@ function toCodexMcpServerSpec(
 }
 
 function readCodexConfigDiscoveryProvider(): typeof PLUGIN_MANIFEST.contributes.mcp.discoveryProviders[number] {
-  const provider = PLUGIN_MANIFEST.contributes.mcp.discoveryProviders.find((entry) => entry.id === 'codex.config');
+  const provider = PLUGIN_MANIFEST.contributes.mcp.discoveryProviders.find((entry) => entry.id === 'config');
   if (!provider) {
     throw new Error('Codex plugin manifest must declare codex.config MCP discovery provider');
   }
@@ -64,42 +54,42 @@ function readCodexConfigDiscoveryProvider(): typeof PLUGIN_MANIFEST.contributes.
 }
 
 export function activate(api: PluginApi): void {
-  api.registerAgentRuntime({
-    agentId: 'codex',
-    providerBinding: CODEX_PROVIDER_BINDING_ADAPTER_V1,
-    create: createCodexBackendEngine,
-  });
-  api.registerDaemonAuthBridge({
-    serviceId: 'openai-codex',
-    refresh: refreshCodexDaemonAuthBridge,
-  });
-  api.registerHook({
-    hookId: 'agent.resolvePrerequisites',
-    category: 'decision',
-    scope: 'agent',
-    filters: { agentId: 'codex' },
-    executionKind: 'decide',
-    handler: resolveCodexDaemonSpawnPrerequisitesHook,
-  });
-  api.registerHook({
-    hookId: 'agent.spawnEnv.augment',
-    category: 'augmentation',
-    scope: 'daemon',
-    filters: { agentId: 'codex' },
-    executionKind: 'augment',
-    handler: augmentCodexDaemonSpawnEnvHook,
-  });
+  const connectedAccountDescriptor = PLUGIN_MANIFEST.contributes.connectedAccountDescriptors.find(
+    ({ id }) => id === 'openai-codex',
+  );
+  if (!connectedAccountDescriptor) {
+    throw new Error('Codex plugin manifest must declare the OpenAI Codex Connected Account');
+  }
+  api.connectedAccounts.register(
+    connectedAccountDescriptor.id,
+    openAiCodexConnectedAccountRuntime,
+  );
+  api.agents.register(
+    'codex',
+    createCodexAgentRuntime,
+    { providerBinding: CODEX_PROVIDER_BINDING_ADAPTER_V1 },
+  );
+  api.agents.registerExternalSessions('codex', codexExternalSessionsContribution);
+  api.agents.registerExternalSessionTakeover(
+    'codex',
+    codexExternalSessionTakeoverContribution,
+  );
+  api.agents.registerExternalSessionHooks('codex', codexExternalSessionHooksContribution);
+  api.agents.registerExternalSessionObservation(
+    'codex',
+    codexExternalSessionObservationContribution,
+  );
+  api.hooks.register('resolve-prerequisites', resolveCodexDaemonSpawnPrerequisitesHook);
+  api.hooks.register('augment-spawn-env', augmentCodexDaemonSpawnEnvHook);
   const configDiscoveryProvider = readCodexConfigDiscoveryProvider();
-  api.registerMcpDiscoveryProvider({
-    id: configDiscoveryProvider.id,
-    discover: async () => {
+  api.mcp.registerDiscoveryProvider(configDiscoveryProvider.id, async () => {
       const detected = await readCodexMcpConfigServers({});
       return {
+        items: [],
         servers: detected.servers
           .map(toCodexMcpServerSpec)
-          .filter((server): server is McpServerSpecV1 => server !== null),
+          .filter((server): server is CodexMcpServerSpec => server !== null),
         warnings: detected.warnings,
       };
-    },
   });
 }

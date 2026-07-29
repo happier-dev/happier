@@ -9,8 +9,6 @@ export type PluginUiArtifactDigestV1 = z.infer<typeof PluginUiArtifactDigestV1Sc
 
 export const PluginUiArtifactIntegrityBindingV1Schema = z.object({
   digest: PluginUiArtifactDigestV1Schema,
-  signature: z.string().trim().min(1).optional(),
-  signingKeyId: z.string().trim().min(1).optional(),
   pluginId: z.string().trim().min(1),
   contributionId: z.string().trim().min(1),
   artifactKind: z.string().trim().min(1),

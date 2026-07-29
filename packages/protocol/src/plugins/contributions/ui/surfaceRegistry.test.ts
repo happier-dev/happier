@@ -25,7 +25,6 @@ describe('surface registry — category-derived default modes', () => {
     expect(deriveDefaultRuntimeModesForCategory('panel')).toEqual([
       'host',
       'hostedWeb',
-      'embeddedWeb',
       'reactNative',
     ]);
   });
@@ -53,7 +52,6 @@ describe('surface registry — exclusion deny-list', () => {
     expect(resolveSupportedRuntimeModes('panel', ['reactNative'])).toEqual([
       'host',
       'hostedWeb',
-      'embeddedWeb',
     ]);
   });
 
@@ -79,7 +77,7 @@ describe('surface registry — mode selection (first available)', () => {
   });
 
   it('picks the first supported mode that is provided', () => {
-    // supportedRuntimeModes order = host, hostedWeb, embeddedWeb, reactNative
+    // supportedRuntimeModes order = host, hostedWeb, reactNative
     const mode = selectFirstAvailableRuntimeMode(details!, {
       providedModes: ['reactNative', 'hostedWeb'],
     });
@@ -108,26 +106,13 @@ describe('surface registry — mode selection (first available)', () => {
     ).toBeNull();
   });
 
-  it('selectRuntimeMode via the registry mirrors the pure helper', () => {
-    expect(
-      PLUGIN_SURFACE_REGISTRY.selectRuntimeMode('session.details', {
-        providedModes: ['embeddedWeb'],
-      }),
-    ).toBe('embeddedWeb');
-  });
 });
 
 describe('surface registry — reject-at-projection', () => {
   const validHeaderAction = {
     id: 'open-preview',
-    action: {
-      id: 'open-preview',
-      kind: 'openSurface',
-      labelKey: 'title',
-      target: { surfaceId: 'preview-pane' },
-    },
-    display,
-    placement: { area: 'primary', overflow: 'auto' },
+    title: 'Open preview',
+    action: 'open-preview',
   } as const;
 
   it('projects a contribution that matches the descriptor contributionSchema', () => {
@@ -178,9 +163,9 @@ describe('surface registry — id uniqueness (§13.5.6)', () => {
   });
 });
 
-describe('surface registry — additive compatibility (§12.13)', () => {
-  it('introducing the registry does not change existing PluginContributesV2 parsing', () => {
-    const parsed = PluginContributesV2Schema.parse({
+describe('surface registry — canonical manifest graph', () => {
+  it('does not restore the removed top-level surfacePlacements family', () => {
+    const parsed = PluginContributesV2Schema.safeParse({
       surfacePlacements: [
         {
           id: 'settings-panel',
@@ -198,7 +183,7 @@ describe('surface registry — additive compatibility (§12.13)', () => {
         },
       ],
     });
-    expect(parsed.surfacePlacements?.length).toBe(2);
+    expect(parsed.success).toBe(false);
   });
 
   it('registry covers every legacy placement kind plus the merged session.headerAction', () => {
@@ -217,7 +202,7 @@ describe('surface registry — additive compatibility (§12.13)', () => {
 
   it('canonical mode->host map covers every runtime mode exactly once', () => {
     expect(Object.keys(CANONICAL_RUNTIME_MODE_HOST).sort()).toEqual(
-      ['action', 'declarative', 'embeddedWeb', 'host', 'hostedWeb', 'reactNative', 'structured'].sort(),
+      ['action', 'declarative', 'host', 'hostedWeb', 'reactNative', 'structured'].sort(),
     );
   });
 });

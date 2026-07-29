@@ -1,4 +1,4 @@
-import { normalizeAcpPermissionIntent } from '@happier-dev/plugin-sdk/experimental/acp';
+import { normalizeAcpPermissionIntent } from '@happier-dev/agents';
 
 import type { CodexTerminalPermissionPolicy } from './invocation.js';
 

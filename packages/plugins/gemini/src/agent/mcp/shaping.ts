@@ -1,14 +1,27 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import type { EnvRuntimeServiceV1, FsRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
+type GeminiMcpEnvironmentReader = Readonly<{
+  list(): Readonly<Record<string, string>>;
+}>;
+
+type GeminiMcpTempDirectory = Readonly<{
+  path: string;
+  cleanup(): void | Promise<void>;
+}>;
+
+type GeminiMcpFileSystem = Readonly<{
+  createTempDirectory(input?: Readonly<{ prefix?: string }>): Promise<GeminiMcpTempDirectory>;
+}>;
 import { resolveGeminiConfigPaths } from '../utils/configPaths.js';
 
 type EnvLike = Readonly<Record<string, string | undefined>>;
 type JsonObject = Record<string, unknown>;
 
 export type GeminiMcpShapingContext = Readonly<{
-  env: Pick<EnvRuntimeServiceV1, 'list'>;
-  fs: Pick<FsRuntimeServiceV1, 'createTempDirectory'>;
+  env: GeminiMcpEnvironmentReader;
+  fs: GeminiMcpFileSystem;
 }>;
 
 const GEMINI_ALLOWED_SOURCE_FILE_SELECTORS = [
@@ -152,5 +165,30 @@ export async function prepareGeminiMcpShaping(ctx: GeminiMcpShapingContext) {
   return {
     env: baseEnv,
     cleanup: () => tempDir.cleanup(),
+  };
+}
+
+/** Native sessions own this temporary home for exactly their composer lifetime. */
+export async function prepareGeminiNativeMcpShaping(
+  sourceEnv: EnvLike = process.env,
+) {
+  const cliHomeDir = await mkdtemp(join(tmpdir(), 'happier-gemini-mcp-home-'));
+  const baseEnv = {
+    GEMINI_CLI_HOME: cliHomeDir,
+    HOME: cliHomeDir,
+    XDG_CONFIG_HOME: join(cliHomeDir, '.config'),
+  };
+
+  copyKnownGeminiConfigFiles({ sourceEnv, targetEnv: baseEnv });
+  scrubCopiedGeminiSettingsMcpServers(baseEnv);
+
+  let cleaned = false;
+  return {
+    env: baseEnv,
+    async cleanup() {
+      if (cleaned) return;
+      cleaned = true;
+      await rm(cliHomeDir, { recursive: true, force: true });
+    },
   };
 }

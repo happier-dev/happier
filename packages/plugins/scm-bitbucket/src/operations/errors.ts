@@ -2,7 +2,7 @@ import {
   SCM_OPERATION_ERROR_CODES,
   type ScmOperationErrorCode,
   type ScmPullRequestSummary,
-} from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm';
 
 export class BitbucketApiAdapterError extends Error {
   readonly errorCode: ScmOperationErrorCode;

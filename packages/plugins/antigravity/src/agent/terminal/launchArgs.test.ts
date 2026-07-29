@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ANTIGRAVITY_PRINT_MODE_SUPPORTED,
   buildAntigravityTerminalLaunchArgs,
+  resolveAntigravityTerminalLaunchArgsInput,
 } from './launchArgs.js';
 
 describe('Antigravity terminal launch arguments', () => {
@@ -34,6 +35,16 @@ describe('Antigravity terminal launch arguments', () => {
     expect(buildAntigravityTerminalLaunchArgs({
       modelId: 'default',
     })).toEqual([]);
+  });
+
+  it('uses the canonical provider session identity for terminal continuation', () => {
+    expect(resolveAntigravityTerminalLaunchArgsInput({
+      providerSessionId: 'conversation-current',
+      terminalRuntime: { conversationId: 'conversation-stale' },
+      antigravity: { conversationId: 'conversation-older' },
+    })).toMatchObject({
+      conversationId: 'conversation-current',
+    });
   });
 
   it('keeps print mode and unsafe permission skipping out of terminal v1', () => {

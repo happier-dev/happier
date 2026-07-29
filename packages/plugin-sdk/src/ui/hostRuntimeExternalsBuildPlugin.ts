@@ -15,7 +15,7 @@ import {
  * tells the bundler not to bundle those specifiers; it leaves them as
  * literal bare ESM specifiers in the built output, which a real browser's
  * native `import()` cannot resolve (RNWEB-SPIKE §Q1(c) — this was a latent,
- * never-exercised gap in the already-shipped embeddedWeb build preset too,
+ * never-exercised gap in the earlier web build preset too,
  * not just the new reactNative-web one). Rather than an import map (patchy
  * engine support, one-per-document constraints), this plugin ALIASES each
  * externalized specifier to a small generated virtual module that reads the
@@ -46,7 +46,7 @@ export type PluginUiHostRuntimeExternalsRealModuleLoader = (
     specifier: PluginUiHostRuntimeExternalSpecifierV1,
 ) => Promise<Readonly<Record<string, unknown>>>;
 
-export type PluginUiHostRuntimeExternalsVitePluginV1 = Readonly<{
+export type PluginUiHostRuntimeExternalsVitePlugin = Readonly<{
     name: 'happier-plugin-ui-host-runtime-externals';
     enforce: 'pre';
     // FIX-RNWEB-SERVING: real Vite plugin hook, invoked once with the
@@ -135,7 +135,7 @@ export async function generatePluginUiHostRuntimeExternalModuleSource(
 export function createPluginUiHostRuntimeExternalsVitePlugin(options?: Readonly<{
     specifiers?: readonly PluginUiHostRuntimeExternalSpecifierV1[];
     importRealModule?: PluginUiHostRuntimeExternalsRealModuleLoader;
-}>): PluginUiHostRuntimeExternalsVitePluginV1 {
+}>): PluginUiHostRuntimeExternalsVitePlugin {
     const specifiers = new Set<string>(options?.specifiers ?? PLUGIN_UI_HOST_RUNTIME_EXTERNAL_SPECIFIERS);
     // FIX-RNWEB-SERVING: an explicitly injected loader (tests, or an author
     // opting out) always wins and is never replaced by `configResolved`.

@@ -1,10 +1,53 @@
 import { z } from 'zod';
-import { SecretStringV1Schema } from '@happier-dev/protocol';
-import type { VoiceConversationProviderDescriptorV1 } from '@happier-dev/protocol';
+import {
+  compilePluginJsonSchema,
+  isValidPluginJsonSchemaValue,
+  PluginVoiceProviderContributionV1Schema,
+  SecretStringV1Schema,
+  VoiceRealtimeJsonValueSchema,
+} from '@happier-dev/protocol';
+import type {
+  VoiceConversationProviderDescriptorV1,
+} from '@happier-dev/protocol';
+import { PLUGIN_MANIFEST } from '../../manifest.js';
 
 export const ELEVENLABS_VOICE_PROVIDER_ID = 'realtime_elevenlabs' as const;
 export const ELEVENLABS_VOICE_CREDENTIAL_KIND = 'api_key' as const;
-export const DEFAULT_ELEVENLABS_VOICE_ID = 'EST9Ui6982FZPSi7gCHi' as const;
+const ELEVENLABS_VOICE_PROVIDER_CONTRIBUTION =
+  PluginVoiceProviderContributionV1Schema.parse(
+    PLUGIN_MANIFEST.contributes.voiceProviders[0],
+  );
+if (
+  ELEVENLABS_VOICE_PROVIDER_CONTRIBUTION.kind !== 'conversation'
+  || ELEVENLABS_VOICE_PROVIDER_CONTRIBUTION.settings === undefined
+) {
+  throw new Error('invalid_elevenlabs_voice_provider_settings_declaration');
+}
+export const ELEVENLABS_VOICE_PROVIDER_SETTINGS_DECLARATION =
+  ELEVENLABS_VOICE_PROVIDER_CONTRIBUTION.settings;
+
+function readDefaultElevenLabsVoiceId(): string {
+  const value = ELEVENLABS_VOICE_PROVIDER_SETTINGS_DECLARATION.fields
+    .find((field) => field.id === 'tts')
+    ?.default;
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('invalid_elevenlabs_voice_provider_default_voice_id');
+  }
+  const voiceId = value.voiceId;
+  if (typeof voiceId !== 'string' || voiceId.length === 0) {
+    throw new Error('invalid_elevenlabs_voice_provider_default_voice_id');
+  }
+  return voiceId;
+}
+
+export const DEFAULT_ELEVENLABS_VOICE_ID = readDefaultElevenLabsVoiceId();
+
+export const ElevenLabsAgentIdSchema = z.string().trim().min(1).max(256).regex(/^[A-Za-z0-9_-]+$/u);
+export const ElevenLabsVoiceIdSchema = z.string().trim().min(1).max(256);
+export const ElevenLabsModelIdSchema = z.string().trim().min(1).max(256);
+
+const ElevenLabsUnitIntervalSchema = z.number().min(0).max(1);
+const ElevenLabsTtsSpeedSchema = z.number().min(0.7).max(1.2);
 
 export const ElevenLabsVoiceProviderSettingsLegacySchema = z.object({
   assistantLanguage: z.string().nullable().default(null),
@@ -31,17 +74,77 @@ export const ElevenLabsVoiceProviderSettingsLegacySchema = z.object({
   }).default({ agentId: null, apiKey: null }),
 });
 
-export const ElevenLabsVoiceProviderSettingsSchema = ElevenLabsVoiceProviderSettingsLegacySchema.omit({
-  assistantLanguage: true,
-  welcome: true,
-}).extend({
-  byo: z.object({
-    agentId: z.string().nullable().default(null),
-  }).strict().default({ agentId: null }),
-});
-export type ElevenLabsVoiceProviderSettings = z.infer<typeof ElevenLabsVoiceProviderSettingsSchema>;
+export type ElevenLabsVoiceProviderSettings = Readonly<{
+  mode: 'default';
+  billingMode: 'happier' | 'byo';
+  tts: Readonly<{
+    voiceId: string;
+    modelId: string | null;
+    voiceSettings: Readonly<{
+      stability: number | null;
+      similarityBoost: number | null;
+      style: number | null;
+      useSpeakerBoost: boolean | null;
+      speed: number | null;
+    }>;
+  }>;
+  byo: Readonly<{ agentId: string | null }>;
+}>;
 
-const ElevenLabsAgentIdSchema = z.string().trim().min(1).max(256).regex(/^[A-Za-z0-9_-]+$/u);
+const validateElevenLabsVoiceProviderSettings = compilePluginJsonSchema({
+  type: 'object',
+  properties: {
+    mode: { type: 'string', const: 'default' },
+    ...Object.fromEntries(ELEVENLABS_VOICE_PROVIDER_SETTINGS_DECLARATION.fields.map(
+      (field) => [field.id, field.schema],
+    )),
+  },
+  required: [
+    'mode',
+    ...ELEVENLABS_VOICE_PROVIDER_SETTINGS_DECLARATION.fields.map((field) => field.id),
+  ],
+  additionalProperties: false,
+});
+
+function cloneElevenLabsVoiceProviderSettings(
+  value: unknown,
+): ElevenLabsVoiceProviderSettings {
+  return JSON.parse(JSON.stringify(value)) as ElevenLabsVoiceProviderSettings;
+}
+
+/**
+ * Runtime parser compiled directly from the public manifest declaration.
+ * Missing and unknown fields therefore fail identically in bundled and packed
+ * activation paths.
+ */
+function safeParseElevenLabsVoiceProviderSettings(value: unknown):
+  | Readonly<{ success: true; data: ElevenLabsVoiceProviderSettings }>
+  | Readonly<{ success: false }> {
+  return isValidPluginJsonSchemaValue(validateElevenLabsVoiceProviderSettings, value)
+    ? Object.freeze({ success: true as const, data: cloneElevenLabsVoiceProviderSettings(value) })
+    : Object.freeze({ success: false as const });
+}
+
+export const ElevenLabsVoiceProviderSettingsSchema = Object.freeze({
+  safeParse: safeParseElevenLabsVoiceProviderSettings,
+  parse(value: unknown): ElevenLabsVoiceProviderSettings {
+    const parsed = safeParseElevenLabsVoiceProviderSettings(value);
+    if (!parsed.success) throw new Error('invalid_elevenlabs_voice_provider_settings');
+    return parsed.data;
+  },
+});
+
+const parsedElevenLabsVoiceProviderDefaultSettings = ElevenLabsVoiceProviderSettingsSchema.safeParse({
+  mode: 'default',
+  ...Object.fromEntries(ELEVENLABS_VOICE_PROVIDER_SETTINGS_DECLARATION.fields.map(
+    (field) => [field.id, field.default],
+  )),
+});
+if (!parsedElevenLabsVoiceProviderDefaultSettings.success) {
+  throw new Error('invalid_elevenlabs_voice_provider_settings_defaults');
+}
+export const ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS =
+  parsedElevenLabsVoiceProviderDefaultSettings.data;
 
 export function buildElevenLabsConversationAuthAudience(params: Readonly<{
   agentId: string;
@@ -70,18 +173,18 @@ export type ElevenLabsVoiceUiEntry = VoiceConversationProviderDescriptorV1 & Rea
 export const ElevenLabsProvisionToolSchema = z.object({
   name: z.string().trim().min(1).max(128),
   description: z.string().trim().min(1).max(2_000),
-  parameters: z.record(z.string(), z.unknown()),
+  parameters: z.record(z.string(), VoiceRealtimeJsonValueSchema),
 }).strict();
 
 export const ElevenLabsTtsConfigSchema = z.object({
-  voiceId: z.string().trim().min(1).max(256),
-  modelId: z.string().trim().min(1).max(256).nullable(),
+  voiceId: ElevenLabsVoiceIdSchema,
+  modelId: ElevenLabsModelIdSchema.nullable(),
   voiceSettings: z.object({
-    stability: z.number().min(0).max(1).nullable(),
-    similarityBoost: z.number().min(0).max(1).nullable(),
-    style: z.number().min(0).max(1).nullable(),
+    stability: ElevenLabsUnitIntervalSchema.nullable(),
+    similarityBoost: ElevenLabsUnitIntervalSchema.nullable(),
+    style: ElevenLabsUnitIntervalSchema.nullable(),
     useSpeakerBoost: z.boolean().nullable(),
-    speed: z.number().min(0.7).max(1.2).nullable(),
+    speed: ElevenLabsTtsSpeedSchema.nullable(),
   }).strict(),
 }).strict();
 

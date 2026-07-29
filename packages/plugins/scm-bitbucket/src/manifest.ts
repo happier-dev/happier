@@ -1,67 +1,66 @@
-import { BITBUCKET_CONNECTED_ACCOUNT_DESCRIPTOR } from '@happier-dev/plugin-sdk/experimental/manifest/connectedAccountDescriptors';
-import { definePluginManifest, type PluginManifestV2 } from '@happier-dev/plugin-sdk';
+import type { PluginManifest } from '@happier-dev/plugin-sdk/manifest';
 
-export const PLUGIN_MANIFEST = definePluginManifest({
+export const PLUGIN_MANIFEST = {
   schemaVersion: 2,
   id: 'happier.scm.hosting.bitbucket',
   version: '0.0.0',
   displayName: 'Bitbucket SCM hosting provider',
-  description: 'Detects Bitbucket Cloud remotes, builds compare URLs, and declares API credential readiness.',
-  source: {
-    kind: 'package',
-    locator: '@happier-dev/plugins-scm-bitbucket',
-    trustPolicy: 'local_trusted',
-    installPolicy: 'link',
-    resolvedVersion: '0.0.0',
-  },
-  engines: { happier: '^0.0.0' },
-  activationEvents: ['onScmProvider:scm.bitbucket'],
-  uses: ['scmHostingProviders', 'connectedAccountDescriptors'],
-  entrypoints: { main: './dist/index.js' },
-  permissions: { required: [], optional: [] },
-  contributes: {
-    scmHostingProviders: [
-      {
-        id: 'scm.bitbucket',
-        kind: 'bitbucket',
-        displayName: 'Bitbucket',
-        baseUrl: 'https://bitbucket.org',
-        remoteHostMatchers: {
-          exactHosts: ['bitbucket.org'],
-        },
-        urlSafety: {
-          allowedSchemes: ['https:'],
-          allowedBaseUrls: ['https://bitbucket.org'],
-          allowedOrigins: ['https://bitbucket.org'],
-        },
-        capabilities: {
-          compareUrl: true,
-          openUrl: true,
-          pullRequests: {
-            list: true,
-            get: true,
-            create: true,
-            checkout: true,
-            prepareWorktree: false,
-            runStacked: false,
-          },
-          repositoryProvisioning: {
-            describeTargets: true,
-            createRepository: true,
-            publish: false,
-          },
-          reviewThreads: {
-            read: false,
-            write: false,
-          },
-        },
-        auth: {
-          materializationKinds: ['scm_hosting_basic_auth'],
-          credentialPayloadKind: 'bitbucket_basic_auth',
-          cloudOnly: true,
-        },
+  description: 'Detects Bitbucket Cloud remotes and provides repository operations.',
+  engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
+  entrypoints: { daemon: './dist/index.js' },
+  hostAccess: {
+    required: [{
+      id: 'bitbucket-api',
+      capability: 'network',
+      reason: 'Access the Bitbucket origin selected from the SCM provider and connected account.',
+      scope: {
+        targets: [
+          { kind: 'fixedOrigin', origin: 'https://api.bitbucket.org' },
+          { kind: 'scmProviderOrigin', provider: 'bitbucket' },
+          { kind: 'connectedAccountOrigin', service: 'bitbucket-account' },
+        ],
+        methods: ['GET', 'POST'],
       },
-    ],
-    connectedAccountDescriptors: [BITBUCKET_CONNECTED_ACCOUNT_DESCRIPTOR],
+    }],
+    optional: [],
   },
-} satisfies PluginManifestV2);
+  contributes: {
+    scmHostingProviders: [{
+      id: 'bitbucket',
+      title: 'Bitbucket',
+      description: 'Bitbucket Cloud repositories.',
+      kind: 'bitbucket',
+      capabilities: ['detect', 'clone', 'fetch', 'push', 'pullRequest'],
+      authService: 'bitbucket-account',
+    }],
+    connectedAccountDescriptors: [{
+      id: 'bitbucket-account',
+      title: 'Bitbucket account',
+      description: 'Bitbucket account used for repository and pull-request operations.',
+      authentication: {
+        defaultModeId: 'manual',
+        modes: [{
+          id: 'manual',
+          kind: 'manual',
+          outcomeReconciliation: 'none',
+          fields: [
+            {
+              id: 'identity',
+              title: 'Email or username',
+              description: 'The email address or username associated with the Bitbucket API token.',
+              schema: { type: 'string', minLength: 1 },
+            },
+            {
+              id: 'token',
+              title: 'API token',
+              description: 'A Bitbucket API token with repository access.',
+              schema: { type: 'string', minLength: 1 },
+              secret: true,
+            },
+          ],
+        }],
+      },
+      capabilities: ['scmHostingBasicAuth'],
+    }],
+  },
+} satisfies PluginManifest;

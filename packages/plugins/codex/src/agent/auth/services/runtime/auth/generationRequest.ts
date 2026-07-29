@@ -1,7 +1,10 @@
 import { join } from 'node:path';
 
 import { writeAtomicJsonFile } from '@happier-dev/plugin-sdk/experimental/fs';
-import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+import type {
+  ConnectedServiceCredentialRecordV1,
+  ConnectedServiceCredentialRevisionV1,
+} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
 
 import { buildCodexCloudAuthFile } from '../../openai/cloud/authFile.js';
 import type { CodexConnectedServiceRefreshSelection } from './application.js';
@@ -19,6 +22,7 @@ function readString(value: unknown): string | null {
 export type CodexConnectedServiceAuthGenerationRequest = Readonly<{
   serviceId: 'openai-codex';
   credential: Extract<ConnectedServiceCredentialRecordV1, { kind: 'oauth' }>;
+  credentialRevision: ConnectedServiceCredentialRevisionV1 | null;
   forcedWorkspaceId: string | null;
   forcedLoginMethod: string | null;
   selection: CodexConnectedServiceRefreshSelection | null;
@@ -26,6 +30,7 @@ export type CodexConnectedServiceAuthGenerationRequest = Readonly<{
     profileId: string | null;
     groupId: string | null;
     generation: number | null;
+    credentialRevision?: ConnectedServiceCredentialRevisionV1 | null;
   }>;
 }>;
 
@@ -79,6 +84,7 @@ export function readCodexConnectedServiceExpected(value: unknown): CodexConnecte
     profileId: readString(record?.profileId),
     groupId: readString(record?.groupId),
     generation,
+    credentialRevision: readString(record?.credentialRevision) as ConnectedServiceCredentialRevisionV1 | null,
   };
 }
 
@@ -93,6 +99,7 @@ export function normalizeCodexConnectedServiceAuthGenerationRequest(
   return {
     serviceId: 'openai-codex',
     credential,
+    credentialRevision: readString(generation.credentialRevision) as ConnectedServiceCredentialRevisionV1 | null,
     forcedWorkspaceId: readString(generation.forcedWorkspaceId),
     forcedLoginMethod: readString(generation.forcedLoginMethod),
     selection: readCodexRefreshSelection(generation.selection),

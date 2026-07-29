@@ -1,4 +1,4 @@
-import { isSlashCommandSupported } from '@happier-dev/plugin-sdk/sessions';
+import { isSlashCommandSupported } from '@happier-dev/plugin-sdk/experimental/sessions';
 import type { SessionWorkStateV1 } from '@happier-dev/plugin-sdk/experimental/sessions/workState';
 
 import {

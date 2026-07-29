@@ -2,14 +2,18 @@ import { createHash } from 'node:crypto';
 import { homedir, userInfo } from 'node:os';
 import { join, resolve } from 'node:path';
 
-import type { ExecRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
+import type {
+    ManagedExecutableRef,
+    PluginExecService,
+    PluginProcessResult,
+} from '@happier-dev/plugin-sdk/runtime';
 
 import {
     readClaudeCodeNativeCredentialPayload,
     type ClaudeCodeNativeCredentialPayload,
 } from './credentials.js';
 
-export const CLAUDE_MACOS_SECURITY_SYSTEM_TOOL_ID = 'claude.macos.security';
+export const CLAUDE_MACOS_SECURITY_SYSTEM_TOOL_ID = 'macos-security';
 const DEFAULT_CLAUDE_CODE_KEYCHAIN_SERVICE = 'Claude Code-credentials';
 const HAPPIER_MANAGED_CLAUDE_CODE_KEYCHAIN_SERVICE_PATTERN = /^Claude Code-credentials-[a-f0-9]{8}$/u;
 const CLAUDE_MACOS_SECURITY_TIMEOUT_MS = 10_000;
@@ -35,6 +39,16 @@ function buildKeychainDeleteError(status: number | null): Error {
     return new Error(`claude_code_keychain_delete_failed:exit_${status ?? 'unknown'}`);
 }
 
+function readExitCode(result: PluginProcessResult): number | null {
+    return result.termination.observed.kind === 'exit'
+        ? result.termination.observed.exitCode
+        : null;
+}
+
+function decode(bytes: Uint8Array): string {
+    return new TextDecoder().decode(bytes);
+}
+
 export type ClaudeCodeMacOsKeychainSweepSkipReason =
     | 'global_service'
     | 'different_account'
@@ -54,13 +68,12 @@ export type ClaudeCodeMacOsKeychainSweepResult = Readonly<{
     skipped: readonly ClaudeCodeMacOsKeychainSweepSkippedEntry[];
 }>;
 
-async function resolveSecurityLaunch(exec: ExecRuntimeServiceV1, purpose: string) {
-    const grant = await exec.systemTools.resolve({
+async function resolveSecurityExecutable(exec: PluginExecService, purpose: string): Promise<ManagedExecutableRef> {
+    const resolved = await exec.systemTools.resolve({
         toolId: CLAUDE_MACOS_SECURITY_SYSTEM_TOOL_ID,
         purpose,
-        preferredCommand: 'security',
     });
-    return grant.launch;
+    return resolved.executable;
 }
 
 function parseDumpedKeychainCredentialEntries(output: string): ClaudeCodeMacOsKeychainSweepEntry[] {
@@ -93,26 +106,28 @@ function classifyKeychainSweepEntry(params: Readonly<{
 }
 
 export async function sweepStaleClaudeCodeMacOsKeychainCredentials(params: Readonly<{
-    exec: ExecRuntimeServiceV1;
+    exec: PluginExecService;
     username?: string | null | undefined;
     homeDir?: string | null | undefined;
 }>): Promise<ClaudeCodeMacOsKeychainSweepResult> {
     const username = String(params.username ?? userInfo().username).trim();
-    const launch = await resolveSecurityLaunch(
+    const executable = await resolveSecurityExecutable(
         params.exec,
         'sweep stale Claude Code OAuth credentials from the macOS keychain',
     );
     const dump = await params.exec.run({
-        ...launch,
-        args: [...(launch.args ?? []), 'dump-keychain'],
-    }, { timeoutMs: CLAUDE_MACOS_SECURITY_TIMEOUT_MS });
-    if (dump.exitCode !== 0) {
-        throw buildKeychainDeleteError(dump.exitCode);
+        executable,
+        args: ['dump-keychain'],
+        timeoutMs: CLAUDE_MACOS_SECURITY_TIMEOUT_MS,
+    });
+    const dumpExitCode = readExitCode(dump);
+    if (dumpExitCode !== 0) {
+        throw buildKeychainDeleteError(dumpExitCode);
     }
 
     const deleted: ClaudeCodeMacOsKeychainSweepEntry[] = [];
     const skipped: ClaudeCodeMacOsKeychainSweepSkippedEntry[] = [];
-    const entries = parseDumpedKeychainCredentialEntries(dump.stdout);
+    const entries = parseDumpedKeychainCredentialEntries(decode(dump.stdout));
     for (const entry of entries) {
         const classification = classifyKeychainSweepEntry({ entry, username });
         if (classification !== 'delete') {
@@ -120,18 +135,19 @@ export async function sweepStaleClaudeCodeMacOsKeychainCredentials(params: Reado
             continue;
         }
         const result = await params.exec.run({
-            ...launch,
+            executable,
             args: [
-                ...(launch.args ?? []),
                 'delete-generic-password',
                 '-a',
                 username,
                 '-s',
                 entry.service,
             ],
-        }, { timeoutMs: CLAUDE_MACOS_SECURITY_TIMEOUT_MS });
-        if (result.exitCode !== 0 && result.exitCode !== 44) {
-            throw buildKeychainDeleteError(result.exitCode);
+            timeoutMs: CLAUDE_MACOS_SECURITY_TIMEOUT_MS,
+        });
+        const exitCode = readExitCode(result);
+        if (exitCode !== 0 && exitCode !== 44) {
+            throw buildKeychainDeleteError(exitCode);
         }
         deleted.push(entry);
     }
@@ -144,7 +160,7 @@ export async function sweepStaleClaudeCodeMacOsKeychainCredentials(params: Reado
 }
 
 export async function deleteClaudeCodeMacOsKeychainCredential(params: Readonly<{
-    exec: ExecRuntimeServiceV1;
+    exec: PluginExecService;
     claudeConfigDir: string;
     homeDir?: string | null | undefined;
     username?: string | null | undefined;
@@ -153,33 +169,34 @@ export async function deleteClaudeCodeMacOsKeychainCredential(params: Readonly<{
         claudeConfigDir: params.claudeConfigDir,
         homeDir: params.homeDir,
     });
-    let result: Awaited<ReturnType<ExecRuntimeServiceV1['run']>>;
+    let result: PluginProcessResult;
     try {
-        const launch = await resolveSecurityLaunch(
+        const executable = await resolveSecurityExecutable(
             params.exec,
             'delete stale Claude Code OAuth credentials from the macOS keychain',
         );
         result = await params.exec.run({
-            ...launch,
+            executable,
             args: [
-                ...(launch.args ?? []),
                 'delete-generic-password',
                 '-a',
                 String(params.username ?? userInfo().username).trim(),
                 '-s',
                 serviceName,
             ],
-        }, { timeoutMs: CLAUDE_MACOS_SECURITY_TIMEOUT_MS });
+            timeoutMs: CLAUDE_MACOS_SECURITY_TIMEOUT_MS,
+        });
     } catch {
         throw new Error('claude_code_keychain_delete_failed:exec');
     }
-    if (result.exitCode !== 0 && result.exitCode !== 44) {
-        throw buildKeychainDeleteError(result.exitCode);
+    const exitCode = readExitCode(result);
+    if (exitCode !== 0 && exitCode !== 44) {
+        throw buildKeychainDeleteError(exitCode);
     }
 }
 
 export async function readClaudeCodeMacOsKeychainCredential(params: Readonly<{
-    exec: ExecRuntimeServiceV1;
+    exec: PluginExecService;
     claudeConfigDir: string;
     homeDir?: string | null | undefined;
 }>): Promise<ClaudeCodeNativeCredentialPayload | null> {
@@ -195,16 +212,17 @@ export async function readClaudeCodeMacOsKeychainCredential(params: Readonly<{
     // preserved.
     if (serviceName !== DEFAULT_CLAUDE_CODE_KEYCHAIN_SERVICE) return null;
     try {
-        const launch = await resolveSecurityLaunch(
+        const executable = await resolveSecurityExecutable(
             params.exec,
             'read Claude Code OAuth credentials from the macOS keychain',
         );
         const result = await params.exec.run({
-            ...launch,
-            args: [...(launch.args ?? []), 'find-generic-password', '-s', serviceName, '-w'],
-        }, { timeoutMs: CLAUDE_MACOS_SECURITY_TIMEOUT_MS });
-        if (result.exitCode !== 0) return null;
-        return readClaudeCodeNativeCredentialPayload(JSON.parse(result.stdout.trim()) as unknown);
+            executable,
+            args: ['find-generic-password', '-s', serviceName, '-w'],
+            timeoutMs: CLAUDE_MACOS_SECURITY_TIMEOUT_MS,
+        });
+        if (readExitCode(result) !== 0) return null;
+        return readClaudeCodeNativeCredentialPayload(JSON.parse(decode(result.stdout).trim()) as unknown);
     } catch {
         return null;
     }

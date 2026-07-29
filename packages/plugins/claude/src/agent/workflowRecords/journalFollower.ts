@@ -1,22 +1,22 @@
 import { join } from 'node:path';
 
 import type {
-  PluginContextV1,
-  TranscriptFileFollowHandleV1,
-} from '@happier-dev/plugin-sdk';
+  AgentTranscriptFileFollowHandle,
+  AgentTranscriptFileFollowService,
+} from '@happier-dev/plugin-sdk/agent-runtime';
 
 import {
   createClaudeWorkflowJournalWrapper,
   parseClaudeWorkflowFact,
 } from './correlation.js';
 
-type WorkflowJournalFileFollow = Pick<PluginContextV1['agentRuntime']['transcripts']['fileFollow'], 'follow'>;
+type WorkflowJournalFileFollow = Pick<AgentTranscriptFileFollowService, 'follow'>;
 
 type WorkflowJournalEntry = Readonly<{
   workflowToolUseId: string;
   transcriptDir: string;
   sourceSessionId?: string;
-  handle: TranscriptFileFollowHandleV1;
+  handle: AgentTranscriptFileFollowHandle;
 }>;
 
 export type ClaudeWorkflowJournalFollower = Readonly<{

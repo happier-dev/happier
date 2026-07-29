@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from 'vitest';
 import { raceWithTimeout } from '@happier-dev/plugin-sdk/experimental/timeout';
 
 import { buildOpenCodeRetryStatusError } from './openCodeRetryStatus.js';
-import { createOpenCodeProviderActivityTracker } from './providerActivity/createOpenCodeProviderActivityTracker.js';
 
 describe('OpenCode server runtime utilities', () => {
   it('classifies retry status next as retry timing without quota reset fields', () => {
@@ -26,43 +25,6 @@ describe('OpenCode server runtime utilities', () => {
     expect(error?.retryAfterMs).toBeLessThanOrEqual(10_000);
     expect((error as typeof error & { resetAt?: unknown; resetsAt?: unknown })?.resetAt).toBeUndefined();
     expect((error as typeof error & { resetAt?: unknown; resetsAt?: unknown })?.resetsAt).toBeUndefined();
-  });
-
-  it('tracks active provider tool work until terminal evidence arrives', () => {
-    const tracker = createOpenCodeProviderActivityTracker();
-    tracker.resetForProviderSession('sess-1');
-
-    tracker.observeSessionNextTool({
-      sessionId: 'sess-1',
-      callId: 'call-1',
-      terminal: false,
-      source: 'session-next',
-    });
-
-    expect(tracker.hasActiveProviderWork()).toBe(true);
-    expect(tracker.getProviderWorkState()).toMatchObject({
-      active: true,
-      activeToolCallCount: 1,
-      activeToolCalls: [
-        {
-          key: 'sess-1:call-1',
-          sessionId: 'sess-1',
-          callId: 'call-1',
-          status: 'running',
-          sources: ['session-next'],
-        },
-      ],
-    });
-
-    tracker.observeSessionNextTool({
-      sessionId: 'sess-1',
-      callId: 'call-1',
-      terminal: true,
-      source: 'session-next',
-    });
-
-    expect(tracker.hasActiveProviderWork()).toBe(false);
-    expect(tracker.getActiveSessionIds()).toEqual(['sess-1']);
   });
 
   it('returns timeout without waiting for the underlying promise to settle', async () => {

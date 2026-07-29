@@ -1,5 +1,5 @@
 import { estimateClaudeUsageCost } from './cost.js';
-import type { ClaudeUsageObservation } from './types.js';
+import type { ClaudeUsageModelSource, ClaudeUsageObservation } from './types.js';
 
 function asFiniteNonNegativeNumber(value: unknown): number | null {
     return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
@@ -43,6 +43,7 @@ function readLastMessageIterationContextTokens(usage: Record<string, unknown>): 
 
 export function buildClaudeSdkResultUsageObservation(params: Readonly<{
     modelId: string;
+    modelSource?: ClaudeUsageModelSource;
     result: unknown;
     observedAtMs?: number;
 }>): ClaudeUsageObservation | null {
@@ -73,35 +74,46 @@ export function buildClaudeSdkResultUsageObservation(params: Readonly<{
         modelId: params.modelId,
     });
     const contextUsedTokens = readLastMessageIterationContextTokens(usage);
-    const tokens: ClaudeUsageObservation['tokens'] = { total };
-    if (inputTokens != null) tokens.input = inputTokens;
-    if (outputTokens != null) tokens.output = outputTokens;
-    if (cacheReadTokens != null) tokens.cache_read = cacheReadTokens;
-    if (cacheCreationTokens != null) tokens.cache_creation = cacheCreationTokens;
-    const estimatedCost = reportedCost == null
-        ? estimateClaudeUsageCost({
+    const tokens: ClaudeUsageObservation['tokens'] = {
+        total,
+        input: inputTokens ?? 0,
+        output: outputTokens ?? 0,
+        reasoning: 0,
+        cacheRead: cacheReadTokens ?? 0,
+        cacheWrite: cacheCreationTokens ?? 0,
+    };
+    const estimatedCost = params.modelSource === 'provider'
+        ? null
+        : estimateClaudeUsageCost({
             input_tokens: inputTokens ?? undefined,
             output_tokens: outputTokens ?? undefined,
             cache_read_input_tokens: cacheReadTokens ?? undefined,
             cache_creation_input_tokens: cacheCreationTokens ?? undefined,
-        }, params.modelId)
-        : null;
+        }, params.modelId);
     const cost = reportedCost != null
         ? {
             reportedUsd: reportedCost,
-            total: reportedCost,
+            estimatedUsd: 0,
             billingContext: 'unknown' as const,
             costSource: 'provider_reported' as const,
+            currency: 'USD',
         }
-        : {
-            estimatedUsd: estimatedCost?.total ?? 0,
-            total: estimatedCost?.total ?? 0,
-            input: estimatedCost?.input ?? 0,
-            output: estimatedCost?.output ?? 0,
-            billingContext: 'unknown' as const,
-            costSource: 'pricing_estimate' as const,
-        };
-    if (total <= 0 && cost.total <= 0 && contextUsedTokens == null) return null;
+        : estimatedCost
+            ? {
+                estimatedUsd: estimatedCost.total,
+                ...(estimatedCost.breakdown ? { breakdown: estimatedCost.breakdown } : {}),
+                reportedUsd: 0,
+                billingContext: 'unknown' as const,
+                costSource: 'pricing_estimate' as const,
+                currency: 'USD',
+            }
+            : null;
+    if (
+        total <= 0
+        && (cost?.reportedUsd ?? 0) <= 0
+        && (cost?.estimatedUsd ?? 0) <= 0
+        && contextUsedTokens == null
+    ) return null;
 
     return {
         provider: 'claude',

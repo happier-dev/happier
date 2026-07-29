@@ -1,4 +1,4 @@
-import type { FetchRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
+import type { CodexRuntimeFetch } from '../runtimeFetch.js';
 
 export const OPENAI_CODEX_DEFAULT_RATE_LIMIT_RESET_CREDITS_URL =
   'https://chatgpt.com/backend-api/wham/rate-limit-reset-credits';
@@ -11,7 +11,7 @@ export type CodexRateLimitResetCreditsClientParams = Readonly<{
   accountId?: string | null;
   userAgent?: string;
   signal?: AbortSignal;
-  runtimeFetch: FetchRuntimeServiceV1;
+  runtimeFetch: CodexRuntimeFetch;
 }>;
 
 function buildHeaders(params: Readonly<{

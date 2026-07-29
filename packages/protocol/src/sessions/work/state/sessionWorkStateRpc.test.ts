@@ -121,6 +121,11 @@ describe('session work-state RPC contracts', () => {
             },
         });
         expect(ConnectedServiceQuotaRecoveryCreditConsumeResponseV1Schema.parse({
+            ok: true,
+            snapshot: null,
+            receipt: { idempotencyKey: 'consume:s1:aggregate', status: 'nothing_to_reset' },
+        }).receipt.status).toBe('nothing_to_reset');
+        expect(ConnectedServiceQuotaRecoveryCreditConsumeResponseV1Schema.parse({
             ok: false,
             error: 'unavailable',
             errorCode: 'connected_service_quota_recovery_credit_unavailable',
@@ -486,9 +491,16 @@ describe('session work-state RPC contracts', () => {
             sessionId: 's1',
             resumePromptMode: 'invalid',
         }).success).toBe(false);
-        expect(cancelRequestSchema.parse({ sessionId: 's1', issueFingerprint: null })).toEqual({
+        expect(cancelRequestSchema.parse({
             sessionId: 's1',
-            issueFingerprint: null,
+            issueFingerprint: 'usage-limit:s1:123',
+            armedAtMs: 123,
+            runtimeAuthRecoveryAttemptId: 'runtime-auth-attempt:exact-1',
+        })).toEqual({
+            sessionId: 's1',
+            issueFingerprint: 'usage-limit:s1:123',
+            armedAtMs: 123,
+            runtimeAuthRecoveryAttemptId: 'runtime-auth-attempt:exact-1',
         });
         expect(checkNowRequestSchema.parse({ sessionId: 's1', provider: ' codex ', resumePromptMode: 'off' })).toEqual({
             sessionId: 's1',

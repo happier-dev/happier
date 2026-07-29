@@ -15,7 +15,7 @@ describe('resolveClaudeDaemonSpawnPrerequisites', () => {
 
         await expect(resolveClaudeDaemonSpawnPrerequisites({}, {
             tools: { resolveSystemTool },
-        })).resolves.toEqual({ allowed: true });
+        })).resolves.toEqual({ decision: 'allow' });
 
         expect(resolveSystemTool).toHaveBeenCalledWith(expect.objectContaining({
             toolId: 'claude',
@@ -26,7 +26,7 @@ describe('resolveClaudeDaemonSpawnPrerequisites', () => {
 
     it('fails closed when the daemon tool-resolution context is unavailable', async () => {
         await expect(resolveClaudeDaemonSpawnPrerequisites({})).resolves.toMatchObject({
-            allowed: false,
+            decision: 'deny',
             reasonCode: 'claude_cli_unavailable',
         });
     });
@@ -40,7 +40,7 @@ describe('resolveClaudeDaemonSpawnPrerequisites', () => {
                 }),
             },
         })).resolves.toMatchObject({
-            allowed: false,
+            decision: 'deny',
             reasonCode: 'claude_cli_unavailable',
             errorMessage: expect.stringContaining('Claude CLI is missing'),
         });

@@ -1,22 +1,29 @@
 import {
   resolveAcpToolPermissionPolicy,
-  type AcpToolPermissionPolicyV1,
-} from '@happier-dev/plugin-sdk/experimental/acp';
+} from '@happier-dev/agents';
+import type { AgentPermissionIntent } from '@happier-dev/plugin-sdk/agent-runtime';
 
-type OpenCodePermissionPolicy = AcpToolPermissionPolicyV1;
+type OpenCodePermissionPolicy = ReturnType<typeof resolveAcpToolPermissionPolicy>;
 
-export function resolveKiloOpenCodePermissionPolicy(permissionMode: string | null | undefined): OpenCodePermissionPolicy {
-  return resolveAcpToolPermissionPolicy(permissionMode);
+export const KILO_OPENCODE_PERMISSION_ENV = 'OPENCODE_PERMISSION';
+
+export function resolveKiloOpenCodePermissionPolicy(permissionIntent: AgentPermissionIntent | null): OpenCodePermissionPolicy {
+  return resolveAcpToolPermissionPolicy(permissionIntent);
 }
 
 export function buildKiloOpenCodePermissionEnv(params: Readonly<{
   env?: Readonly<Record<string, string | undefined>>;
-  permissionMode?: string | null;
+  permissionIntent: AgentPermissionIntent | null;
 }>): Readonly<Record<string, string>> {
-  if (typeof params.env?.OPENCODE_PERMISSION === 'string' && params.env.OPENCODE_PERMISSION.length > 0) {
+  if (
+    typeof params.env?.[KILO_OPENCODE_PERMISSION_ENV] === 'string'
+    && params.env[KILO_OPENCODE_PERMISSION_ENV].length > 0
+  ) {
     return {};
   }
   return {
-    OPENCODE_PERMISSION: JSON.stringify(resolveKiloOpenCodePermissionPolicy(params.permissionMode)),
+    [KILO_OPENCODE_PERMISSION_ENV]: JSON.stringify(
+      resolveKiloOpenCodePermissionPolicy(params.permissionIntent),
+    ),
   };
 }

@@ -1,37 +1,56 @@
-import {
-  toPluginHookObjectContext,
-  toPluginHookPayloadEnvelope,
-} from '@happier-dev/plugin-sdk';
+import type { PluginApi } from '@happier-dev/plugin-sdk';
 import type {
-  PluginApiHookRegistrationV1,
-  PluginApi,
-  PluginContextV1,
-  PluginHookHandler,
-} from '@happier-dev/plugin-sdk';
+  AgentRuntimeFactory,
+  AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { HookHandler,
+} from '@happier-dev/plugin-sdk/runtime';
 
-import { KIMI_ACP_BACKEND_SPEC } from './agent/acp/definition.js';
+import { buildKimiAcpArgv, buildKimiAcpEnv } from './agent/acp/callbacks.js';
+import { KIMI_ACP_RUNTIME_DEFINITION } from './agent/acp/definition.js';
 import { resolveKimiDaemonSpawnPrerequisites } from './agent/lifecycle/spawnHooks.js';
 
-type KimiSpawnPrerequisiteHookEvent = Parameters<typeof resolveKimiDaemonSpawnPrerequisites>[0];
-type KimiSpawnPrerequisiteHookContext = NonNullable<Parameters<typeof resolveKimiDaemonSpawnPrerequisites>[1]>;
+const resolveKimiDaemonSpawnPrerequisitesHook: HookHandler = (event, context) =>
+  resolveKimiDaemonSpawnPrerequisites(event, context);
 
-const resolveKimiDaemonSpawnPrerequisitesHook: PluginHookHandler<'agent.resolvePrerequisites'> = (event, context) =>
-  resolveKimiDaemonSpawnPrerequisites(
-    toPluginHookPayloadEnvelope<KimiSpawnPrerequisiteHookEvent>(event),
-    toPluginHookObjectContext<KimiSpawnPrerequisiteHookContext>(context),
-  );
+function withoutPythonPathLaunchEnvironment(request: AgentSessionOpenRequest): AgentSessionOpenRequest {
+  const values = request.launchEnvironment?.values;
+  if (!values || !Object.prototype.hasOwnProperty.call(values, 'PYTHONPATH')) {
+    return request;
+  }
+  const { PYTHONPATH: _pythonPath, ...remainingValues } = values;
+  return {
+    ...request,
+    launchEnvironment: {
+      ...request.launchEnvironment,
+      values: remainingValues,
+    },
+  };
+}
+
+export const createKimiAgentRuntime: AgentRuntimeFactory = () => ({
+  sessions: {
+    open(request, context) {
+      if (!request.configuration) {
+        throw new Error('Kimi requires the host-projected Agent session configuration');
+      }
+      return context.protocols.acp.open(withoutPythonPathLaunchEnvironment(request), {
+        transport: {
+          kind: 'stdio',
+          executable: { kind: 'systemTool', id: 'kimi-cli' },
+          args: buildKimiAcpArgv({
+            baseArgs: ['acp'],
+            cwd: request.cwd,
+            permissionIntent: request.configuration.permissionIntent.value,
+          }),
+          env: buildKimiAcpEnv({ launchEnvironment: request.launchEnvironment }),
+        },
+        definition: KIMI_ACP_RUNTIME_DEFINITION,
+      });
+    },
+  },
+});
 
 export function activate(api: PluginApi): void {
-  api.registerAgentRuntime({
-    agentId: 'kimi',
-    create: (ctx: PluginContextV1) => ctx.agentRuntime.acp.defineAcpBackend(KIMI_ACP_BACKEND_SPEC),
-  });
-  api.registerHook({
-    hookId: 'agent.resolvePrerequisites',
-    category: 'decision',
-    scope: 'agent',
-    filters: { agentId: 'kimi' },
-    executionKind: 'decide',
-    handler: resolveKimiDaemonSpawnPrerequisitesHook,
-  } satisfies PluginApiHookRegistrationV1<'agent.resolvePrerequisites'>);
+  api.agents.register('kimi', createKimiAgentRuntime);
+  api.hooks.register('resolve-prerequisites', resolveKimiDaemonSpawnPrerequisitesHook);
 }

@@ -18,6 +18,7 @@ describe('PendingDeliveryBlockedReasonSchema', () => {
     expect(PENDING_DELIVERY_BLOCKED_REASONS).toEqual(expect.arrayContaining([
       'terminal_composer_draft',
       'runtime_config_blocked',
+      'unsupported_action',
     ]));
     expect(normalizePendingDeliveryBlockedReason('runtime_config_blocked')).toBe('runtime_config_blocked');
   });
@@ -25,6 +26,11 @@ describe('PendingDeliveryBlockedReasonSchema', () => {
   it('keeps capture-style rows parseable as legacy read-only blocked reasons', () => {
     expect(PENDING_DELIVERY_BLOCKED_REASONS).toContain('capture_style_unavailable');
     expect(normalizePendingDeliveryBlockedReason('capture_style_unavailable')).toBe('capture_style_unavailable');
+  });
+
+  it('accepts inherited provider claims with an uncertain outcome', () => {
+    expect(PendingDeliveryBlockedReasonSchema.parse('delivery_outcome_uncertain')).toBe('delivery_outcome_uncertain');
+    expect(normalizePendingDeliveryBlockedReason('delivery_outcome_uncertain')).toBe('delivery_outcome_uncertain');
   });
 
   it('rejects unknown or empty reason values', () => {

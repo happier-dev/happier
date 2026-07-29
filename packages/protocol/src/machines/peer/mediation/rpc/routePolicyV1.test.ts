@@ -1,12 +1,19 @@
 import { describe, expect, it } from 'vitest';
 
+import { HOST_PRIVATE_PLUGIN_INSTALL_DECISION_RPC_METHOD } from '../../../../marketplace/internal.js';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '../../../../rpc/index.js';
+import { PeerFlowKindV1Schema } from '../flowKind.js';
 
 async function importRpcPolicy() {
   return await import('./index').catch((error: unknown) => ({ importError: error }));
 }
 
 describe('MachineRpcRoutePolicyV1', () => {
+  it('keeps daemon_voice_audio as an RPC fallback classification outside peer media flows', () => {
+    expect(PeerFlowKindV1Schema.safeParse('daemon_voice_audio').success).toBe(false);
+    expect(PeerFlowKindV1Schema.safeParse('voice_media').success).toBe(true);
+  });
+
   it('classifies every deployed RPC and session RPC method exactly once', async () => {
     const protocol = await importRpcPolicy();
     expect(protocol).toHaveProperty('validateMachineRpcRoutePolicies');
@@ -19,7 +26,7 @@ describe('MachineRpcRoutePolicyV1', () => {
     expect(result.unknownMethods).toEqual([]);
     expect(result.duplicateMethods).toEqual([]);
     expect(result.policies).toHaveLength(
-      Object.keys(RPC_METHODS).length + Object.keys(SESSION_RPC_METHODS).length,
+      Object.keys(RPC_METHODS).length + Object.keys(SESSION_RPC_METHODS).length + 1,
     );
   });
 
@@ -33,9 +40,38 @@ describe('MachineRpcRoutePolicyV1', () => {
       serverRequiredReason: 'durable_session_write',
       commandReceiptRequired: false,
     });
+    for (const method of [
+      RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE,
+      RPC_METHODS.SESSION_FORK_PROVIDER_SAFE,
+    ]) {
+      expect(protocol.resolveMachineRpcRoutePolicy(method)).toMatchObject({
+        routeClass: 'server_required',
+        serverRequiredReason: 'durable_session_write',
+        commandReceiptRequired: false,
+      });
+    }
     expect(protocol.resolveMachineRpcRoutePolicy('not.registered')).toMatchObject({
       routeClass: 'server_required',
       serverRequiredReason: 'unclassified',
+    });
+  });
+
+  it('keeps route-independent direct import abort authenticated through the server control plane', async () => {
+    const protocol = await importRpcPolicy();
+    expect(protocol).toHaveProperty('resolveMachineRpcRoutePolicy');
+    if ('importError' in protocol) throw protocol.importError;
+
+    expect(protocol.resolveMachineRpcRoutePolicy(
+      RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_ABORT,
+    )).toMatchObject({
+      routeClass: 'server_required',
+      serverRequiredReason: 'server_persistence',
+      commandReceiptRequired: false,
+      scope: expect.objectContaining({
+        accountRequired: true,
+        machineRequired: true,
+        serverRequired: true,
+      }),
     });
   });
 
@@ -47,6 +83,7 @@ describe('MachineRpcRoutePolicyV1', () => {
     for (const method of [
       SESSION_RPC_METHODS.SESSION_CONNECTED_SERVICE_AUTH_APPLY_GENERATION,
       SESSION_RPC_METHODS.SESSION_CONNECTED_SERVICE_AUTH_READ_RUNTIME_IDENTITY,
+      SESSION_RPC_METHODS.SESSION_PROVIDER_INPUT_ADMISSION,
     ]) {
       expect(protocol.resolveMachineRpcRoutePolicy(method)).toMatchObject({
         routeClass: 'server_required',
@@ -79,6 +116,20 @@ describe('MachineRpcRoutePolicyV1', () => {
       serverRequiredReason: 'destructive_or_recovery_mutation',
       rpcClassification: 'action_spec_bound',
       actionSpecId: 'session.terminalComposer.clear',
+      commandReceiptRequired: false,
+      scope: expect.objectContaining({
+        sessionRequired: true,
+        serverRequired: true,
+      }),
+    });
+
+    expect(protocol.resolveMachineRpcRoutePolicy(
+      SESSION_RPC_METHODS.SESSION_PENDING_INPUT_INTERRUPT_AND_RUN,
+    )).toMatchObject({
+      routeClass: 'server_required',
+      serverRequiredReason: 'destructive_or_recovery_mutation',
+      rpcClassification: 'action_spec_bound',
+      actionSpecId: 'session.pendingInput.interruptAndRun',
       commandReceiptRequired: false,
       scope: expect.objectContaining({
         sessionRequired: true,
@@ -195,6 +246,136 @@ describe('MachineRpcRoutePolicyV1', () => {
         serverRequired: false,
       }),
     });
+  });
+
+  it('routes the host-private plugin install decision directly without advertising it in the public RPC catalog', async () => {
+    expect(Object.values(RPC_METHODS)).not.toContain('daemon.plugins.install.review.decide');
+
+    const protocol = await importRpcPolicy();
+    expect(protocol).toHaveProperty('resolveMachineRpcRoutePolicy');
+    if ('importError' in protocol) throw protocol.importError;
+
+    expect(protocol.resolveMachineRpcRoutePolicy(
+      HOST_PRIVATE_PLUGIN_INSTALL_DECISION_RPC_METHOD,
+    )).toMatchObject({
+      routeClass: 'direct_medium_risk_receipted',
+      rpcClassification: 'internal_only',
+      commandReceiptRequired: true,
+      scope: expect.objectContaining({
+        accountRequired: true,
+        machineRequired: true,
+        sessionRequired: false,
+        serverRequired: false,
+      }),
+    });
+  });
+
+  it('routes daemon-local plugin discovery and rendering reads directly while receipting mutations and actions', async () => {
+    const protocol = await importRpcPolicy();
+    expect(protocol).toHaveProperty('resolveMachineRpcRoutePolicy');
+    if ('importError' in protocol) throw protocol.importError;
+
+    for (const method of [
+      RPC_METHODS.DAEMON_MARKETPLACE_INDEX_QUERY,
+      RPC_METHODS.DAEMON_NPM_REGISTRY_PROFILES_GET,
+      RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_RESOLVE,
+    ]) {
+      expect(protocol.resolveMachineRpcRoutePolicy(method)).toMatchObject({
+        routeClass: 'direct_ephemeral',
+        rpcClassification: 'internal_only',
+        commandReceiptRequired: false,
+        scope: expect.objectContaining({
+          accountRequired: true,
+          machineRequired: true,
+          sessionRequired: false,
+          serverRequired: false,
+        }),
+      });
+    }
+
+    for (const method of [
+      RPC_METHODS.DAEMON_NPM_REGISTRY_PROFILES_MUTATE,
+      RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE,
+    ]) {
+      expect(protocol.resolveMachineRpcRoutePolicy(method)).toMatchObject({
+        routeClass: 'direct_medium_risk_receipted',
+        rpcClassification: 'internal_only',
+        commandReceiptRequired: true,
+        scope: expect.objectContaining({
+          accountRequired: true,
+          machineRequired: true,
+          sessionRequired: false,
+          serverRequired: false,
+        }),
+      });
+    }
+  });
+
+  it('routes exact-machine Voice diagnostics reads directly and receipts local policy, deletion, and export lifecycle mutations', async () => {
+    const protocol = await importRpcPolicy();
+    expect(protocol).toHaveProperty('resolveMachineRpcRoutePolicy');
+    if ('importError' in protocol) throw protocol.importError;
+
+    for (const method of [
+      RPC_METHODS.DAEMON_VOICE_DIAGNOSTICS_STATUS,
+      RPC_METHODS.DAEMON_VOICE_DIAGNOSTICS_ARTIFACT_DOWNLOAD_CHUNK,
+    ]) {
+      expect(protocol.resolveMachineRpcRoutePolicy(method)).toMatchObject({
+        routeClass: 'direct_ephemeral',
+        rpcClassification: 'internal_only',
+        commandReceiptRequired: false,
+        scope: expect.objectContaining({
+          accountRequired: true,
+          machineRequired: true,
+          sessionRequired: false,
+          serverRequired: false,
+        }),
+      });
+    }
+
+    for (const method of [
+      RPC_METHODS.DAEMON_VOICE_DIAGNOSTICS_CONFIGURE,
+      RPC_METHODS.DAEMON_VOICE_DIAGNOSTICS_DELETE_ALL,
+      RPC_METHODS.DAEMON_VOICE_DIAGNOSTICS_REVOKE_CAPTURE,
+      RPC_METHODS.DAEMON_VOICE_DIAGNOSTICS_ARTIFACT_DOWNLOAD_INIT,
+      RPC_METHODS.DAEMON_VOICE_DIAGNOSTICS_ARTIFACT_DOWNLOAD_FINALIZE,
+      RPC_METHODS.DAEMON_VOICE_DIAGNOSTICS_ARTIFACT_DOWNLOAD_ABORT,
+    ]) {
+      expect(protocol.resolveMachineRpcRoutePolicy(method)).toMatchObject({
+        routeClass: 'direct_medium_risk_receipted',
+        rpcClassification: 'internal_only',
+        commandReceiptRequired: true,
+        scope: expect.objectContaining({
+          accountRequired: true,
+          machineRequired: true,
+          sessionRequired: false,
+          serverRequired: false,
+        }),
+      });
+    }
+  });
+
+  it('keeps verdict-free Pending wake discovery and publication on the authenticated exact-session route', async () => {
+    const protocol = await importRpcPolicy();
+    expect(protocol).toHaveProperty('resolveMachineRpcRoutePolicy');
+    if ('importError' in protocol) throw protocol.importError;
+
+    for (const method of [
+      SESSION_RPC_METHODS.SESSION_PENDING_QUEUE_WAKE_CAPABILITY_GET_V1,
+      SESSION_RPC_METHODS.SESSION_PENDING_QUEUE_WAKE_V1,
+    ]) {
+      expect(protocol.resolveMachineRpcRoutePolicy(method)).toMatchObject({
+        routeClass: 'server_required',
+        serverRequiredReason: 'pending_queue',
+        commandReceiptRequired: false,
+        scope: expect.objectContaining({
+          accountRequired: true,
+          machineRequired: true,
+          sessionRequired: true,
+          serverRequired: true,
+        }),
+      });
+    }
   });
 
   it('routes signed live-stream relay start directly only with a command receipt', async () => {
@@ -403,6 +584,30 @@ describe('MachineRpcRoutePolicyV1', () => {
       rpcClassification: 'action_spec_bound',
       actionSpecId: 'sessions.external.unfollow',
     });
+
+    const operationActions = [
+      [RPC_METHODS.DAEMON_EXTERNAL_SESSION_MATERIALIZE_START, 'sessions.external.materialize.start'],
+      [RPC_METHODS.DAEMON_EXTERNAL_SESSION_TAKEOVER_START, 'sessions.external.takeover.start'],
+      [RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_STATUS_GET, 'sessions.external.operation.status.get'],
+      [RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_CANCEL, 'sessions.external.operation.cancel'],
+      [RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_RESUME, 'sessions.external.operation.resume'],
+      [RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_RETRY, 'sessions.external.operation.retry'],
+      [RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_DISCARD, 'sessions.external.operation.discard'],
+    ] as const;
+    for (const [rpcMethod, actionSpecId] of operationActions) {
+      expect(protocol.resolveMachineRpcRoutePolicy(rpcMethod)).toMatchObject({
+        routeClass: 'server_required',
+        rpcClassification: 'action_spec_bound',
+        actionSpecId,
+      });
+    }
+    expect(protocol.resolveMachineRpcRoutePolicy(
+      RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESUME,
+    )).toMatchObject({
+      routeClass: 'server_required',
+      rpcClassification: 'action_spec_bound',
+      actionSpecId: 'session.handoff.prepare_target.resume',
+    });
   });
 
   it('identifies execution-run session RPC governance from A.12 ActionSpec bindings', async () => {
@@ -429,6 +634,7 @@ describe('MachineRpcRoutePolicyV1', () => {
 
     const methods = [
       RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_INSTALL,
+      RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_LICENSE_ACCEPT,
       RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_WARM,
       RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_ABORT,
       RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_CANCEL,
@@ -493,14 +699,12 @@ describe('MachineRpcRoutePolicyV1', () => {
     }
   });
 
-  it('keeps daemon-owned voice credentials direct while receipting secret and auth mutations', async () => {
+  it('keeps daemon-executed OpenAI-compatible operations on their risk-appropriate direct routes', async () => {
     const protocol = await importRpcPolicy();
     expect(protocol).toHaveProperty('resolveMachineRpcRoutePolicy');
     if ('importError' in protocol) throw protocol.importError;
 
     for (const method of [
-      RPC_METHODS.DAEMON_VOICE_CREDENTIAL_STATUS,
-      RPC_METHODS.DAEMON_VOICE_CREDENTIAL_PROVIDER_CATALOG,
       RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_MODELS_LIST,
     ]) {
       expect(protocol.resolveMachineRpcRoutePolicy(method)).toMatchObject({
@@ -517,9 +721,6 @@ describe('MachineRpcRoutePolicyV1', () => {
     }
 
     for (const method of [
-      RPC_METHODS.DAEMON_VOICE_CREDENTIAL_STORE,
-      RPC_METHODS.DAEMON_VOICE_CREDENTIAL_DELETE,
-      RPC_METHODS.DAEMON_VOICE_CREDENTIAL_MINT_CLIENT_AUTH,
       RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_CHAT,
     ]) {
       expect(protocol.resolveMachineRpcRoutePolicy(method)).toMatchObject({
@@ -581,13 +782,13 @@ describe('MachineRpcRoutePolicyV1', () => {
     if ('importError' in protocol) throw protocol.importError;
 
     for (const method of [
-      RPC_METHODS.DAEMON_VOICE_GOOGLE_TRANSCRIBE_UPLOAD_INIT,
-      RPC_METHODS.DAEMON_VOICE_GOOGLE_TRANSCRIBE_UPLOAD_CHUNK,
-      RPC_METHODS.DAEMON_VOICE_GOOGLE_TRANSCRIBE_UPLOAD_FINALIZE,
-      RPC_METHODS.DAEMON_VOICE_GOOGLE_TRANSCRIBE,
-      RPC_METHODS.DAEMON_VOICE_GOOGLE_SYNTHESIZE,
-      RPC_METHODS.DAEMON_VOICE_GOOGLE_DOWNLOAD_CHUNK,
-      RPC_METHODS.DAEMON_VOICE_GOOGLE_DOWNLOAD_FINALIZE,
+      RPC_METHODS.DAEMON_VOICE_SPEECH_TRANSCRIBE_UPLOAD_INIT,
+      RPC_METHODS.DAEMON_VOICE_SPEECH_TRANSCRIBE_UPLOAD_CHUNK,
+      RPC_METHODS.DAEMON_VOICE_SPEECH_TRANSCRIBE_UPLOAD_FINALIZE,
+      RPC_METHODS.DAEMON_VOICE_SPEECH_TRANSCRIBE,
+      RPC_METHODS.DAEMON_VOICE_SPEECH_SYNTHESIZE,
+      RPC_METHODS.DAEMON_VOICE_SPEECH_DOWNLOAD_CHUNK,
+      RPC_METHODS.DAEMON_VOICE_SPEECH_DOWNLOAD_FINALIZE,
     ]) {
       expect(protocol.resolveMachineRpcRoutePolicy(method)).toMatchObject({
         routeClass: 'direct_medium_risk_receipted',
@@ -602,8 +803,8 @@ describe('MachineRpcRoutePolicyV1', () => {
     }
 
     for (const method of [
-      RPC_METHODS.DAEMON_VOICE_GOOGLE_TRANSCRIBE_UPLOAD_ABORT,
-      RPC_METHODS.DAEMON_VOICE_GOOGLE_DOWNLOAD_ABORT,
+      RPC_METHODS.DAEMON_VOICE_SPEECH_TRANSCRIBE_UPLOAD_ABORT,
+      RPC_METHODS.DAEMON_VOICE_SPEECH_DOWNLOAD_ABORT,
     ]) {
       expect(protocol.resolveMachineRpcRoutePolicy(method)).toMatchObject({
         routeClass: 'server_required',
@@ -638,7 +839,6 @@ describe('MachineRpcRoutePolicyV1', () => {
       RPC_METHODS.DAEMON_PROVIDERS_MODEL_SETTINGS_MUTATE,
       RPC_METHODS.DAEMON_PROVIDERS_PROFILE_MIGRATION_CONFIRM,
       RPC_METHODS.DAEMON_PROVIDERS_PROFILE_MIGRATION_CONFLICT_CONFIRM,
-      RPC_METHODS.DAEMON_VOICE_ELEVENLABS_PROVISION,
     ]) {
       expect(protocol.resolveMachineRpcRoutePolicy(method)).toMatchObject({
         routeClass: 'server_required',
@@ -698,18 +898,18 @@ describe('MachineRpcRoutePolicyV1', () => {
 
   it('exposes canonical daemon voice STT relay tunnel identifiers for tunnel policy consumers', async () => {
     const protocol = await importRpcPolicy();
-    expect(protocol).toHaveProperty('createDaemonVoiceSttRelayTunnelId');
-    expect(protocol).toHaveProperty('isDaemonVoiceSttRelayTunnelId');
+    expect(protocol).toHaveProperty('createVoiceMediaRelayTunnelId');
+    expect(protocol).toHaveProperty('isVoiceMediaRelayTunnelId');
     if ('importError' in protocol) throw protocol.importError;
 
-    const tunnelId = protocol.createDaemonVoiceSttRelayTunnelId({
+    const tunnelId = protocol.createVoiceMediaRelayTunnelId({
       machineId: 'machine-1',
       requestId: 'request-1',
     });
 
-    expect(tunnelId).toBe('voice-stt:machine-1:request-1');
-    expect(protocol.isDaemonVoiceSttRelayTunnelId(tunnelId)).toBe(true);
-    expect(protocol.isDaemonVoiceSttRelayTunnelId('tun_generic')).toBe(false);
+    expect(tunnelId).toBe('voice-media:machine-1:request-1');
+    expect(protocol.isVoiceMediaRelayTunnelId(tunnelId)).toBe(true);
+    expect(protocol.isVoiceMediaRelayTunnelId('tun_generic')).toBe(false);
     expect(protocol.DAEMON_VOICE_AUDIO_RELAY_CAP_PROFILE_ID).toBe('machine_live_stream_relay_caps_v1');
   });
 

@@ -8,12 +8,12 @@ import type {
   ScmPullRequestReference,
   ScmPullRequestSummary,
   ScmWorkingSnapshot,
-} from '@happier-dev/plugin-sdk/scm';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/experimental/scm';
 import {
     readCurrentScmHostingProviderRuntimeServices,
     type ScmHostingProviderRuntimeServices,
-} from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/experimental/scm/hostingProvider';
 
 import type { ScmBackendContext } from '../types.js';
 import { getGitSnapshot } from '../repository.js';

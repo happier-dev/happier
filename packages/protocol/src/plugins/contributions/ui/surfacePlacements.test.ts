@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 
-import { PluginContributesV2Schema } from '../v2.js';
 import {
   PluginSurfacePlacementDescriptorV1Schema,
   PluginSurfacePlacementKindV1Schema,
@@ -14,7 +13,7 @@ const display = {
 } as const;
 
 describe('plugin surface placement descriptors', () => {
-  it('accepts the generic plugin placement vocabulary without routing through session-only descriptors', () => {
+  it('validates the generic placement vocabulary independently of the canonical manifest UI graph', () => {
     expect(PluginSurfacePlacementKindV1Schema.options).toEqual([
       'session.details',
       'session.preview',
@@ -34,8 +33,7 @@ describe('plugin surface placement descriptors', () => {
       'services.panel',
     ]);
 
-    const parsed = PluginContributesV2Schema.parse({
-      surfacePlacements: [{
+    const parsed = [{
         id: 'workspace-preview',
         placement: 'workspace.details',
         target: {
@@ -82,20 +80,18 @@ describe('plugin surface placement descriptors', () => {
           requiredPermissionIds: [],
         }],
         display,
-      }],
-    });
+      }].map((placement) => PluginSurfacePlacementDescriptorV1Schema.parse(placement));
 
-    expect(parsed.surfacePlacements?.map((placement) => placement.placement)).toEqual([
+    expect(parsed.map((placement) => placement.placement)).toEqual([
       'workspace.details',
       'app.settingsPage',
       'browser.panel',
     ]);
-    expect(parsed.surfacePlacements?.[0]?.renderer.kind).toBe('hostedWeb');
+    expect(parsed[0]?.renderer.kind).toBe('hostedWeb');
   });
 
-  it('accepts right-sidebar tab and services panel placements with host-owned projection metadata', () => {
-    const parsed = PluginContributesV2Schema.parse({
-      surfacePlacements: [{
+  it('validates right-sidebar tab and services panel placement metadata', () => {
+    const parsed = [{
         id: 'session-review-tab',
         placement: 'session.rightSidebarTab',
         target: { kind: 'session', sessionIdPath: '/session/id' },
@@ -144,15 +140,14 @@ describe('plugin surface placement descriptors', () => {
         renderer: { kind: 'host', rendererId: 'serviceInspector' },
         display,
         order: 5,
-      }],
-    });
+      }].map((placement) => PluginSurfacePlacementDescriptorV1Schema.parse(placement));
 
-    expect(parsed.surfacePlacements?.map((placement) => placement.placement)).toEqual([
+    expect(parsed.map((placement) => placement.placement)).toEqual([
       'session.rightSidebarTab',
       'project.rightSidebarTab',
       'services.panel',
     ]);
-    expect(parsed.surfacePlacements?.[0]).toMatchObject({
+    expect(parsed[0]).toMatchObject({
       rightSidebar: {
         tabId: 'review',
         scope: 'session',
@@ -177,15 +172,16 @@ describe('plugin surface placement descriptors', () => {
     });
     expect(parsedReactNative.renderer.kind).toBe('reactNative');
 
-    const parsedEmbeddedWeb = PluginSurfacePlacementDescriptorV1Schema.parse({
-      id: 'embedded-preview',
+  });
+
+  it('rejects removed embedded-web renderer references', () => {
+    expect(PluginSurfacePlacementDescriptorV1Schema.safeParse({
+      id: 'removed-embedded-web',
       placement: 'browser.panel',
       target: { kind: 'browser', browserViewIdPath: '/browser/viewId' },
-      renderer: { kind: 'embeddedWeb', contributionId: 'embedded-preview' },
+      renderer: { kind: 'embeddedWeb', contributionId: 'removed-embedded-web' },
       display,
-    });
-    expect(parsedEmbeddedWeb.renderer.kind).toBe('embeddedWeb');
-
+    }).success).toBe(false);
   });
 
   it('rejects right-sidebar placements without matching tab metadata or target scope', () => {

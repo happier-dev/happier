@@ -5,9 +5,9 @@ import {
   resolveProviderBindingCompatibilityWithFingerprintV1,
 } from '@happier-dev/protocol';
 import type {
-  AgentProviderBindingMaterializeInputV1,
-  AgentProviderBindingPrepareInputV1,
-} from '@happier-dev/plugin-sdk';
+  AgentProviderBindingMaterializeInput,
+  AgentProviderBindingPrepareInput,
+} from '@happier-dev/plugin-sdk/agent-runtime';
 
 import { PLUGIN_MANIFEST } from '../../manifest.js';
 import { OPENCODE_PROVIDER_BINDING_ADAPTER_V1 } from './adapter.js';
@@ -22,8 +22,8 @@ const bearerTransport = {
 } as const;
 
 function prepareInput(
-  overrides: Partial<AgentProviderBindingPrepareInputV1> = {},
-): AgentProviderBindingPrepareInputV1 {
+  overrides: Partial<AgentProviderBindingPrepareInput> = {},
+): AgentProviderBindingPrepareInput {
   return {
     v: 1,
     agentTargetKey: 'backend:opencode:built_in',
@@ -33,15 +33,15 @@ function prepareInput(
 }
 
 function materializeInput(
-  overrides: Partial<AgentProviderBindingMaterializeInputV1> = {},
-): AgentProviderBindingMaterializeInputV1 {
+  overrides: Partial<AgentProviderBindingMaterializeInput> = {},
+): AgentProviderBindingMaterializeInput {
   return {
     v: 1,
     binding: {
       v: 1,
       agentTargetKey: 'backend:opencode:built_in',
-      selection: { connectionId, modelId: 'vendor/model' },
-      contributionKey: 'happier.provider.openrouter:providers:openrouter',
+      selection: { connectionId, model: { id: 'vendor/model', name: 'Vendor model' } },
+      contributionKey: 'happier.provider.openrouter/openrouter',
       endpoint: {
         endpointTemplateId: 'openrouter-openai-responses',
         normalizedUrl: 'https://openrouter.ai/api/v1',
@@ -64,7 +64,7 @@ function fileConfig(output: Awaited<ReturnType<typeof OPENCODE_PROVIDER_BINDING_
 
 describe('OpenCode provider-binding adapter V1', () => {
   it('declares exact Chat/Responses support that agrees with the executable adapter', () => {
-    const support = PLUGIN_MANIFEST.contributes.agents[0]?.providerSupport;
+    const support = PLUGIN_MANIFEST.contributes.agents[0]?.providerRequirements;
 
     expect(support).toEqual({
       acceptsProtocols: ['openai-responses', 'openai-chat'],
@@ -88,10 +88,12 @@ describe('OpenCode provider-binding adapter V1', () => {
           'HAPPIER_OPENCODE_PROVIDER_API_KEY',
           'OPENCODE_AUTH_CONTENT',
           'OPENCODE_CONFIG_CONTENT',
+          'OPENAI_API_KEY',
+          'ANTHROPIC_API_KEY',
         ],
       },
       materialization: 'configFile',
-      applyPolicy: 'live',
+      applyPolicy: 'restart_session',
       supportsFreeformModelIds: true,
     });
     expect(OPENCODE_PROVIDER_BINDING_ADAPTER_V1.prepare(prepareInput())).toEqual({
@@ -101,8 +103,17 @@ describe('OpenCode provider-binding adapter V1', () => {
     });
   });
 
+  it('materializes the exact static owned environment set so native credentials cannot bypass the selected Provider', async () => {
+    const support = PLUGIN_MANIFEST.contributes.agents[0]!.providerRequirements!;
+    const output = await OPENCODE_PROVIDER_BINDING_ADAPTER_V1.materialize(materializeInput());
+
+    expect(output.env.map((entry) => entry.name).sort()).toEqual(
+      [...support.authIsolation.ownedEnvKeys].sort(),
+    );
+  });
+
   it('keeps an unproven OpenCode provider binding experimental until lifecycle evidence exists', () => {
-    const support = PLUGIN_MANIFEST.contributes.agents[0]!.providerSupport!;
+    const support = PLUGIN_MANIFEST.contributes.agents[0]!.providerRequirements!;
     const resolution = resolveProviderBindingCompatibilityWithFingerprintV1({
       agentTargetKey: 'backend:opencode:built_in',
       adapterVersion: OPENCODE_PROVIDER_BINDING_ADAPTER_V1.adapterVersion,
@@ -129,9 +140,13 @@ describe('OpenCode provider-binding adapter V1', () => {
   });
 
   it.each([
-    ['openai-responses', '@ai-sdk/openai'],
-    ['openai-chat', '@ai-sdk/openai-compatible'],
-  ] as const)('owns the verified %s driver mapping and a session-only selected-model config', async (protocol, npm) => {
+    ['openai-responses', '@ai-sdk/openai', { apiKey: 'happier-no-auth' }],
+    ['openai-chat', '@ai-sdk/openai-compatible', {}],
+  ] as const)('owns the verified %s driver mapping and a session-only selected-model config', async (
+    protocol,
+    npm,
+    noAuthOptions,
+  ) => {
     const base = materializeInput();
     const output = await OPENCODE_PROVIDER_BINDING_ADAPTER_V1.materialize(materializeInput({
       binding: {
@@ -149,6 +164,8 @@ describe('OpenCode provider-binding adapter V1', () => {
         { name: 'HAPPIER_OPENCODE_PROVIDER_API_KEY', value: null, source: 'provider' },
         { name: 'OPENCODE_AUTH_CONTENT', value: null, source: 'provider' },
         { name: 'OPENCODE_CONFIG_CONTENT', value: null, source: 'provider' },
+        { name: 'OPENAI_API_KEY', value: null, source: 'provider' },
+        { name: 'ANTHROPIC_API_KEY', value: null, source: 'provider' },
       ],
       files: [{ relativePath: 'opencode/opencode.json' }],
     });
@@ -160,8 +177,8 @@ describe('OpenCode provider-binding adapter V1', () => {
         [bindingKey]: {
           npm,
           name: 'Happier provider',
-          options: { baseURL: 'https://openrouter.ai/api/v1' },
-          models: { 'vendor/model': { name: 'vendor/model' } },
+          options: { baseURL: 'https://openrouter.ai/api/v1', ...noAuthOptions },
+          models: { 'vendor/model': { name: 'Vendor model' } },
         },
       },
     });
@@ -189,6 +206,8 @@ describe('OpenCode provider-binding adapter V1', () => {
       { name: 'HAPPIER_OPENCODE_PROVIDER_API_KEY', value: 'selected-secret', source: 'provider' },
       { name: 'OPENCODE_AUTH_CONTENT', value: null, source: 'provider' },
       { name: 'OPENCODE_CONFIG_CONTENT', value: null, source: 'provider' },
+      { name: 'OPENAI_API_KEY', value: null, source: 'provider' },
+      { name: 'ANTHROPIC_API_KEY', value: null, source: 'provider' },
     ]);
     expect(configText).not.toContain('selected-secret');
     expect(config).toMatchObject({

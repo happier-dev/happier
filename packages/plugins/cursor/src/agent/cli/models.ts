@@ -1,4 +1,15 @@
-import type { ExecRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
+type CursorLegacyCommandRunner = Readonly<{
+  run(input: Readonly<{
+    kind: 'binary';
+    executablePath: string;
+    args?: readonly string[];
+    cwd?: string;
+    env?: Readonly<Record<string, string>>;
+  }>): Promise<Readonly<{
+    stdout: string;
+    exitCode: number | null;
+  }>>;
+}>;
 
 export type CursorCliModelDescriptor = Readonly<{
   id: string;
@@ -32,7 +43,7 @@ export function parseCursorCliModelsOutput(output: string): readonly CursorCliMo
 }
 
 export async function readCursorCliModels(params: Readonly<{
-  exec: Pick<ExecRuntimeServiceV1, 'run'>;
+  exec: CursorLegacyCommandRunner;
   executablePath: string;
   cwd?: string;
   env?: Readonly<Record<string, string>>;

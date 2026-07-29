@@ -1,15 +1,15 @@
 import type {
   ScmHostingProviderRef,
   ScmPullRequestSummary,
-} from '@happier-dev/plugin-sdk/scm';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
-import type { ScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/experimental/scm';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/experimental/scm';
+import type { ScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/experimental/scm';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAzureDevopsOperationsAdapter } from './azureDevopsAdapter.js';
 
 const provider: ScmHostingProviderRef = {
-  id: 'scm.azure-devops',
+  id: 'happier.scm.hosting.azure-devops/azure-devops',
   kind: 'azure-devops',
   displayName: 'Azure DevOps',
   baseUrl: 'https://dev.azure.com/happier-dev',
@@ -23,12 +23,8 @@ const provider: ScmHostingProviderRef = {
 
 function createRuntimeServices(stdoutByCommand: Readonly<Record<string, unknown>>): ScmHostingProviderRuntimeServices {
   return {
-    resolveInstallableCommand: async ({ capabilityId }) => (
-      capabilityId === 'dep.az'
-        ? { kind: 'available', source: 'system', binPath: '/usr/local/bin/az' }
-        : { kind: 'missing' }
-    ),
-    runCommand: vi.fn(async ({ args }) => {
+    executeCommand: vi.fn(async ({ executable, args }) => {
+      expect(executable).toEqual({ kind: 'systemTool', id: 'azure-cli' });
       const key = args.join(' ');
       const value = stdoutByCommand[key];
       if (value instanceof Error) {
@@ -205,7 +201,7 @@ describe('Azure DevOps operations adapter', () => {
   });
 
   it('rejects unsupported Azure provider coordinates before invoking az', async () => {
-    const runCommand = vi.fn();
+    const executeCommand = vi.fn();
     const adapter = createAzureDevopsOperationsAdapter();
 
     await expect(adapter.listPullRequests({
@@ -215,13 +211,12 @@ describe('Azure DevOps operations adapter', () => {
       },
       head: 'feature/azure',
       runtimeServices: {
-        resolveInstallableCommand: async () => ({ kind: 'available', source: 'system', binPath: '/usr/local/bin/az' }),
-        runCommand,
+        executeCommand,
       },
     })).rejects.toMatchObject({
       errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST,
     });
-    expect(runCommand).not.toHaveBeenCalled();
+    expect(executeCommand).not.toHaveBeenCalled();
   });
 
   it('surfaces missing Azure CLI as auth remediation without generic shellout', async () => {
@@ -230,10 +225,7 @@ describe('Azure DevOps operations adapter', () => {
     await expect(adapter.listPullRequests({
       provider,
       head: 'feature/azure',
-      runtimeServices: {
-        resolveInstallableCommand: async () => ({ kind: 'missing' }),
-        runCommand: vi.fn(),
-      },
+      runtimeServices: {},
     })).rejects.toMatchObject({
       errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
     });
@@ -245,10 +237,7 @@ describe('Azure DevOps operations adapter', () => {
     await expect(adapter.describePublishTargets({
       provider,
       defaultRepositoryName: 'next-repo',
-      runtimeServices: {
-        resolveInstallableCommand: async () => ({ kind: 'missing' }),
-        runCommand: vi.fn(),
-      },
+      runtimeServices: {},
     })).resolves.toMatchObject({
       auth: {
         state: 'unsupported',
@@ -353,10 +342,10 @@ describe('Azure DevOps operations adapter', () => {
       'repos pr show --organization https://dev.azure.com/happier-dev --project platform --repository happier --id 7 --output json': wrongHint,
       'repos pr list --organization https://dev.azure.com/happier-dev --project platform --repository happier --source-branch feature/azure --target-branch main --status active --output json#2': [validExisting],
     });
-    const runCommand = runtimeServices.runCommand as ReturnType<typeof vi.fn>;
-    runCommand.mockImplementation(async ({ args }) => {
+    const executeCommand = runtimeServices.executeCommand as ReturnType<typeof vi.fn>;
+    executeCommand.mockImplementation(async ({ args }) => {
       const key = args.join(' ');
-      const callCount = runCommand.mock.calls.filter(([call]) => call.args.join(' ') === key).length;
+      const callCount = executeCommand.mock.calls.filter(([call]) => call.args.join(' ') === key).length;
       const value = (key.endsWith('--status active --output json') && callCount > 1)
         ? [validExisting]
         : ({
@@ -418,8 +407,8 @@ describe('Azure DevOps operations adapter', () => {
         headRepositoryNameWithOwner: 'happier-dev/platform/happier',
       }),
     });
-    const runCommand = runtimeServices.runCommand as ReturnType<typeof vi.fn>;
-    expect(runCommand.mock.calls.filter(([call]) => call.args.join(' ') === listKey)).toHaveLength(1);
+    const executeCommand = runtimeServices.executeCommand as ReturnType<typeof vi.fn>;
+    expect(executeCommand.mock.calls.filter(([call]) => call.args.join(' ') === listKey)).toHaveLength(1);
   });
 
   it('does not reuse duplicate hints with incomplete cross-repository metadata', async () => {
@@ -434,10 +423,10 @@ describe('Azure DevOps operations adapter', () => {
     const createKey = 'repos pr create --organization https://dev.azure.com/happier-dev --project platform --repository happier --source-branch feature/azure --target-branch main --title Add Azure support --description Body --draft false --output json';
     const showKey = 'repos pr show --organization https://dev.azure.com/happier-dev --project platform --repository happier --id 7 --output json';
     const runtimeServices = createRuntimeServices({});
-    const runCommand = runtimeServices.runCommand as ReturnType<typeof vi.fn>;
-    runCommand.mockImplementation(async ({ args }) => {
+    const executeCommand = runtimeServices.executeCommand as ReturnType<typeof vi.fn>;
+    executeCommand.mockImplementation(async ({ args }) => {
       const key = args.join(' ');
-      const callCount = runCommand.mock.calls.filter(([call]) => call.args.join(' ') === key).length;
+      const callCount = executeCommand.mock.calls.filter(([call]) => call.args.join(' ') === key).length;
       const value = key === listKey && callCount > 1
         ? [validExisting]
         : ({
@@ -468,6 +457,6 @@ describe('Azure DevOps operations adapter', () => {
         headRepositoryNameWithOwner: 'happier-dev/platform/happier',
       }),
     });
-    expect(runCommand.mock.calls.filter(([call]) => call.args.join(' ') === listKey)).toHaveLength(2);
+    expect(executeCommand.mock.calls.filter(([call]) => call.args.join(' ') === listKey)).toHaveLength(2);
   });
 });

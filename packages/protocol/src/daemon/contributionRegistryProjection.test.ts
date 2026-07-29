@@ -5,13 +5,170 @@ import {
   DaemonContributionRegistryProjectionDescribeResponseSchema,
   DaemonPluginReactNativeCrashReportRequestV1Schema,
   DaemonPluginReactNativeCrashReportResponseV1Schema,
+  DaemonPluginStructuredMessageActionExecuteRequestSchema,
+  DaemonPluginStructuredMessageActionExecuteResponseSchema,
+  DaemonPluginStructuredMessageResolveRequestSchema,
+  DaemonPluginStructuredMessageResolveResponseSchema,
   DaemonPluginUiArtifactBytesReadRequestSchema,
   DaemonPluginUiArtifactBytesReadResponseSchema,
+  PluginProjectedActionV2Schema,
   PluginProjectionV2Schema,
 } from './contributionRegistryProjection.js';
 import * as protocol from '../index.js';
 
 describe('daemon contribution registry projection (wire)', () => {
+  it('preserves exact non-safe action confirmation presentation and fails closed on invalid combinations', () => {
+    const confirmation = {
+      title: { key: 'actions.delete.title', fallback: 'Delete workspace?' },
+      body: { key: 'actions.delete.body', fallback: 'This cannot be undone.' },
+      confirmLabel: { key: 'actions.delete.confirm', fallback: 'Delete' },
+    } as const;
+    const projectedAction = {
+      id: 'delete-workspace',
+      pluginId: 'acme.workspace',
+      title: 'Delete workspace',
+      scopes: ['workspace'],
+      surfaces: ['ui'],
+      placement: 'detailsPanel',
+      dangerLevel: 'destructive',
+      confirmation,
+    } as const;
+
+    expect(PluginProjectedActionV2Schema.parse(projectedAction)).toMatchObject({
+      dangerLevel: 'destructive',
+      confirmation,
+    });
+    expect(PluginProjectedActionV2Schema.safeParse({
+      ...projectedAction,
+      dangerLevel: 'safe',
+    }).success).toBe(false);
+    expect(PluginProjectedActionV2Schema.safeParse({
+      ...projectedAction,
+      confirmation: undefined,
+    }).success).toBe(false);
+    expect(PluginProjectedActionV2Schema.safeParse({
+      ...projectedAction,
+      confirmation: { ...confirmation, input: { secret: 'must-not-project' } },
+    }).success).toBe(false);
+  });
+
+  it('admits UI as an explicit plugin action invocation surface', () => {
+    expect(DaemonPluginStructuredMessageActionExecuteRequestSchema.parse({
+      machineId: 'm1',
+      expectedGeneration: '7',
+      qualifiedActionId: 'acme.voice/mint-session',
+      input: null,
+      executionSurface: 'ui',
+    }).executionSurface).toBe('ui');
+  });
+
+  it('bounds structured-message resource references at the wire boundary', () => {
+    expect(DaemonPluginStructuredMessageResolveRequestSchema.safeParse({
+      machineId: 'm1',
+      expectedGeneration: '7',
+      kind: 'acme.preview/preview-card.v1',
+      payload: {},
+      resourceRefs: Array.from({ length: 65 }, (_, index) => `resource-${index}`),
+      facts: {},
+    }).success).toBe(false);
+
+  });
+
+  it('rejects non-JSON structured-message action results at the wire boundary', () => {
+    expect(DaemonPluginStructuredMessageActionExecuteResponseSchema.safeParse({
+      ok: true,
+      result: () => undefined,
+    }).success).toBe(false);
+  });
+
+  it('accepts canonical empty resource bytes and rejects malformed structured-message base64', () => {
+    const response = (bytesBase64: string) => ({
+      ok: true as const,
+      model: {
+        identity: {
+          pluginId: 'acme.preview',
+          localId: 'preview-card',
+          qualifiedId: 'acme.preview/preview-card',
+          generation: '7',
+        },
+        kind: 'acme.preview/preview-card.v1',
+        title: 'Preview',
+        payload: {},
+        renderer: {
+          identity: { pluginId: 'acme.preview', localId: 'summary-card' },
+          qualifiedId: 'acme.preview/summary-card',
+          generation: '7',
+        },
+        actions: [],
+        resources: [{
+          identity: { pluginId: 'acme.preview', localId: 'empty' },
+          qualifiedId: 'acme.preview/empty',
+          generation: '7',
+        }],
+        fallback: { kind: 'summary' as const, template: 'Preview unavailable' },
+        visible: true,
+      },
+      renderer: {
+        identity: {
+          pluginId: 'acme.preview',
+          localId: 'summary-card',
+          qualifiedId: 'acme.preview/summary-card',
+          generation: '7',
+        },
+        visible: true,
+        requiredHostMethods: [],
+        root: { kind: 'text', text: 'Preview' },
+        nodes: [],
+      },
+      resources: [{
+        reference: {
+          identity: { pluginId: 'acme.preview', localId: 'empty' },
+          qualifiedId: 'acme.preview/empty',
+          generation: '7',
+        },
+        kind: 'asset' as const,
+        contentType: 'application/octet-stream',
+        digest: `sha256:${'a'.repeat(64)}`,
+        bytesBase64,
+      }],
+    });
+
+    expect(DaemonPluginStructuredMessageResolveResponseSchema.safeParse(response('')).success).toBe(true);
+  });
+
+  it('rejects malformed structured-message base64', () => {
+    const valid = DaemonPluginStructuredMessageResolveResponseSchema.safeParse({
+      ok: false,
+      code: 'not-used',
+      reason: 'unavailable',
+    });
+    expect(valid.success).toBe(true);
+
+    const resourceSchema = DaemonPluginStructuredMessageResolveResponseSchema.options[0].shape.resources.element;
+    expect(resourceSchema.safeParse({
+      reference: {
+        identity: { pluginId: 'acme.preview', localId: 'asset' },
+        qualifiedId: 'acme.preview/asset',
+        generation: '7',
+      },
+      kind: 'asset',
+      contentType: 'application/octet-stream',
+      digest: `sha256:${'a'.repeat(64)}`,
+      bytesBase64: 'not base64!',
+    }).success).toBe(false);
+    expect(resourceSchema.safeParse({
+      reference: {
+        identity: { pluginId: 'acme.preview', localId: 'asset' },
+        qualifiedId: 'acme.preview/asset',
+        generation: '7',
+      },
+      kind: 'asset',
+      contentType: 'application/octet-stream',
+      digest: `sha256:${'a'.repeat(64)}`,
+      bytesBase64: 'AB==',
+    }).success).toBe(false);
+  });
+
   it('parses a minimal v1 describe request/response payload', () => {
     expect(DaemonContributionRegistryProjectionDescribeRequestSchema.parse({ machineId: 'm1' })).toEqual({
       machineId: 'm1',
@@ -33,6 +190,26 @@ describe('daemon contribution registry projection (wire)', () => {
     expect(parsed.projection.v).toBe(1);
     expect(parsed.projection.agentsById.custom?.id).toBe('custom');
     expect(parsed.projection.backendsById.b1?.agentId).toBe('custom');
+  });
+
+  it('accepts a deployed legacy managed-dependency title while current writers omit it', () => {
+    expect(PluginProjectionV2Schema.safeParse({
+      v: 2,
+      generation: 1,
+      familiesById: {
+        managedDependencies: {
+          family: 'managedDependencies',
+          entriesById: {
+            'acme.runtime/runtime': {
+              id: 'runtime',
+              pluginId: 'acme.runtime',
+              title: 'Runtime',
+              executable: 'runtime',
+            },
+          },
+        },
+      },
+    }).success).toBe(true);
   });
 
   it('normalizes deployed provider-vocabulary projections to canonical agent fields', () => {
@@ -191,6 +368,41 @@ describe('daemon contribution registry projection (wire)', () => {
     }).success).toBe(false);
   });
 
+  it('accepts only a complete typed React Native web loader capability', () => {
+    const parsed = DaemonContributionRegistryProjectionDescribeRequestSchema.parse({
+      machineId: 'm1',
+      reactNativeWebLoaderCapability: {
+        integrated: true,
+        installedArtifactLoaderAvailable: true,
+      },
+    });
+    expect(parsed.reactNativeWebLoaderCapability).toEqual({
+      integrated: true,
+      installedArtifactLoaderAvailable: true,
+    });
+
+    expect(DaemonContributionRegistryProjectionDescribeRequestSchema.safeParse({
+      machineId: 'm1',
+      reactNativeWebLoaderCapability: { integrated: true },
+    }).success).toBe(false);
+    expect(DaemonContributionRegistryProjectionDescribeRequestSchema.safeParse({
+      machineId: 'm1',
+      reactNativeWebLoaderCapability: {
+        integrated: true,
+        installedArtifactLoaderAvailable: true,
+        unexpected: true,
+      },
+    }).success).toBe(false);
+    expect(DaemonContributionRegistryProjectionDescribeRequestSchema.safeParse({
+      machineId: 'm1',
+      reactNativeHostRuntimeIdentity: { platform: 'ios', channel: 'internal' },
+      reactNativeWebLoaderCapability: {
+        integrated: true,
+        installedArtifactLoaderAvailable: true,
+      },
+    }).success).toBe(false);
+  });
+
   it('parses a v2 describe response payload that carries the authoritative plugin projection', () => {
     const parsed = DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
       protocolVersion: 1,
@@ -215,9 +427,7 @@ describe('daemon contribution registry projection (wire)', () => {
         actionsById: {},
         toolsById: {},
         commandsById: {},
-        hooksById: {},
         resourcesById: {},
-        uiDescriptorsById: {},
         diagnostics: [],
       },
     });
@@ -229,7 +439,7 @@ describe('daemon contribution registry projection (wire)', () => {
 
   it('parses v2 plugin projection descriptors without executable handler internals', () => {
     expect(typeof PluginProjectionV2Schema?.parse).toBe('function');
-    expect(typeof (protocol as { PluginProjectedHookV2Schema?: unknown }).PluginProjectedHookV2Schema).toBe('object');
+    expect((protocol as { PluginProjectedHookV2Schema?: unknown }).PluginProjectedHookV2Schema).toBeUndefined();
     expect((protocol as { ExtensionProjectionV2Schema?: unknown }).ExtensionProjectionV2Schema).toBeUndefined();
     expect((protocol as { ExtensionProjectedHookV2Schema?: unknown }).ExtensionProjectedHookV2Schema).toBeUndefined();
 
@@ -277,14 +487,6 @@ describe('daemon contribution registry projection (wire)', () => {
           tokens: ['acme-reload'],
         },
       },
-      hooksById: {
-        'acme.plugin.spawn-env': {
-          id: 'acme.plugin.spawn-env',
-          pluginId: 'acme.plugin',
-          eventId: 'agent.spawnEnv.augment',
-          priority: 10,
-        },
-      },
       resourcesById: {
         'acme.plugin.prompt': {
           id: 'acme.plugin.prompt',
@@ -294,68 +496,39 @@ describe('daemon contribution registry projection (wire)', () => {
           digest: 'sha256:abc123',
         },
       },
-      uiDescriptorsById: {
-        'acme.plugin.settings': {
-          id: 'acme.plugin.settings',
-          pluginId: 'acme.plugin',
-          surface: 'settings',
-          title: 'Acme Settings',
-          order: 10,
-          tone: 'info',
-          featureGate: 'features.acme.settings.enabled',
-          helpUrl: 'https://example.com/acme/settings',
-          fields: [
-            {
-              id: 'enabled',
-              type: 'boolean',
-              title: 'Enabled',
-              description: 'Turn on Acme',
-              order: 2,
-              groupId: null,
-              featureGate: null,
-              options: [],
-            },
-            {
-              id: 'runRefresh',
-              type: 'action',
-              title: 'Run refresh',
-              actionId: 'acme.plugin.refresh',
-              order: 1,
-              groupId: 'actions',
-              featureGate: 'features.acme.refresh.enabled',
-              options: [],
-            },
-          ],
-        },
-      },
       diagnostics: [
         {
-          severity: 'warning',
-          code: 'plugin.futureCapability',
-          message: 'Unsupported future capability',
-          pluginId: 'acme.plugin',
+          version: 1,
+          id: 'acme.plugin:normalization:plugin:0',
+          data: {
+            severity: 'warning',
+            code: 'plugin.futureCapability',
+            message: 'Unsupported future capability',
+          },
+          plugin: { id: 'acme.plugin', version: '1.2.3', source: 'localPath' },
+          stage: 'normalization',
+          host: 'daemon',
+          platform: 'darwin',
+          occurredAtMs: 1,
+          resolution: { state: 'current' },
         },
       ],
     });
 
     expect(parsed.generation).toBe(7);
     expect(parsed.actionsById['acme.plugin.refresh']?.available).toBe(true);
-    expect(parsed.hooksById?.['acme.plugin.spawn-env']?.eventId).toBe('agent.spawnEnv.augment');
-    expect(parsed.uiDescriptorsById['acme.plugin.settings']?.surface).toBe('settings');
-    expect(parsed.uiDescriptorsById['acme.plugin.settings']?.order).toBe(10);
-    expect(parsed.uiDescriptorsById['acme.plugin.settings']?.tone).toBe('info');
-    expect(parsed.uiDescriptorsById['acme.plugin.settings']?.helpUrl).toBe('https://example.com/acme/settings');
-    expect(parsed.uiDescriptorsById['acme.plugin.settings']?.fields[0]).toMatchObject({
-      id: 'enabled',
-      type: 'boolean',
-      title: 'Enabled',
-    });
-    expect(parsed.uiDescriptorsById['acme.plugin.settings']?.fields[1]).toMatchObject({
-      id: 'runRefresh',
-      type: 'action',
-      actionId: 'acme.plugin.refresh',
-    });
-
+    expect(parsed).not.toHaveProperty('hooksById');
+    expect(PluginProjectionV2Schema.safeParse({
+      v: 2,
+      generation: 7,
+      hooksById: {
+        'acme.plugin.spawn-env': {
+          id: 'acme.plugin.spawn-env',
+          pluginId: 'acme.plugin',
+          eventId: 'agent.spawnEnv.augment',
+        },
+      },
+    }).success).toBe(false);
     expect(PluginProjectionV2Schema.safeParse({
       v: 2,
       generation: 7,
@@ -462,7 +635,101 @@ describe('daemon contribution registry projection (wire)', () => {
     }).success).toBe(false);
   });
 
-  it('parses generic plugin-local settings metadata without exposing setting values', () => {
+  it('rejects the retired uiDescriptors projection family', () => {
+    expect(PluginProjectionV2Schema.safeParse({
+      v: 2,
+      generation: 1,
+      uiDescriptorsById: {},
+    }).success).toBe(false);
+  });
+
+  it('bounds projected agent-owned provider environment keys without projecting provider credentials', () => {
+    const base = {
+      v: 2 as const,
+      generation: 1,
+      agentsById: {
+        codex: {
+          id: 'codex',
+          providerOwnedEnvironmentKeys: ['OPENAI_API_KEY', 'CODEX_API_KEY'],
+        },
+      },
+    };
+    expect(PluginProjectionV2Schema.parse(base).agentsById.codex?.providerOwnedEnvironmentKeys)
+      .toEqual(['OPENAI_API_KEY', 'CODEX_API_KEY']);
+    expect(PluginProjectionV2Schema.safeParse({
+      ...base,
+      agentsById: { codex: { id: 'codex', providerOwnedEnvironmentKeys: ['OPENAI_API_KEY', 'OPENAI_API_KEY'] } },
+    }).success).toBe(false);
+    expect(PluginProjectionV2Schema.safeParse({
+      ...base,
+      agentsById: { codex: { id: 'codex', providerOwnedEnvironmentKeys: Array.from({ length: 65 }, (_, index) => `PROVIDER_KEY_${index}`) } },
+    }).success).toBe(false);
+    expect(PluginProjectionV2Schema.safeParse({
+      ...base,
+      agentsById: { codex: { id: 'codex', providerOwnedEnvironmentKeys: ['not-an-env-key'] } },
+    }).success).toBe(false);
+  });
+
+  it('projects a bounded generation-pinned external-session browse descriptor for an Agent', () => {
+    const externalSessions = {
+      agent: {
+        pluginId: 'acme.external-sessions',
+        localId: 'acme-agent',
+      },
+      generation: 17,
+      operations: {
+        listCandidates: true,
+        resolveLinkIdentity: true,
+        pageTranscript: true,
+        readAfterTranscript: true,
+      },
+      sources: [{
+        sourceKind: 'acmeArchive',
+        schema: {
+          passthrough: false,
+          fields: [{ name: 'kind', kind: 'literal', value: 'acmeArchive' }],
+        },
+        key: { segments: [{ kind: 'literal', value: 'acmeArchive' }] },
+        instances: [{ kind: 'default', constants: {} }],
+      }],
+    } as const;
+    const base = {
+      v: 2 as const,
+      generation: 17,
+      agentsById: {
+        'acme-agent': {
+          id: 'acme-agent',
+          externalSessions,
+        },
+      },
+    };
+
+    expect(PluginProjectionV2Schema.parse(base).agentsById['acme-agent']?.externalSessions)
+      .toEqual(externalSessions);
+    expect(PluginProjectionV2Schema.safeParse({
+      ...base,
+      agentsById: {
+        'acme-agent': {
+          id: 'acme-agent',
+          externalSessions: {
+            ...externalSessions,
+            operations: { ...externalSessions.operations, takeover: true },
+          },
+        },
+      },
+    }).success).toBe(false);
+    expect(PluginProjectionV2Schema.safeParse({
+      ...base,
+      agentsById: {
+        'acme-agent': {
+          id: 'acme-agent',
+          externalSessions: { ...externalSessions, generation: -1 },
+        },
+      },
+    }).success).toBe(false);
+  });
+
+  it('parses generic local settings metadata without exposing setting values', () => {
     const parsed = PluginProjectionV2Schema.parse({
       v: 2,
       generation: 7,
@@ -470,13 +737,18 @@ describe('daemon contribution registry projection (wire)', () => {
         'acme.hooks.settings': {
           id: 'acme.hooks.settings',
           pluginId: 'acme.hooks',
-          storageScope: 'pluginLocal',
+          version: 1,
+          title: 'Acme hook settings',
+          storageScope: 'local',
+          presentation: { sections: [], subagentSections: [] },
+          target: { kind: 'plugin' },
           fields: [
             {
               id: 'apiToken',
               kind: 'settings.field',
               version: '1.0.0',
               valueSchema: { type: 'string' },
+              valueType: 'string',
               control: 'password',
               displayKey: 'plugins.acme.apiToken.label',
               descriptionKey: 'plugins.acme.apiToken.description',
@@ -490,6 +762,7 @@ describe('daemon contribution registry projection (wire)', () => {
               kind: 'settings.field',
               version: '1.0.0',
               valueSchema: { type: 'boolean' },
+              valueType: 'boolean',
               control: 'switch',
               displayKey: 'plugins.acme.enabled.label',
               redaction: 'none',
@@ -501,16 +774,13 @@ describe('daemon contribution registry projection (wire)', () => {
           ],
         },
       },
-      uiDescriptorsById: {},
     });
 
-    expect(parsed.settingsById['acme.hooks.settings']?.storageScope).toBe('pluginLocal');
+    expect(parsed.settingsById['acme.hooks.settings']?.storageScope).toBe('local');
     expect(parsed.settingsById['acme.hooks.settings']?.fields.map((field) => field.id)).toEqual([
       'apiToken',
       'enabled',
     ]);
-    expect(parsed.uiDescriptorsById).toEqual({});
-
     expect(PluginProjectionV2Schema.safeParse({
       v: 2,
       generation: 7,
@@ -518,13 +788,18 @@ describe('daemon contribution registry projection (wire)', () => {
         'acme.hooks.settings': {
           id: 'acme.hooks.settings',
           pluginId: 'acme.hooks',
-          storageScope: 'pluginLocal',
+          version: 1,
+          title: 'Acme hook settings',
+          storageScope: 'local',
+          presentation: { sections: [], subagentSections: [] },
+          target: { kind: 'plugin' },
           fields: [
             {
               id: 'apiToken',
               kind: 'settings.field',
               version: '1.0.0',
               valueSchema: { type: 'string' },
+              valueType: 'string',
               control: 'password',
               displayKey: 'plugins.acme.apiToken.label',
               redaction: 'secret',
@@ -545,7 +820,11 @@ describe('daemon contribution registry projection (wire)', () => {
         'acme.hooks.settings': {
           id: 'acme.hooks.settings',
           pluginId: 'acme.hooks',
-          storageScope: 'pluginLocal',
+          version: 1,
+          title: 'Acme hook settings',
+          storageScope: 'local',
+          presentation: { sections: [], subagentSections: [] },
+          target: { kind: 'plugin' },
           fields: [
             {
               id: 'apiToken',
@@ -556,6 +835,7 @@ describe('daemon contribution registry projection (wire)', () => {
                 default: 'schema-secret-default',
                 enum: ['schema-secret-option'],
               },
+              valueType: 'string',
               control: 'password',
               displayKey: 'plugins.acme.apiToken.label',
               redaction: 'secret',
@@ -648,7 +928,7 @@ describe('daemon contribution registry projection (wire)', () => {
     });
   });
 
-  it('parses sibling-owned non-agent family projections without changing core projection fields', () => {
+  it('rejects unknown projection families and unknown family entry fields', () => {
     const parsed = PluginProjectionV2Schema.parse({
       v: 2,
       generation: 12,
@@ -659,8 +939,15 @@ describe('daemon contribution registry projection (wire)', () => {
             github: {
               id: 'github',
               pluginId: 'acme.scm',
-              title: 'GitHub',
-              hostPattern: 'github.com',
+              localId: 'github',
+              kind: 'github',
+              displayName: 'GitHub',
+              description: 'GitHub hosting',
+              baseUrl: 'https://github.com',
+              urlSafety: {},
+              capabilities: {},
+              operations: {},
+              authService: 'github',
             },
           },
         },
@@ -670,9 +957,51 @@ describe('daemon contribution registry projection (wire)', () => {
     expect(parsed.familiesById.scmHostingProviders?.entriesById.github).toEqual({
       id: 'github',
       pluginId: 'acme.scm',
-      title: 'GitHub',
-      hostPattern: 'github.com',
+      localId: 'github',
+      kind: 'github',
+      displayName: 'GitHub',
+      description: 'GitHub hosting',
+      baseUrl: 'https://github.com',
+      urlSafety: {},
+      capabilities: {},
+      operations: {},
+      authService: 'github',
     });
+    expect(PluginProjectionV2Schema.safeParse({
+      v: 2,
+      generation: 12,
+      familiesById: {
+        unknownFamily: {
+          family: 'unknownFamily',
+          entriesById: {},
+        },
+      },
+    }).success).toBe(false);
+    expect(PluginProjectionV2Schema.safeParse({
+      v: 2,
+      generation: 12,
+      familiesById: {
+        scmHostingProviders: {
+          family: 'scmHostingProviders',
+          entriesById: {
+            github: {
+              ...parsed.familiesById.scmHostingProviders?.entriesById.github,
+              hostPattern: 'github.com',
+            },
+          },
+        },
+      },
+    }).success).toBe(false);
+    expect(PluginProjectionV2Schema.safeParse({
+      v: 2,
+      generation: 12,
+      familiesById: {
+        scmHostingProviders: {
+          family: 'scmBackends',
+          entriesById: {},
+        },
+      },
+    }).success).toBe(false);
     expect(parsed.agentsById).toEqual({});
     expect(parsed.backendsById).toEqual({});
   });
@@ -699,6 +1028,14 @@ describe('daemon contribution registry projection (wire)', () => {
 
     expect(request.cacheIdentity.artifactDigest).toBe(`sha256:${'a'.repeat(64)}`);
     expect(request.cacheIdentity.projectionGeneration).toBe(12);
+    expect(DaemonPluginUiArtifactBytesReadRequestSchema.safeParse({
+      ...request,
+      reactNativeHostRuntimeIdentity: { platform: 'ios', channel: 'internal' },
+      reactNativeWebLoaderCapability: {
+        integrated: true,
+        installedArtifactLoaderAvailable: true,
+      },
+    }).success).toBe(false);
     expect(DaemonPluginUiArtifactBytesReadResponseSchema.parse({
       ok: true,
       cacheIdentity: request.cacheIdentity,
@@ -730,42 +1067,4 @@ describe('daemon contribution registry projection (wire)', () => {
     });
   });
 
-  it('defines a daemon artifact-byte read contract keyed by projected embedded-web cache identity', () => {
-    const request = DaemonPluginUiArtifactBytesReadRequestSchema.parse({
-      machineId: 'm1',
-      cacheIdentity: {
-        pluginId: 'acme.preview',
-        contributionId: 'embedded-preview',
-        artifactDigest: `sha256:${'c'.repeat(64)}`,
-        hostAppVersion: '2.0.0',
-        hostUiApiVersion: '1.0.0',
-        reactVersion: '19.2.0',
-        platform: 'web',
-        channel: 'internal',
-        projectionGeneration: 12,
-      },
-    });
-
-    expect(request.cacheIdentity.artifactDigest).toBe(`sha256:${'c'.repeat(64)}`);
-    expect(DaemonPluginUiArtifactBytesReadResponseSchema.parse({
-      ok: true,
-      cacheIdentity: request.cacheIdentity,
-      artifact: {
-        pluginId: 'acme.preview',
-        contributionId: 'embedded-preview',
-        artifactKind: 'embeddedWebBundle',
-        digest: `sha256:${'c'.repeat(64)}`,
-        contentType: 'text/javascript',
-        byteSize: 15,
-      },
-      bytesBase64: 'ZXhwb3J0IGRlZmF1bHQ=',
-    })).toMatchObject({
-      ok: true,
-      artifact: {
-        artifactKind: 'embeddedWebBundle',
-        digest: `sha256:${'c'.repeat(64)}`,
-        contentType: 'text/javascript',
-      },
-    });
-  });
 });

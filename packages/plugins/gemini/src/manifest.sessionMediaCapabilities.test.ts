@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { PluginBackendCapabilitiesV1Schema } from '@happier-dev/plugin-sdk/manifest';
+import { PluginBackendCapabilitiesV1Schema } from '@happier-dev/plugin-sdk/experimental/manifest/agents';
 
-import { GEMINI_ACP_BACKEND_SPEC } from './agent/acp/definition.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
 
 function capabilitiesForBackend(id: string) {
@@ -12,30 +11,34 @@ function capabilitiesForBackend(id: string) {
 }
 
 describe('Gemini plugin session media capabilities', () => {
-  it('declares Gemini as a plugin-owned ACP backend contribution', () => {
+  it('declares Gemini as a plugin-owned native Agent runtime contribution', () => {
     const backend = PLUGIN_MANIFEST.contributes?.agents?.find((entry) => entry.id === 'gemini');
 
     expect(PLUGIN_MANIFEST.id).toBe('happier.agent.gemini');
-    expect(PLUGIN_MANIFEST.uses).toContain('agents');
+    expect(PLUGIN_MANIFEST).not.toHaveProperty('uses');
     expect(backend).toMatchObject({
-      kindVersion: 1,
       id: 'gemini',
+      primary: 'sessions',
       runtime: {
-        kind: 'acp',
+        kind: 'custom',
       },
       capabilities: {
-        executionRun: { supported: true },
+        sessions: {
+          open: ['create', 'resume'],
+          delivery: ['newTurn', 'steer', 'followUp'],
+          cancel: true,
+        },
+        executionRuns: {
+          open: ['create'],
+          checkpoint: true,
+          stop: true,
+        },
       },
     });
-    expect(backend?.runtime).toMatchObject({
-      auth: GEMINI_ACP_BACKEND_SPEC.auth,
-      transport: GEMINI_ACP_BACKEND_SPEC.transport,
-      transportLifecycle: GEMINI_ACP_BACKEND_SPEC.transportLifecycle,
-      permissionModeArgv: GEMINI_ACP_BACKEND_SPEC.permissionModeArgv,
-      sessionIdHeaderName: GEMINI_ACP_BACKEND_SPEC.sessionIdHeaderName,
-      stderrRules: GEMINI_ACP_BACKEND_SPEC.stderrRules,
-      toolNameInference: GEMINI_ACP_BACKEND_SPEC.toolNameInference,
-      mcp: GEMINI_ACP_BACKEND_SPEC.mcp,
+    expect(PLUGIN_MANIFEST.contributes.systemTools).toContainEqual({
+      id: 'gemini-cli',
+      title: 'Google Gemini CLI',
+      executableNames: ['gemini'],
     });
   });
 
@@ -48,18 +51,13 @@ describe('Gemini plugin session media capabilities', () => {
   });
 
   it('declares the Gemini auth prerequisite hook for packaged plugin projection', () => {
-    expect(PLUGIN_MANIFEST.uses).toContain('hooks');
     expect(PLUGIN_MANIFEST.contributes?.hooks).toContainEqual(expect.objectContaining({
-      id: 'agent.resolvePrerequisites',
-      hookApiVersion: 1,
+      id: 'resolve-prerequisites',
+      on: 'agent.resolvePrerequisites',
       category: 'decision',
       scope: 'agent',
       filters: { agentId: 'gemini' },
       executionKind: 'decide',
-      handler: {
-        target: 'plugin',
-        exportName: 'resolveGeminiDaemonSpawnPrerequisites',
-      },
     }));
   });
 });

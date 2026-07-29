@@ -1,4 +1,5 @@
 export type PiCompactionTurnState = Readonly<{
+  agentSettled: boolean;
   lastAssistantStopReason: string | null;
   lastCompactionEnd: Readonly<{
     payload?: Readonly<Record<string, unknown>> | null;

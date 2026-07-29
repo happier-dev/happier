@@ -1,4 +1,4 @@
-import type { TerminalHostHandle } from '@happier-dev/plugin-sdk/experimental/runtime/session';
+import type { TerminalHostHandle } from '@happier-dev/agents';
 
 export type ClaudeUnifiedTerminalRuntimeState = {
   activePromptText: string | null;

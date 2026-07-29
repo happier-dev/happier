@@ -1,4 +1,3 @@
-import { CLAUDE_AGENT_SETTINGS_DESCRIPTOR } from './settings/descriptor.js';
 
 export const CLAUDE_UI_DESCRIPTOR = Object.freeze({
   kind: 'plugin.ui.v1',
@@ -12,7 +11,7 @@ export const CLAUDE_UI_DESCRIPTOR = Object.freeze({
     availability: { experimental: false },
     connectedService: {
       serviceId: 'anthropic',
-      labelKey: 'agentInput.agent.claude',
+      labelKey: 'agentInput.connectedServiceLabel.claude',
       connectRoute: '/(app)/settings/connect/claude',
     },
     flavorAliases: ['claude'],
@@ -45,7 +44,7 @@ export const CLAUDE_UI_DESCRIPTOR = Object.freeze({
     picker: {
       iconName: 'sparkles-outline',
       iconScale: 1.1,
-      cliGlyphTokenId: 'agentGlyph.claude',
+      cliGlyph: '✳︎',
       cliGlyphScale: 1.0,
       profileCompatibilityGlyphScale: 1.14,
     },
@@ -55,7 +54,6 @@ export const CLAUDE_UI_DESCRIPTOR = Object.freeze({
     },
     icon: { assetId: 'claude' },
   },
-  settings: CLAUDE_AGENT_SETTINGS_DESCRIPTOR,
   behavior: {
     descriptorId: 'claude.uiBehavior.v1',
     // Capability-driven editable-goal gating. Unlike Codex (which gates on the app-server backend

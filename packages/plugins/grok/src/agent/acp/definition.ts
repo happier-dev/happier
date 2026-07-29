@@ -1,0 +1,106 @@
+import type {
+  AgentAcpRuntimeDefinition,
+  AgentAcpRuntimeExtensions,
+  AgentSessionRuntimeContext,
+} from '@happier-dev/plugin-sdk/agent-runtime';
+import { createAcpToolNameInferencePreset } from '@happier-dev/agents';
+
+import { selectGrokAuthentication } from './auth.js';
+import { GROK_PROMPT_COMPLETE_METHODS, handleGrokPromptComplete } from './completion.js';
+import { GROK_MCP_SERVERS_UPDATED_METHOD, handleGrokMcpServersUpdated } from './mcpServersUpdated.js';
+import {
+  projectGrokModelOptions,
+  projectGrokSetModelResponse,
+  resolveGrokReasoningEffortUpdate,
+} from './modelControls.js';
+import {
+  buildGrokHostQuestions,
+  buildGrokQuestionResponse,
+  GROK_ASK_USER_QUESTION_METHODS,
+  parseGrokQuestionRequest,
+} from './questions.js';
+import { projectGrokGeneratedMedia } from './generatedMedia.js';
+import { GROK_ACP_HISTORY } from './historyControls.js';
+
+export function buildGrokAcpRuntimeDefinition(
+  launchEnvironment: Readonly<Record<string, string>>,
+): AgentAcpRuntimeDefinition {
+  return Object.freeze({
+    auth: {
+      selectMethod: (context) => selectGrokAuthentication(context, launchEnvironment),
+    },
+    parameterizedModelPicker: true,
+    acceptsVerifiedImageInput: true,
+    toolNameInference: createAcpToolNameInferencePreset(),
+    models: {
+      projectModel(rawModel, normalizedModel) {
+        const modelRecord = rawModel !== null && typeof rawModel === 'object' && !Array.isArray(rawModel)
+          ? rawModel as Readonly<Record<string, unknown>>
+          : {};
+        return {
+          ...normalizedModel,
+          modelOptions: projectGrokModelOptions(
+            modelRecord,
+            normalizedModel.modelOptions ?? [],
+          ),
+        };
+      },
+      projectUpdate({ configId, value, currentModel }) {
+        return resolveGrokReasoningEffortUpdate({ configId, value, currentModel });
+      },
+      projectSetModelResponse(input) {
+        return projectGrokSetModelResponse(input);
+      },
+    },
+    generatedMedia: {
+      projectTerminalOutput: projectGrokGeneratedMedia,
+    },
+    history: GROK_ACP_HISTORY,
+    mcp: { policy: 'pass_through' as const },
+  });
+}
+
+export const GROK_ACP_RUNTIME_DEFINITION: AgentAcpRuntimeDefinition =
+  buildGrokAcpRuntimeDefinition({});
+
+export function createGrokAcpRuntimeExtensions(
+  context: Pick<AgentSessionRuntimeContext, 'ui'>,
+): AgentAcpRuntimeExtensions {
+  const askQuestion = async (
+    params: Parameters<NonNullable<AgentAcpRuntimeExtensions['requests']>[string]>[0],
+    extensionContext: Parameters<NonNullable<AgentAcpRuntimeExtensions['requests']>[string]>[1],
+  ) => {
+    if (extensionContext.signal.aborted) return { outcome: 'cancelled' };
+    if (!extensionContext.providerSessionId) {
+      throw new Error('Grok question arrived before an ACP provider session was bound');
+    }
+    if (!extensionContext.currentTurn) {
+      throw new Error('Grok question arrived without an active ACP turn');
+    }
+    const request = parseGrokQuestionRequest(
+      params,
+      extensionContext.providerSessionId,
+      extensionContext.method,
+    );
+    const result = await context.ui.askQuestions(buildGrokHostQuestions(request), {
+      title: request.mode === 'plan' ? 'Grok plan question' : 'Grok question',
+    });
+    if (extensionContext.signal.aborted) return { outcome: 'cancelled' };
+    return buildGrokQuestionResponse(request, result);
+  };
+
+  return Object.freeze({
+    requests: Object.freeze(Object.fromEntries(
+      GROK_ASK_USER_QUESTION_METHODS.map((method) => [method, askQuestion]),
+    )),
+    notifications: Object.freeze({
+      ...Object.fromEntries(GROK_PROMPT_COMPLETE_METHODS.map((method) => [
+        method,
+        (params: Parameters<typeof handleGrokPromptComplete>[0], extensionContext: Parameters<typeof handleGrokPromptComplete>[1]) => {
+          handleGrokPromptComplete(params, extensionContext);
+        },
+      ])),
+      [GROK_MCP_SERVERS_UPDATED_METHOD]: handleGrokMcpServersUpdated,
+    }),
+  });
+}

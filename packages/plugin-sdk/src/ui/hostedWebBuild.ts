@@ -5,6 +5,7 @@ import {
     PluginUiArtifactsManifestEntryV1Schema,
     type PluginHostedWebSecurityPolicyV1,
     type PluginHostedWebRuntimeModeV1,
+    type PluginUiArtifactFileV1,
     type PluginUiArtifactsManifestEntryV1,
 } from '@happier-dev/protocol/plugins/ui';
 
@@ -14,7 +15,7 @@ import {
     readRequiredString,
 } from './buildPaths.js';
 
-export type HostedWebStaticAssetsBindingV1 = Readonly<{
+export type HostedWebStaticAssetsBinding = Readonly<{
     contributionId: string;
     hostedWebServiceRef: Extract<PluginHostedWebContributionV1['service'], { kind: 'staticAssets' }>;
     runtimeMode: Extract<PluginHostedWebRuntimeModeV1, { kind: 'installedStaticAssets' }>;
@@ -25,7 +26,7 @@ const HOSTED_WEB_REQUIRED_FEATURE_IDS = Object.freeze([HOSTED_WEB_FEATURE_ID] as
 const HOSTED_WEB_BUNDLED_DEPENDENCIES = Object.freeze(['react-native-web'] as const);
 const EMPTY_EXTERNALS = Object.freeze([] as const);
 
-export type HostedWebViteBuildPresetInputV1 = Readonly<{
+export type HostedWebViteBuildPresetInput = Readonly<{
     contributionId: string;
     sourceEntry: string;
     viteVersion: string;
@@ -33,7 +34,7 @@ export type HostedWebViteBuildPresetInputV1 = Readonly<{
     reactVersion: string;
 }>;
 
-export type HostedWebViteBuildPresetV1 = Readonly<{
+export type HostedWebViteBuildPreset = Readonly<{
     tier: 'hostedWeb';
     bundler: 'vite';
     contributionId: string;
@@ -59,10 +60,10 @@ export type HostedWebViteBuildPresetV1 = Readonly<{
     requiredFeatureIds: readonly [typeof HOSTED_WEB_FEATURE_ID];
 }>;
 
-export type HostedWebViteBuildArtifactInputV1 = Readonly<{
+export type HostedWebViteBuildArtifactInput = Readonly<{
     contributionId: string;
     entry: string;
-    files: readonly string[];
+    files: readonly PluginUiArtifactFileV1[];
     digest: string;
     viteVersion: string;
     hostUiApiVersion: string;
@@ -73,7 +74,7 @@ export function defineHostedWebStaticAssets(input: Readonly<{
     contributionId: string;
     artifactId: string;
     assetRootId: string;
-}>): HostedWebStaticAssetsBindingV1 {
+}>): HostedWebStaticAssetsBinding {
     const contributionId = readRequiredString(input.contributionId, 'contributionId');
     const artifactId = readRequiredString(input.artifactId, 'artifactId');
     const assetRootId = readRequiredString(input.assetRootId, 'assetRootId');
@@ -97,7 +98,7 @@ function createDenyByDefaultHostedWebSecurity(): PluginHostedWebSecurityPolicyV1
     return PluginHostedWebSecurityPolicyV1Schema.parse({});
 }
 
-function readVitePresetInput(input: HostedWebViteBuildPresetInputV1) {
+function readVitePresetInput(input: HostedWebViteBuildPresetInput) {
     return {
         contributionId: readOutputPathSegment(input.contributionId, 'contributionId'),
         sourceEntry: readRelativeBuildPath(input.sourceEntry, 'sourceEntry'),
@@ -108,8 +109,8 @@ function readVitePresetInput(input: HostedWebViteBuildPresetInputV1) {
 }
 
 export function defineHostedWebViteBuildPreset(
-    input: HostedWebViteBuildPresetInputV1,
-): HostedWebViteBuildPresetV1 {
+    input: HostedWebViteBuildPresetInput,
+): HostedWebViteBuildPreset {
     const parsed = readVitePresetInput(input);
     return Object.freeze({
         tier: 'hostedWeb',
@@ -140,10 +141,13 @@ export function defineHostedWebViteBuildPreset(
 
 function defineViteBuildArtifact(
     tier: 'hostedWeb',
-    input: HostedWebViteBuildArtifactInputV1,
+    input: HostedWebViteBuildArtifactInput,
 ): PluginUiArtifactsManifestEntryV1 {
     const entry = readRelativeBuildPath(input.entry, 'entry');
-    const files = input.files.map((file, index) => readRelativeBuildPath(file, `files[${index}]`));
+    const files = input.files.map((file, index) => ({
+        ...file,
+        relativePath: readRelativeBuildPath(file.relativePath, `files[${index}].relativePath`),
+    }));
 
     return PluginUiArtifactsManifestEntryV1Schema.parse({
         contributionId: readRequiredString(input.contributionId, 'contributionId'),
@@ -159,7 +163,7 @@ function defineViteBuildArtifact(
 }
 
 export function defineHostedWebViteBuildArtifact(
-    input: HostedWebViteBuildArtifactInputV1,
+    input: HostedWebViteBuildArtifactInput,
 ): PluginUiArtifactsManifestEntryV1 {
     return defineViteBuildArtifact('hostedWeb', input);
 }

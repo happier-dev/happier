@@ -1,13 +1,23 @@
-import type {
-  RuntimeConfigOutcomeChangeKeyV1,
-  RuntimeConfigOutcomeStatusV1,
-  RuntimeConfigOutcomeTimingV1,
-  TerminalControlPort,
-} from '@happier-dev/plugin-sdk/experimental/runtime/session';
+import type { TerminalControlPort } from '@happier-dev/agents';
 
 import type { ClaudeTuiModeMarker } from '../screenState.js';
+import type {
+  ClaudeProviderConfigurationOutcomeStatus,
+  ClaudeProviderConfigurationOutcomeTiming,
+} from '../../../providerOperations.js';
 import type { SettingsGuard } from './settingsGuard.js';
 import type { ClaudeTuiControlTelemetrySink } from './telemetry.js';
+
+export type RuntimeConfigOutcomeStatusV1 = ClaudeProviderConfigurationOutcomeStatus;
+export type RuntimeConfigOutcomeTimingV1 = ClaudeProviderConfigurationOutcomeTiming;
+export type RuntimeConfigOutcomeChangeKeyV1 =
+  | 'model'
+  | 'fallbackModel'
+  | 'permissionMode'
+  | 'reasoningEffort'
+  | 'maxThinkingTokens'
+  | 'launchOption'
+  | 'sessionMode';
 
 /**
  * Canonical feature id that gates the Claude Unified TUI runtime-control controller.

@@ -9,6 +9,7 @@ import {
   type SessionWorkflowRunStatusV1,
 } from '@happier-dev/plugin-sdk/experimental/sessions/workState';
 
+import type { ClaudeProviderTaskActivity } from '../runtime/remote/sdk/providerActivity.js';
 import {
   parseClaudeWorkflowFact,
   type SubagentStartFact,
@@ -76,6 +77,7 @@ type MutableRun = {
   runId: string;
   workflowToolUseId?: string;
   providerTaskId?: string;
+  providerRunId?: string;
   explicit: boolean;
   status: SessionWorkflowRunStatusV1;
   statusReason?: SessionWorkflowRunStatusReasonV1;
@@ -116,7 +118,7 @@ export type WorkflowInterruptedRunSeed = Readonly<{
 
 export type ClaudeWorkflowActivityTracker = Readonly<{
   /** Fold one raw transcript value; returns the per-run change observation for the publisher. */
-  observe(value: unknown, params: Readonly<{ updatedAt: number }>): WorkflowActivityObservation;
+  observe(value: unknown, params: Readonly<{ updatedAt: number; live?: boolean }>): WorkflowActivityObservation;
   /** Materialize one stale persisted headline as a terminal run after startup replay missed it. */
   reconcileInterruptedRunFromHeadline(
     run: WorkflowInterruptedRunSeed,
@@ -128,8 +130,6 @@ export type ClaudeWorkflowActivityTracker = Readonly<{
   getRunSnapshotMap(): ReadonlyMap<string, SessionWorkflowRunSnapshotV1>;
   /** Run ids whose latest published agents are workflow-owned (CWF4 suppression hook). */
   getWorkflowOwnedAgentToolUseIds(): ReadonlySet<string>;
-  /** Stable runtime-activity source key for this run, rekeying from tool-use id to provider task id. */
-  getRuntimeActivitySourceKeyForRunId(runId: string): string | null;
 }>;
 
 const TERMINAL_RUN_STATUSES: ReadonlySet<SessionWorkflowRunStatusV1> = new Set([
@@ -182,10 +182,13 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
   getCurrentClaudeSessionId?: () => string | null;
 }>): ClaudeWorkflowActivityTracker {
   const runs = new Map<string, MutableRun>();
+  const runIdByWorkflowToolUseId = new Map<string, string>();
+  const runIdByProviderRunId = new Map<string, string>();
   const runIdByChildToolUseId = new Map<string, string>();
   // Claude `task_updated` terminal events carry only `task_id` (no `tool_use_id`), so the run's
   // provider task id is learned from earlier lifecycle events that carry both and used to route.
   const runIdByTaskId = new Map<string, string>();
+  const liveObservedRunIds = new Set<string>();
   let implicitRunId: string | undefined;
 
   // Cache the last projected snapshot per run so revision bumps + change detection are stable.
@@ -363,7 +366,9 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
 
   function applyWorkflowStart(fact: WorkflowStartFact, updatedAt: number): string | null {
     if (isForeignSource(fact.sourceSessionId)) return null;
-    const run = ensureRun(fact.workflowToolUseId, {
+    const correlatedRunId = runIdByWorkflowToolUseId.get(fact.workflowToolUseId)
+      ?? fact.workflowToolUseId;
+    const run = ensureRun(correlatedRunId, {
       title: fact.title,
       explicit: true,
       status: 'active',
@@ -372,6 +377,7 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
       updatedAt,
       startedAt: updatedAt,
     });
+    runIdByWorkflowToolUseId.set(fact.workflowToolUseId, run.runId);
     for (const phase of fact.phases ?? []) {
       upsertPhase(run, phase.index, phase.title);
     }
@@ -385,9 +391,17 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
     return run.runId;
   }
 
-  function applyWorkflowLaunch(fact: WorkflowLaunchFact, updatedAt: number): string | null {
+  function applyWorkflowLaunch(
+    fact: WorkflowLaunchFact,
+    updatedAt: number,
+    providerTaskActivities: ClaudeProviderTaskActivity[],
+  ): string | null {
     if (isForeignSource(fact.sourceSessionId)) return null;
-    const run = ensureRun(fact.workflowToolUseId, {
+    const existingRunId = runIdByWorkflowToolUseId.get(fact.workflowToolUseId)
+      ?? fact.workflowToolUseId;
+    const existing = runs.get(existingRunId);
+    if (!existing && !fact.confirmedLocalWorkflow) return null;
+    let run = ensureRun(existingRunId, {
       title: fact.title ?? 'Workflow',
       explicit: true,
       status: 'active',
@@ -396,6 +410,47 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
       updatedAt,
       startedAt: updatedAt,
     });
+    runIdByWorkflowToolUseId.set(fact.workflowToolUseId, run.runId);
+
+    if (fact.providerRunId) {
+      const correlatedRunId = runIdByProviderRunId.get(fact.providerRunId);
+      const correlatedRun = correlatedRunId ? runs.get(correlatedRunId) : undefined;
+      if (correlatedRun && correlatedRun.runId !== run.runId) {
+        const supersededRunId = run.runId;
+        const priorProviderTaskId = correlatedRun.providerTaskId;
+        const providerSessionId = correlatedRun.sourceSessionId ?? fact.sourceSessionId;
+        if (priorProviderTaskId && priorProviderTaskId !== fact.taskId && providerSessionId) {
+          providerTaskActivities.push({
+            type: 'terminal',
+            sessionId: providerSessionId,
+            taskId: priorProviderTaskId,
+          });
+          runIdByTaskId.delete(priorProviderTaskId);
+        }
+        for (const [toolUseId, ownedRunId] of runIdByWorkflowToolUseId) {
+          if (ownedRunId === supersededRunId) {
+            runIdByWorkflowToolUseId.set(toolUseId, correlatedRun.runId);
+          }
+        }
+        for (const [taskId, ownedRunId] of runIdByTaskId) {
+          if (ownedRunId === supersededRunId) {
+            runIdByTaskId.set(taskId, correlatedRun.runId);
+          }
+        }
+        for (const [childToolUseId, ownedRunId] of runIdByChildToolUseId) {
+          if (ownedRunId === supersededRunId) {
+            runIdByChildToolUseId.set(childToolUseId, correlatedRun.runId);
+          }
+        }
+        runs.delete(supersededRunId);
+        lastSnapshotByRun.delete(supersededRunId);
+        liveObservedRunIds.delete(supersededRunId);
+        run = correlatedRun;
+        runIdByWorkflowToolUseId.set(fact.workflowToolUseId, run.runId);
+      }
+      run.providerRunId = fact.providerRunId;
+      runIdByProviderRunId.set(fact.providerRunId, run.runId);
+    }
     if (fact.title) run.title = fact.title;
     if (fact.sourceSessionId && !run.sourceSessionId) run.sourceSessionId = fact.sourceSessionId;
     if (fact.taskId) {
@@ -407,14 +462,19 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
     return run.runId;
   }
 
-  function applyTaskLifecycle(fact: TaskLifecycleFact, updatedAt: number): string | null {
+  function applyTaskLifecycle(
+    fact: TaskLifecycleFact,
+    updatedAt: number,
+    providerTaskActivities: ClaudeProviderTaskActivity[],
+  ): string | null {
     if (isForeignSource(fact.sourceSessionId)) return null;
     const toolUseId = fact.toolUseId;
     // Route to an explicit Workflow run if the tool-use id names one, else to a child's owning run,
     // else via the run's learned provider task id (terminal `task_updated` carries only `task_id`).
     let run: MutableRun | undefined;
     if (toolUseId) {
-      run = runs.get(toolUseId);
+      const workflowRunId = runIdByWorkflowToolUseId.get(toolUseId);
+      run = workflowRunId ? runs.get(workflowRunId) : runs.get(toolUseId);
       if (!run) {
         const childRunId = runIdByChildToolUseId.get(toolUseId);
         if (childRunId) run = runs.get(childRunId);
@@ -425,6 +485,14 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
       if (taskRunId) run = runs.get(taskRunId);
     }
     if (!run) return null;
+    if (
+      fact.taskId
+      && run.providerTaskId
+      && fact.taskId !== run.providerTaskId
+      && !runIdByTaskId.has(fact.taskId)
+    ) {
+      return null;
+    }
 
     // Learn the run's provider task id so a later id-only terminal event can route back to it.
     if (fact.taskId) {
@@ -450,6 +518,7 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
     }
 
     // Whole-run status: a terminal lifecycle event closes the run; otherwise it stays active.
+    const priorStatus = run.status;
     const runSignal = runStatusFromSignal(fact.status);
     if (isTerminalRunStatus(runSignal)) {
       run.status = runSignal;
@@ -457,6 +526,23 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
       delete run.reconciledCounts;
     } else if (!isTerminalRunStatus(run.status)) {
       run.status = runSignal === 'unknown' ? run.status : runSignal;
+    }
+    if (
+      !isTerminalRunStatus(priorStatus)
+      && isTerminalRunStatus(run.status)
+      && run.sourceSessionId
+      && run.providerTaskId
+    ) {
+      providerTaskActivities.push({
+        type: 'terminal',
+        terminalStatus: run.status === 'complete'
+          ? 'completed'
+          : run.status === 'failed'
+            ? 'failed'
+            : 'stopped',
+        sessionId: run.sourceSessionId,
+        taskId: run.providerTaskId,
+      });
     }
     return run.runId;
   }
@@ -529,7 +615,9 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
 
   function applyWorkflowJournal(fact: WorkflowJournalFact, updatedAt: number): string | null {
     if (isForeignSource(fact.sourceSessionId)) return null;
-    const run = runs.get(fact.workflowToolUseId);
+    const workflowRunId = runIdByWorkflowToolUseId.get(fact.workflowToolUseId)
+      ?? fact.workflowToolUseId;
+    const run = runs.get(workflowRunId);
     if (!run) return null;
     if (fact.sourceSessionId && !run.sourceSessionId) run.sourceSessionId = fact.sourceSessionId;
     const journalSpec = resolveJournalSpec(run, fact);
@@ -562,7 +650,9 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
     if (isForeignSource(fact.sourceSessionId)) return null;
     // A child whose explicit parent is a known Workflow run attaches there (explicit-wins).
     if (fact.parentToolUseId) {
-      const parentRun = runs.get(fact.parentToolUseId);
+      const parentRunId = runIdByWorkflowToolUseId.get(fact.parentToolUseId)
+        ?? fact.parentToolUseId;
+      const parentRun = runs.get(parentRunId);
       if (parentRun) {
         migrateImplicitAgentToExplicit(fact.toolUseId, parentRun);
         upsertAgent(parentRun, {
@@ -713,11 +803,29 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
     seed: WorkflowInterruptedRunSeed,
     reconcileParams: Readonly<{ updatedAt: number }>,
   ): WorkflowActivityObservation {
-    if (runs.has(seed.runId)) {
+    const aliasedRunId = runIdByWorkflowToolUseId.get(seed.workflowToolUseId ?? seed.runId);
+    if (aliasedRunId && aliasedRunId !== seed.runId) {
+      return {
+        changedRunIds: [seed.runId],
+        startedRunIds: [],
+        terminalRunIds: [],
+        statusChangedRunIds: [],
+      };
+    }
+    const existing = runs.get(seed.runId);
+    if (existing && liveObservedRunIds.has(seed.runId)) {
       return { changedRunIds: [], startedRunIds: [], terminalRunIds: [], statusChangedRunIds: [] };
     }
-
-    const run = ensureRun(seed.runId, {
+    if (existing && isTerminalRunStatus(existing.status)) {
+      projectRun(existing);
+      return {
+        changedRunIds: [existing.runId],
+        startedRunIds: [],
+        terminalRunIds: [existing.runId],
+        statusChangedRunIds: [existing.runId],
+      };
+    }
+    const run = existing ?? ensureRun(seed.runId, {
       title: seed.title,
       explicit: true,
       status: 'stopped',
@@ -725,25 +833,32 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
       updatedAt: reconcileParams.updatedAt,
       startedAt: reconcileParams.updatedAt,
     });
+    run.status = 'stopped';
     run.statusReason = 'interrupted';
     run.completedAt = reconcileParams.updatedAt;
-    run.reconciledCounts = {
-      totalAgents: seed.totalAgents,
-      completedAgents: seed.completedAgents,
-      ...(seed.failedAgents !== undefined ? { failedAgents: seed.failedAgents } : {}),
-      ...(seed.blockedAgents !== undefined ? { blockedAgents: seed.blockedAgents } : {}),
-    };
+    run.updatedAt = reconcileParams.updatedAt;
+    if (run.agentsById.size === 0) {
+      run.reconciledCounts = {
+        totalAgents: seed.totalAgents,
+        completedAgents: seed.completedAgents,
+        ...(seed.failedAgents !== undefined ? { failedAgents: seed.failedAgents } : {}),
+        ...(seed.blockedAgents !== undefined ? { blockedAgents: seed.blockedAgents } : {}),
+      };
+    }
     projectRun(run);
 
     return {
-      changedRunIds: [seed.runId],
+      changedRunIds: [run.runId],
       startedRunIds: [],
-      terminalRunIds: [seed.runId],
-      statusChangedRunIds: [seed.runId],
+      terminalRunIds: [run.runId],
+      statusChangedRunIds: [run.runId],
     };
   }
 
-  function observe(value: unknown, observeParams: Readonly<{ updatedAt: number }>): WorkflowActivityObservation {
+  function observe(
+    value: unknown,
+    observeParams: Readonly<{ updatedAt: number; live?: boolean }>,
+  ): WorkflowActivityObservation {
     const fact = parseClaudeWorkflowFact(value);
     if (!fact) {
       return { changedRunIds: [], startedRunIds: [], terminalRunIds: [], statusChangedRunIds: [] };
@@ -754,12 +869,13 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
     for (const [runId, run] of runs) priorStatusByRun.set(runId, run.status);
 
     let touchedRunId: string | null = null;
+    const providerTaskActivities: ClaudeProviderTaskActivity[] = [];
     if (fact.kind === 'workflow-start') {
       touchedRunId = applyWorkflowStart(fact, observeParams.updatedAt);
     } else if (fact.kind === 'workflow-launch') {
-      touchedRunId = applyWorkflowLaunch(fact, observeParams.updatedAt);
+      touchedRunId = applyWorkflowLaunch(fact, observeParams.updatedAt, providerTaskActivities);
     } else if (fact.kind === 'task-lifecycle') {
-      touchedRunId = applyTaskLifecycle(fact, observeParams.updatedAt);
+      touchedRunId = applyTaskLifecycle(fact, observeParams.updatedAt, providerTaskActivities);
     } else if (fact.kind === 'workflow-journal') {
       touchedRunId = applyWorkflowJournal(fact, observeParams.updatedAt);
     } else {
@@ -768,6 +884,9 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
 
     if (!touchedRunId) {
       return { changedRunIds: [], startedRunIds: [], terminalRunIds: [], statusChangedRunIds: [] };
+    }
+    if (observeParams.live !== false) {
+      liveObservedRunIds.add(touchedRunId);
     }
 
     // Migration may have dropped the implicit run; recompute change set across all current runs that
@@ -794,13 +913,18 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
         terminalRunIds.push(runId);
       }
     }
+    for (const priorRunId of priorRunIds) {
+      if (!runs.has(priorRunId) && !changedRunIds.includes(priorRunId)) {
+        changedRunIds.push(priorRunId);
+      }
+    }
 
     return {
       changedRunIds,
       startedRunIds,
       terminalRunIds,
       statusChangedRunIds,
-      runtimeActivityRunIds: [touchedRunId],
+      ...(providerTaskActivities.length > 0 ? { providerTaskActivities } : {}),
     };
   }
 
@@ -827,18 +951,11 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
     return owned;
   }
 
-  function getRuntimeActivitySourceKeyForRunId(runId: string): string | null {
-    const run = runs.get(runId);
-    if (!run) return null;
-    return run.providerTaskId ?? run.workflowToolUseId ?? run.runId;
-  }
-
   return {
     observe,
     reconcileInterruptedRunFromHeadline,
     getRunSnapshot,
     getRunSnapshotMap,
     getWorkflowOwnedAgentToolUseIds,
-    getRuntimeActivitySourceKeyForRunId,
   };
 }

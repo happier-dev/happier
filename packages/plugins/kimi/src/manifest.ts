@@ -1,73 +1,74 @@
-import {
-  definePluginManifest,
-  type PluginAgentContributionV2,
-  type PluginManifestV2,
-  type PluginAgentSettingsContributionV1,
-} from '@happier-dev/plugin-sdk';
+import type { PluginManifest } from '@happier-dev/plugin-sdk/manifest';
 
-import { KIMI_ACP_BACKEND_SPEC } from './agent/acp/definition.js';
+import { HAPPIER_KIMI_ACP_SELECTOR_ENV } from './agent/preferences/pythonSelector.js';
 import { KIMI_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
 
-type KimiPluginManifestV2 = Omit<PluginManifestV2, 'contributes'> & Readonly<{
-  contributes: Readonly<{
-    agents: ReadonlyArray<PluginAgentContributionV2>;
-    hooks: NonNullable<NonNullable<PluginManifestV2['contributes']>['hooks']>;
-    agentSettings: ReadonlyArray<PluginAgentSettingsContributionV1>;
-  }>;
-}>;
-
-export const PLUGIN_MANIFEST = definePluginManifest({
-  schemaVersion: 2,
-  id: 'happier.agent.kimi',
-  version: '0.0.0',
-  displayName: 'kimi',
-  description: undefined,
-  engines: { happier: '^0.0.0' },
-  activationEvents: ['onAgent:kimi'],
-  uses: ['agents', 'hooks'],
-  entrypoints: { main: './dist/index.js' },
-  permissions: { required: [], optional: [] },
+export const PLUGIN_MANIFEST = {
+  schemaVersion: 2, id: 'happier.agent.kimi', version: '0.0.0', displayName: 'Kimi',
+  engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './dist/index.js' },
+  hostAccess: {
+    required: [{
+      id: 'kimi-process',
+      capability: 'process',
+      reason: 'Run the declared Kimi CLI executable.',
+      scope: {
+        executables: [{ kind: 'systemTool', id: 'kimi-cli' }],
+        envKeys: [HAPPIER_KIMI_ACP_SELECTOR_ENV, 'PYTHONPATH'],
+      },
+    }],
+    optional: [],
+  },
   contributes: {
-    agents: [
-      {
-        kindVersion: 1,
-        id: 'kimi',
-        runtime: {
-          kind: 'acp',
-          transport: KIMI_ACP_BACKEND_SPEC.transport,
-          ux: KIMI_ACP_BACKEND_SPEC.ux,
-          capabilities: KIMI_ACP_BACKEND_SPEC.capabilities,
-          sessionIdHeaderName: KIMI_ACP_BACKEND_SPEC.sessionIdHeaderName,
-          toolNameInference: KIMI_ACP_BACKEND_SPEC.toolNameInference,
-          stderrRules: KIMI_ACP_BACKEND_SPEC.stderrRules,
-          mcp: KIMI_ACP_BACKEND_SPEC.mcp,
+    agents: [{
+      id: 'kimi',
+      title: 'Kimi',
+      runtime: { kind: 'custom' },
+      cli: {
+        displayName: 'Kimi CLI',
+        executable: {
+          binaryName: 'kimi',
+          knownUserBinDirSuffixes: ['.local/bin'],
+          sourcePreference: 'system-first',
         },
-        capabilities: {
-          executionRun: { supported: true },
-          session: {
-            media: {
-              acceptsImageInput: { supported: false },
-              emitsSessionMedia: { supported: false },
-              nativeImageGeneration: { supported: false },
+        install: {
+          managed: null,
+          manual: {
+            kind: 'vendor_recipe',
+            recipes: {
+              darwin: [{ cmd: 'bash', args: ['-lc', 'curl -fsSL https://code.kimi.com/install.sh | bash'] }],
+              linux: [{ cmd: 'bash', args: ['-lc', 'curl -fsSL https://code.kimi.com/install.sh | bash'] }],
+              win32: [{
+                cmd: 'powershell',
+                args: [
+                  '-NoProfile',
+                  '-ExecutionPolicy',
+                  'Bypass',
+                  '-Command',
+                  'Invoke-RestMethod https://code.kimi.com/install.ps1 | Invoke-Expression',
+                ],
+              }],
             },
           },
+          guideUrl: 'https://kimi.moonshot.cn/docs/cli',
+          docsUrl: 'https://code.kimi.com',
+        },
+        auth: {
+          support: 'login_terminal',
+          probe: { parser: 'unknown', backgroundChecks: 'safe', statusArgs: null },
+          loginLaunches: [{ kind: 'primary', args: ['login'] }],
         },
       },
-    ],
-    hooks: [
-      {
-        id: 'agent.resolvePrerequisites',
-        hookApiVersion: 1,
-        category: 'decision',
-        scope: 'agent',
-        filters: { agentId: 'kimi' },
-        executionKind: 'decide',
-        handler: {
-          target: 'plugin',
-          exportName: 'resolveKimiDaemonSpawnPrerequisites',
+      primary: 'sessions',
+      capabilities: {
+        sessions: {
+          open: ['create', 'resume'],
+          delivery: ['newTurn', 'steer', 'followUp'],
+          cancel: true,
         },
       },
-    ],
-    agentSettings: [KIMI_AGENT_SETTINGS_CONTRIBUTION],
+    }],
+    systemTools: [{ id: 'kimi-cli', title: 'Kimi CLI', executableNames: ['kimi', 'kimi-cli'] }],
+    hooks: [{ id: 'resolve-prerequisites', on: 'agent.resolvePrerequisites', category: 'decision', scope: 'agent', filters: { agentId: 'kimi' }, executionKind: 'decide' }],
+    settings: [KIMI_AGENT_SETTINGS_CONTRIBUTION],
   },
-} satisfies KimiPluginManifestV2);
+} satisfies PluginManifest;

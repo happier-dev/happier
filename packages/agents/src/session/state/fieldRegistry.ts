@@ -57,6 +57,18 @@ export const SESSION_STATE_FIELD_REGISTRY = {
     conflictPolicy: 'bindingOwned',
     deliveryClass: 'durable_best_effort',
   },
+  'runtime.externalAgent': {
+    id: 'runtime.externalAgent',
+    class: 'runtime',
+    conflictPolicy: 'bindingOwned',
+    deliveryClass: 'durable_best_effort',
+  },
+  'runtime.externalSessionOperation': {
+    id: 'runtime.externalSessionOperation',
+    class: 'runtime',
+    conflictPolicy: 'bindingOwned',
+    deliveryClass: 'durable_required',
+  },
   'runtime.usageLimitRecovery': {
     id: 'runtime.usageLimitRecovery',
     class: 'runtime',

@@ -5,3 +5,4 @@ export * from './receipts.js';
 export * from './codecsV1.js';
 export * from './controlV1.js';
 export * from './captureV1.js';
+export * from './directV2.js';

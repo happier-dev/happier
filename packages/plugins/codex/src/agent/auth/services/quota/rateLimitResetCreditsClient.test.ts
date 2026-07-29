@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { FetchRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
+import type { CodexRuntimeFetch as FetchRuntimeServiceV1 } from '../runtimeFetch.js';
 
 import { consumeCodexRateLimitResetCredit } from './rateLimitResetCreditsClient.js';
 

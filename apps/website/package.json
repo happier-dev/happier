@@ -6,14 +6,18 @@
     "type": "module",
   "scripts": {
     "tsc": "node ../../scripts/workspaces/runTypeScriptCli.mjs",
+        "generate:plugin-manifest-schema": "node scripts/generate-plugin-manifest-schema.mjs",
+        "prebuild": "yarn -s generate:plugin-manifest-schema",
+        "predev": "yarn -s generate:plugin-manifest-schema",
         "dev": "vite",
         "build": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit && vite build",
         "preview": "vite preview",
-        "test": "vitest run",
+        "test": "vitest run --exclude scripts/**/*.test.mjs && node --test scripts/*.test.mjs",
         "typecheck": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit",
         "optimize:images": "node scripts/optimize-feature-images.mjs"
     },
     "dependencies": {
+        "@happier-dev/protocol": "0.0.0",
         "clsx": "^2.1.1",
         "framer-motion": "^11.11.17",
         "react": "^19.2.0",

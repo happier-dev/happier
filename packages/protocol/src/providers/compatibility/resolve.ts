@@ -13,11 +13,49 @@ import {
 import { ProviderModelDescriptorV1Schema, type ProviderModelDescriptorV1 } from '../../models/descriptor.js';
 import { createProviderFingerprintV1 } from '../fingerprints.js';
 import { ProviderAgentTargetKeySchema } from '../ids.js';
+import { compareProviderCanonicalStringsV1 } from '../canonicalOrderV1.js';
 import {
   AgentProviderRequirementsV1Schema,
   type AgentProviderRequirementsV1,
   type ProviderBindingCompatibilityV1,
+  type ProviderCompatibilityReasonCodeV1,
 } from './v1.js';
+
+const CAPABILITY_REASON_CODES = {
+  streaming: {
+    unsupported: 'capability_streaming_unsupported',
+    unknown: 'capability_streaming_unknown',
+  },
+  toolRoundTrips: {
+    unsupported: 'capability_toolRoundTrips_unsupported',
+    unknown: 'capability_toolRoundTrips_unknown',
+  },
+  statefulResponses: {
+    unsupported: 'capability_statefulResponses_unsupported',
+    unknown: 'capability_statefulResponses_unknown',
+  },
+  reasoningControls: {
+    unsupported: 'capability_reasoningControls_unsupported',
+    unknown: 'capability_reasoningControls_unknown',
+  },
+} as const satisfies Record<keyof AgentProviderRequirementsV1['required'], Readonly<{
+  unsupported: ProviderCompatibilityReasonCodeV1;
+  unknown: ProviderCompatibilityReasonCodeV1;
+}>>;
+
+const MODEL_CAPABILITY_REASON_CODES = {
+  toolRoundTrips: {
+    unsupported: 'model_capability_toolRoundTrips_unsupported',
+    unknown: 'model_capability_toolRoundTrips_unknown',
+  },
+  reasoningControls: {
+    unsupported: 'model_capability_reasoningControls_unsupported',
+    unknown: 'model_capability_reasoningControls_unknown',
+  },
+} as const satisfies Record<'toolRoundTrips' | 'reasoningControls', Readonly<{
+  unsupported: ProviderCompatibilityReasonCodeV1;
+  unknown: ProviderCompatibilityReasonCodeV1;
+}>>;
 
 function matchesTransport(
   transport: ProviderCredentialTransportV1,
@@ -42,7 +80,7 @@ function credentialReasons(
   credential: ProviderApiKeyCredentialRequirementV1 | undefined,
   agent: AgentProviderRequirementsV1,
   protocol: ProviderEndpointTemplateV1['protocol'],
-): string[] {
+): ProviderCompatibilityReasonCodeV1[] {
   if (!credential) return agent.credentialSupport.supportsNoAuth ? [] : ['no_auth_unsupported'];
   const matches = credential.transports.filter((transport) => matchesTransport(transport, agent, protocol));
   if (matches.length > 1) {
@@ -82,7 +120,7 @@ function resolveProviderBindingCompatibilityV1(
     return { status: 'incompatible', reasons: ['no_compatible_protocol'] };
   }
   const candidates: Array<ProviderBindingCompatibilityV1 & { rank: number }> = [];
-  const incompatibilityReasons: string[] = [];
+  const incompatibilityReasons: ProviderCompatibilityReasonCodeV1[] = [];
 
   params.agent.acceptsProtocols.forEach((protocol, rank) => {
     const endpoint = params.endpoints.find((candidate) => candidate.protocol === protocol);
@@ -98,10 +136,10 @@ function resolveProviderBindingCompatibilityV1(
       if (!params.agent.required[capability]) continue;
       const endpointSupport = endpoint.capabilities[capability];
       if (endpointSupport === 'unsupported') {
-        reasons.push(`capability_${capability}_unsupported`);
+        reasons.push(CAPABILITY_REASON_CODES[capability].unsupported);
         continue;
       }
-      if (endpointSupport === 'unknown') reasons.push(`capability_${capability}_unknown`);
+      if (endpointSupport === 'unknown') reasons.push(CAPABILITY_REASON_CODES[capability].unknown);
       if (capability === 'toolRoundTrips' || capability === 'reasoningControls') {
         if (!params.model) {
           reasons.push('model_required_for_capability_resolution');
@@ -109,8 +147,8 @@ function resolveProviderBindingCompatibilityV1(
         }
         const modelSupport = params.model?.capabilities?.[capability];
         if (modelSupport !== 'supported') {
-          if (modelSupport === 'unsupported') reasons.push(`model_capability_${capability}_unsupported`);
-          else reasons.push(`model_capability_${capability}_unknown`);
+          if (modelSupport === 'unsupported') reasons.push(MODEL_CAPABILITY_REASON_CODES[capability].unsupported);
+          else reasons.push(MODEL_CAPABILITY_REASON_CODES[capability].unknown);
           modelScoped = true;
         }
       }
@@ -128,7 +166,7 @@ function resolveProviderBindingCompatibilityV1(
       incompatibilityReasons.push(...hard);
       return;
     }
-    const experimentalReasons = compatibilityOverride?.status === 'experimental'
+    const experimentalReasons: ProviderCompatibilityReasonCodeV1[] = compatibilityOverride?.status === 'experimental'
       ? [...uniqueReasons, 'compatibility_override_experimental']
       : uniqueReasons;
     if (experimentalReasons.length > 0) {
@@ -173,6 +211,20 @@ function resolveProviderBindingCompatibilityV1(
   };
 }
 
+export function projectProviderBindingCompatibilityForConnectionV1(
+  result: ProviderBindingCompatibilityV1,
+): Readonly<{
+  status: 'verified' | 'experimental' | 'incompatible';
+  reasons: readonly ProviderCompatibilityReasonCodeV1[];
+}> {
+  if (result.status === 'verified') return { status: 'verified', reasons: [] };
+  if (result.status === 'experimental') return { status: 'experimental', reasons: result.reasons };
+  if (result.reasons.every((reason) => reason === 'model_required_for_capability_resolution')) {
+    return { status: 'experimental', reasons: ['model_capability_evidence_required'] };
+  }
+  return { status: 'incompatible', reasons: result.reasons };
+}
+
 function positiveAdapterVersion(value: number): number {
   if (!Number.isInteger(value) || value < 1) throw new TypeError('Adapter version must be a positive integer');
   return value;
@@ -193,7 +245,7 @@ function candidateCredentialProjection(
   const runtimeMatches = credential.transports
     .filter((transport) => matchesTransport(transport, agent, protocol))
     .map((transport) => ({ destination: transport.destination }))
-    .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+    .sort((left, right) => compareProviderCanonicalStringsV1(JSON.stringify(left), JSON.stringify(right)));
   return {
     kind: 'apiKey' as const,
     required: credential.required,

@@ -91,6 +91,8 @@ describe('applyModelControl', () => {
     expect(port.sentLiteral).toContain('/model claude-sonnet-4-6');
     // Confirms the dialog by selecting option 1 (Yes, switch).
     expect(port.sentLiteral).toContain('1');
+    // Enter submits the slash command. Claude's numbered dialog hotkey submits itself.
+    expect(port.sentKeys.filter((key) => key === 'Enter')).toHaveLength(1);
   });
 
   it('refuses to type /model mid-generation and schedules for next idle (probe P-D)', async () => {
@@ -313,6 +315,8 @@ describe('effort change confirmation dialog (incident cmq8y3nlx, L6)', () => {
 
     expect(result).toMatchObject({ kind: 'applied', effective: 'high' });
     expect(port.sentLiteral).toEqual(['/effort high', '1']);
+    // Enter submits the slash command. Claude's numbered dialog hotkey submits itself.
+    expect(port.sentKeys.filter((key) => key === 'Enter')).toHaveLength(1);
     expect(await readFile(settingsPath, 'utf8')).toBe(original);
   });
 
@@ -362,6 +366,7 @@ describe('effort change confirmation dialog (incident cmq8y3nlx, L6)', () => {
     expect(result).toMatchObject({ kind: 'applied', effective: 'high' });
     // The dialog IS the pending command: answer it, never type a duplicate /effort.
     expect(port.sentLiteral).toEqual(['1']);
+    expect(port.sentKeys.filter((key) => key === 'Enter')).toHaveLength(0);
     expect(await readFile(settingsPath, 'utf8')).toBe(original);
   });
 
@@ -374,6 +379,7 @@ describe('effort change confirmation dialog (incident cmq8y3nlx, L6)', () => {
     expect(result).toMatchObject({ kind: 'applied', effective: 'low' });
     // '2' dismisses the stale dialog (target high ≠ requested low), then the fresh command runs.
     expect(port.sentLiteral).toEqual(['2', '/effort low']);
+    expect(port.sentKeys.filter((key) => key === 'Enter')).toHaveLength(1);
   });
 
   it('accepts an xhigh dialog target when ultracode was requested (ultracode maps to xhigh)', async () => {

@@ -1,7 +1,9 @@
-import type { PluginContextV1, ResolvedMcpServerSpecV1 } from '@happier-dev/plugin-sdk';
-
 import { asRecord, normalizeString, readStringRecord } from './openCodeParsing.js';
 import type { OpenCodeServerClient } from './openCodeServerClient.js';
+import type {
+  OpenCodeResolvedMcpServer,
+  OpenCodeRuntimeContext,
+} from './runtimeContext.js';
 
 type OpenCodeMcpRegistration = Readonly<{
   name: string;
@@ -71,7 +73,7 @@ export function readOpenCodeMcpRegistrations(raw: unknown): readonly OpenCodeMcp
   return Object.freeze(registrations);
 }
 
-function readResolvedRemoteRegistration(server: ResolvedMcpServerSpecV1): OpenCodeMcpRegistration | null {
+function readResolvedRemoteRegistration(server: OpenCodeResolvedMcpServer): OpenCodeMcpRegistration | null {
   const name = normalizeString(server.name) || normalizeString(server.id);
   if (!name) return null;
 
@@ -106,7 +108,7 @@ function readResolvedRemoteRegistration(server: ResolvedMcpServerSpecV1): OpenCo
 }
 
 export function readResolvedOpenCodeMcpRegistrations(
-  servers: readonly ResolvedMcpServerSpecV1[] | undefined,
+  servers: readonly OpenCodeResolvedMcpServer[] | undefined,
 ): readonly OpenCodeMcpRegistration[] {
   const registrations: OpenCodeMcpRegistration[] = [];
   for (const server of servers ?? []) {
@@ -132,11 +134,11 @@ function mergeOpenCodeMcpRegistrations(
 }
 
 export async function registerOpenCodeMcpServers(params: Readonly<{
-  ctx: PluginContextV1;
+  ctx: OpenCodeRuntimeContext;
   client: OpenCodeServerClient;
   directory: string;
   mcpServers: unknown;
-  resolvedMcpServers?: readonly ResolvedMcpServerSpecV1[];
+  resolvedMcpServers?: readonly OpenCodeResolvedMcpServer[];
 }>): Promise<void> {
   const registrations = mergeOpenCodeMcpRegistrations(
     readOpenCodeMcpRegistrations(params.mcpServers),
@@ -157,23 +159,17 @@ export async function registerOpenCodeMcpServers(params: Readonly<{
 }
 
 export function scheduleOpenCodeMcpServerRegistration(params: Readonly<{
-  ctx: PluginContextV1;
+  ctx: OpenCodeRuntimeContext;
   client: OpenCodeServerClient;
   directory: string;
-  happierSessionId: string;
   mcpServers: unknown;
 }>): void {
   void (async () => {
-    const resolvedMcpServers = await params.ctx.mcp.resolveForSession({
-      sessionId: params.happierSessionId,
-      directory: params.directory,
-    });
     await registerOpenCodeMcpServers({
       ctx: params.ctx,
       client: params.client,
       directory: params.directory,
       mcpServers: params.mcpServers,
-      resolvedMcpServers,
     });
   })().catch((error: unknown) => {
     params.ctx.logger.debug('[OpenCodeServer] MCP server registration setup failed (non-fatal)', { error });

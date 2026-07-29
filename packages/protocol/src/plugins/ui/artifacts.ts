@@ -33,7 +33,6 @@ export const PluginUiExecutableArtifactManifestV1Schema = z.object({
   url: z.string().trim().url().optional(),
   sourceMapDigest: PluginUiArtifactDigestV1Schema.optional(),
   cacheKey: z.string().trim().min(1).optional(),
-  installSourceId: z.string().trim().min(1).optional(),
   devUrl: z.string().trim().url().optional(),
 }).strict().superRefine((value, ctx) => {
   const isDevelopmentDevUrlArtifact = value.channel === 'development'
@@ -75,40 +74,6 @@ export const PluginUiExecutableArtifactManifestV1Schema = z.object({
       path: ['contributionFamily'],
       message: 'hostedWebAsset artifacts must belong to hostedWeb contributions',
     });
-  }
-
-  if (value.artifactKind === 'embeddedWebBundle') {
-    if (value.contributionFamily !== 'embeddedWebBundles') {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['contributionFamily'],
-        message: 'embeddedWebBundle artifacts must belong to embeddedWebBundles contributions',
-      });
-    }
-    if (value.platform !== 'web') {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['platform'],
-        message: 'embeddedWebBundle artifacts must target the web platform',
-      });
-    }
-    // A development-channel devUrl artifact (no assetPath, no url) is the local
-    // dev-hot-reload declaration — mirrors reactNativeBundle's identical carve-out.
-    // It has no installed asset yet, so it is exempt from the assetPath requirement.
-    if (!isDevelopmentDevUrlArtifact && !value.assetPath) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['assetPath'],
-        message: 'embeddedWebBundle artifacts must use installed assetPath bytes',
-      });
-    }
-    if (value.url !== undefined) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['url'],
-        message: 'embeddedWebBundle artifacts must not declare remote URLs',
-      });
-    }
   }
 });
 export type PluginUiExecutableArtifactManifestV1 =

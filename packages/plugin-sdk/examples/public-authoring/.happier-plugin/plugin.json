@@ -1,0 +1,430 @@
+{
+  "schemaVersion": 2,
+  "id": "examples.public-sdk-review-assistant",
+  "version": "0.1.0",
+  "displayName": "Public SDK Review Assistant",
+  "description": "Kitchen-sink public SDK example for actions, hooks, native Agent runtime, UI, and descriptor authoring.",
+  "engines": {
+    "happier": "^0.2.0"
+  },
+  "runtime": {
+    "apiVersion": 1
+  },
+  "entrypoints": {
+    "daemon": "./daemon.js"
+  },
+  "hostAccess": {
+    "required": [
+      {
+        "id": "review-agent-process",
+        "capability": "process",
+        "reason": "Launch the example review ACP agent through host-mediated execution.",
+        "scope": {
+          "executables": [
+            {
+              "kind": "systemTool",
+              "id": "acme-review-agent"
+            }
+          ]
+        }
+      },
+      {
+        "id": "model-pack-downloads",
+        "capability": "network",
+        "reason": "Download the declared example model-pack files and license metadata.",
+        "scope": {
+          "targets": [
+            {
+              "kind": "fixedOrigin",
+              "origin": "https://models.example.com"
+            }
+          ]
+        }
+      },
+      {
+        "id": "voice-client-auth",
+        "capability": "network",
+        "reason": "Exchange the host-owned account credential for a short-lived synthetic Voice client artifact.",
+        "scope": {
+          "targets": [
+            {
+              "kind": "fixedOrigin",
+              "origin": "https://voice.example.test"
+            }
+          ],
+          "methods": [
+            "POST"
+          ]
+        }
+      },
+      {
+        "id": "voice-catalog",
+        "capability": "network",
+        "reason": "Read the bounded synthetic Voice catalog.",
+        "scope": {
+          "targets": [
+            {
+              "kind": "fixedOrigin",
+              "origin": "https://voice.example.test"
+            }
+          ],
+          "methods": [
+            "GET"
+          ]
+        }
+      }
+    ],
+    "optional": []
+  },
+  "contributes": {
+    "actions": [
+      {
+        "id": "review-summary",
+        "title": "Summarize review transcript",
+        "description": "Produces a compact summary from the current review transcript.",
+        "scopes": [
+          "transcript"
+        ],
+        "surfaces": [
+          "cli",
+          "agent"
+        ],
+        "placement": "commandPalette",
+        "dangerLevel": "safe",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "transcript": {
+              "type": "string"
+            },
+            "maxBullets": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 8
+            }
+          },
+          "required": [
+            "transcript"
+          ],
+          "additionalProperties": false
+        },
+        "resultSchema": {
+          "type": "object",
+          "properties": {
+            "summary": {
+              "type": "string"
+            },
+            "bullets": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "summary",
+            "bullets"
+          ],
+          "additionalProperties": false
+        }
+      }
+    ],
+    "tools": [
+      {
+        "id": "review-summary-tool",
+        "name": "review_summary",
+        "title": "Summarize review transcript",
+        "surfaces": [
+          "agent",
+          "mcp"
+        ],
+        "action": "review-summary"
+      }
+    ],
+    "commands": [
+      {
+        "id": "review-summary-command",
+        "title": "Summarize review transcript",
+        "path": [
+          "review",
+          "summarize"
+        ],
+        "action": "review-summary"
+      }
+    ],
+    "hooks": [
+      {
+        "id": "session-spawned",
+        "on": "session.spawned",
+        "hookApiVersion": 1,
+        "category": "lifecycle",
+        "scope": "session",
+        "executionKind": "observe",
+        "priority": 50
+      }
+    ],
+    "agents": [
+      {
+        "id": "review-agent",
+        "title": "Public SDK Review Agent",
+        "runtime": {
+          "kind": "custom"
+        },
+        "primary": "sessions",
+        "capabilities": {
+          "sessions": {
+            "open": [
+              "create"
+            ],
+            "delivery": [
+              "newTurn"
+            ],
+            "cancel": true
+          }
+        }
+      }
+    ],
+    "systemTools": [
+      {
+        "id": "acme-review-agent",
+        "title": "Acme Review Agent",
+        "executableNames": [
+          "acme-review-agent"
+        ]
+      }
+    ],
+    "settings": [
+      {
+        "id": "preferences",
+        "title": "Review assistant preferences",
+        "target": {
+          "kind": "plugin"
+        },
+        "scope": "local",
+        "fields": [
+          {
+            "id": "enabled",
+            "title": "Enabled",
+            "schema": {
+              "type": "boolean"
+            },
+            "default": true
+          }
+        ]
+      }
+    ],
+    "ui": {
+      "views": [
+        {
+          "id": "review-panel",
+          "placement": "session.preview",
+          "renderer": "review-native",
+          "fallbackRenderers": [
+            "review-web"
+          ],
+          "title": "Review assistant"
+        }
+      ],
+      "renderers": [
+        {
+          "id": "review-native",
+          "kind": "reactNative",
+          "artifact": "review-native",
+          "requiredHostMethods": [
+            "context",
+            "executeAction"
+          ]
+        },
+        {
+          "id": "review-web",
+          "kind": "hostedWeb",
+          "source": {
+            "kind": "artifact",
+            "artifact": "review-web"
+          },
+          "requiredHostMethods": [
+            "context",
+            "executeAction"
+          ]
+        }
+      ],
+      "translations": []
+    },
+    "voiceModelPacks": [
+      {
+        "id": "english-small",
+        "schemaVersion": 1,
+        "executionHosts": [
+          "daemon"
+        ],
+        "manifest": {
+          "schemaVersion": 1,
+          "kind": "stt_sherpa",
+          "model": "example-english-small",
+          "version": "1.0.0",
+          "runtime": {
+            "family": "sherpa_zipformer_streaming",
+            "artifacts": {
+              "encoder": {
+                "type": "file",
+                "path": "encoder.onnx"
+              },
+              "decoder": {
+                "type": "file",
+                "path": "decoder.onnx"
+              },
+              "joiner": {
+                "type": "file",
+                "path": "joiner.onnx"
+              },
+              "tokens": {
+                "type": "file",
+                "path": "tokens.txt"
+              }
+            },
+            "abiVersion": 1,
+            "minHostVersion": "1.0.0",
+            "platforms": [
+              "darwin",
+              "linux",
+              "win32"
+            ],
+            "architectures": [
+              "arm64",
+              "x64"
+            ]
+          },
+          "provenance": {
+            "source": "https://models.example.com/english-small",
+            "publisher": "Example Speech"
+          },
+          "license": {
+            "id": "Apache-2.0",
+            "title": "Apache License 2.0",
+            "url": "https://models.example.com/licenses/apache-2.0",
+            "requiresAcceptance": false
+          },
+          "files": [
+            {
+              "path": "encoder.onnx",
+              "url": "https://models.example.com/english-small/encoder.onnx",
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+              "sizeBytes": 1
+            },
+            {
+              "path": "decoder.onnx",
+              "url": "https://models.example.com/english-small/decoder.onnx",
+              "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+              "sizeBytes": 1
+            },
+            {
+              "path": "joiner.onnx",
+              "url": "https://models.example.com/english-small/joiner.onnx",
+              "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+              "sizeBytes": 1
+            },
+            {
+              "path": "tokens.txt",
+              "url": "https://models.example.com/english-small/tokens.txt",
+              "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+              "sizeBytes": 1
+            }
+          ]
+        }
+      }
+    ],
+    "voiceProviders": [
+      {
+        "id": "credentialed-browser",
+        "title": "Account-mediated browser conversation example",
+        "kind": "conversation",
+        "roles": [
+          "realtime_conversation"
+        ],
+        "platforms": [
+          "web"
+        ],
+        "capabilities": {
+          "readiness": {
+            "requirements": [
+              "credential"
+            ]
+          },
+          "turn": {
+            "cancelResponse": false,
+            "bargeIn": false
+          }
+        },
+        "accountMediation": {
+          "credentialSlots": [
+            {
+              "id": "api_key",
+              "scope": "account"
+            }
+          ],
+          "operations": [
+            {
+              "id": "client-auth",
+              "purpose": "voice.client-auth",
+              "credentialSlotId": "api_key",
+              "effect": "read",
+              "request": {
+                "origin": "https://voice.example.test",
+                "pathTemplate": "/v1/session",
+                "queryTemplate": [],
+                "headerTemplate": [],
+                "bodyTemplate": { "kind": "none" },
+                "method": "POST",
+                "credential": {
+                  "kind": "httpHeader",
+                  "name": "authorization",
+                  "format": "bearer"
+                },
+                "redirect": "error",
+                "maxBodyBytes": 0,
+                "contentTypes": []
+              },
+              "parameters": {
+                "schema": { "type": "object", "properties": {}, "additionalProperties": false },
+                "mapping": []
+              },
+              "response": { "maxBytes": 32768, "contentTypes": ["application/json"] }
+            },
+            {
+              "id": "list-catalog",
+              "purpose": "voice.catalog",
+              "credentialSlotId": "api_key",
+              "effect": "read",
+              "request": {
+                "origin": "https://voice.example.test",
+                "pathTemplate": "/v1/catalog",
+                "queryTemplate": [],
+                "headerTemplate": [],
+                "bodyTemplate": { "kind": "none" },
+                "method": "GET",
+                "credential": {
+                  "kind": "httpHeader",
+                  "name": "authorization",
+                  "format": "bearer"
+                },
+                "redirect": "error",
+                "maxBodyBytes": 0,
+                "contentTypes": []
+              },
+              "parameters": {
+                "schema": { "type": "object", "properties": {}, "additionalProperties": false },
+                "mapping": []
+              },
+              "response": { "maxBytes": 2097152, "contentTypes": ["application/json"] }
+            }
+          ]
+        },
+        "client": {
+          "artifactId": "voice-runtime-web",
+          "modulePath": "./voiceProvider",
+          "exportName": "activate"
+        }
+      }
+    ]
+  }
+}

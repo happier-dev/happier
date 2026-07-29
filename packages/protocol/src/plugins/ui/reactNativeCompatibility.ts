@@ -43,7 +43,6 @@ export const PluginReactNativeCompatibilityDecisionReasonV1Schema = z.enum([
   'channel_policy_denied',
   'runtime_mismatch',
   'missing_native_capability',
-  'artifact_revoked',
   'crash_disabled',
   'unknown',
 ]);

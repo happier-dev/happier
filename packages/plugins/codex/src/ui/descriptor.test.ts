@@ -16,4 +16,25 @@ describe('CODEX_UI_DESCRIPTOR context window fallback', () => {
       ],
     });
   });
+
+  it('selects current external and released direct-session identities without stale aliases', () => {
+    const candidateGroups = [
+      CODEX_UI_DESCRIPTOR.behavior.workState.editableGoals.modeCandidates,
+      CODEX_UI_DESCRIPTOR.behavior.payload.sessionExtras.metadataCandidates,
+    ];
+
+    for (const candidates of candidateGroups) {
+      expect(candidates).toContainEqual({
+        path: ['directSessionV1', 'codexBackendMode'],
+        required: { path: ['directSessionV1', 'providerId'], equals: 'codex' },
+      });
+      expect(candidates).toContainEqual({
+        path: ['externalSessionV1', 'codexBackendMode'],
+        required: { path: ['externalSessionV1', 'agentId'], equals: 'codex' },
+      });
+      expect(candidates).not.toContainEqual(expect.objectContaining({
+        required: { path: ['externalSessionV1', 'providerId'], equals: 'codex' },
+      }));
+    }
+  });
 });

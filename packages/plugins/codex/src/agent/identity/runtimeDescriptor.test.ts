@@ -49,4 +49,53 @@ describe('Codex runtime descriptor identity helpers', () => {
       providerSessionId: 'thread-mcp',
     });
   });
+
+  it('uses reconciled linked-session metadata and fails closed on conflicting or malformed links', () => {
+    expect(resolvePersistedCodexRuntimeIdentity({
+      externalSessionV1: {
+        v: 1,
+        agentId: 'codex',
+        machineId: 'machine-agreed',
+        remoteSessionId: 'thread-agreed',
+        source: { kind: 'codexHome', home: 'user' },
+        codexBackendMode: 'appServer',
+      },
+      directSessionV1: {
+        v: 1,
+        providerId: 'codex',
+        machineId: 'machine-agreed',
+        remoteSessionId: 'thread-agreed',
+        source: { kind: 'codexHome', home: 'user' },
+        codexBackendMode: 'appServer',
+      },
+    })).toEqual({ backendMode: 'appServer' });
+
+    expect(resolvePersistedCodexRuntimeIdentity({
+      externalSessionV1: {
+        v: 1,
+        agentId: 'codex',
+        machineId: 'machine-conflict',
+        remoteSessionId: 'thread-conflict',
+        source: { kind: 'codexHome', home: 'user' },
+        codexBackendMode: 'appServer',
+      },
+      directSessionV1: {
+        v: 1,
+        providerId: 'codex',
+        machineId: 'machine-conflict',
+        remoteSessionId: 'thread-conflict',
+        source: { kind: 'codexHome', home: 'user' },
+        codexBackendMode: 'mcp',
+      },
+    })).toBeNull();
+
+    expect(resolvePersistedCodexRuntimeIdentity({
+      externalSessionV1: {
+        v: 1,
+        agentId: 'codex',
+        source: { kind: 'codexHome', home: 'user' },
+        codexBackendMode: 'appServer',
+      },
+    })).toBeNull();
+  });
 });

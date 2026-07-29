@@ -1,11 +1,10 @@
 import { randomUUID } from 'node:crypto';
 
-import type { PluginContextV1 } from '@happier-dev/plugin-sdk';
-import type { SessionRuntimeIssueV1 } from '@happier-dev/plugin-sdk/experimental/runtime/session';
-
 import {
+  buildClaudeSessionRuntimeIssue,
   buildClaudeProcessExitRuntimeIssue,
   buildClaudeRuntimeIssue,
+  type ClaudeSessionRuntimeIssue,
 } from '../../issues/runtimeIssues.js';
 import {
   CLAUDE_UNIFIED_RUNTIME_ISSUE_TURN_STARTED_BY,
@@ -13,6 +12,7 @@ import {
   publishClaudeUnifiedTurnStart,
   type ClaudeUnifiedRuntimeEventHandler,
 } from './runtimeEvents.js';
+import type { ClaudeRuntimeLogger } from '../../dependencies.js';
 
 /**
  * Classified terminal-injection failure (failed_terminal exit contract, incident pid-82626):
@@ -31,9 +31,33 @@ export class ClaudeUnifiedTerminalInjectionFailureError extends Error {
   }
 }
 
+export class ClaudeUnifiedTerminalHookActivationError extends Error {
+  readonly code = 'claude_unified_terminal_hook_activation_missing';
+
+  constructor() {
+    super(
+      'Claude accepted terminal input without activating Happier session hooks. '
+      + 'The turn failed because permissions and lifecycle events could not be routed safely.',
+    );
+    this.name = 'ClaudeUnifiedTerminalHookActivationError';
+  }
+}
+
+export class ClaudeUnifiedResumeIdentityMismatchError extends Error {
+  readonly code = 'claude_unified_resume_identity_mismatch';
+
+  constructor() {
+    super(
+      'Claude resumed a different provider session than requested. '
+      + 'Prompt delivery was blocked to protect conversation continuity.',
+    );
+    this.name = 'ClaudeUnifiedResumeIdentityMismatchError';
+  }
+}
+
 type ClaudeUnifiedFailurePublicationParams = Readonly<{
   handlers: ReadonlySet<ClaudeUnifiedRuntimeEventHandler>;
-  logger: PluginContextV1['logger'];
+  logger: Pick<ClaudeRuntimeLogger, 'warn'>;
   publishedFailureTurnIds: Set<string>;
   sessionId: string;
   turnId: string | null;
@@ -50,7 +74,7 @@ type ClaudeUnifiedFailurePublicationParams = Readonly<{
 
 function publishRecordedFailure(
   params: ClaudeUnifiedFailurePublicationParams,
-  issue: SessionRuntimeIssueV1,
+  issue: ClaudeSessionRuntimeIssue,
   fallbackMessage: string,
 ): Error {
   const error = new Error(issue.sanitizedPreview ?? fallbackMessage);
@@ -89,6 +113,34 @@ export function recordClaudeUnifiedTurnFailure(params: ClaudeUnifiedFailurePubli
     occurredAt: Date.now(),
     fallbackMessage: params.fallbackMessage,
   }), params.fallbackMessage);
+}
+
+export function recordClaudeUnifiedHookActivationFailure(
+  params: ClaudeUnifiedFailurePublicationParams,
+): ClaudeUnifiedTerminalHookActivationError {
+  const error = new ClaudeUnifiedTerminalHookActivationError();
+  publishRecordedFailure(params, buildClaudeSessionRuntimeIssue({
+    code: error.code,
+    source: 'agent_session_error',
+    occurredAt: Date.now(),
+    agentId: 'claude',
+    sanitizedPreview: error.message,
+  }), error.message);
+  return error;
+}
+
+export function recordClaudeUnifiedResumeIdentityMismatchFailure(
+  params: ClaudeUnifiedFailurePublicationParams,
+): ClaudeUnifiedResumeIdentityMismatchError {
+  const error = new ClaudeUnifiedResumeIdentityMismatchError();
+  publishRecordedFailure(params, buildClaudeSessionRuntimeIssue({
+    code: error.code,
+    source: 'agent_session_error',
+    occurredAt: Date.now(),
+    agentId: 'claude',
+    sanitizedPreview: error.message,
+  }), error.message);
+  return error;
 }
 
 export function recordClaudeUnifiedProcessExitFailure(params: ClaudeUnifiedFailurePublicationParams & Readonly<{

@@ -1,0 +1,40 @@
+{
+  "v": 1,
+  "contributionKey": "happier.provider.zai/zai",
+  "reviewedAt": "2026-07-12",
+  "sources": [
+    { "id": "coding-faq", "kind": "official-doc", "url": "https://docs.z.ai/devpack/faq", "accessedAt": "2026-07-12", "revision": "current-2026-07-12" },
+    { "id": "chat-api", "kind": "official-doc", "url": "https://docs.z.ai/api-reference/llm/chat-completion", "accessedAt": "2026-07-12", "revision": "current-2026-07-12" },
+    { "id": "legacy-source", "kind": "repository-history", "locator": "packages/plugins/claude/src/protocol/profiles.ts", "accessedAt": "2026-07-12", "revision": "HEAD-before-provider-migration" }
+  ],
+  "facts": [
+    { "path": "catalog.source", "sourceIds": ["coding-faq"], "status": "verified" },
+    { "path": "catalog.staticModels.glm-4.7", "sourceIds": ["coding-faq"], "status": "verified" },
+    { "path": "catalog.staticModels.glm-5-turbo", "sourceIds": ["coding-faq"], "status": "verified" },
+    { "path": "catalog.staticModels.glm-5.2", "sourceIds": ["coding-faq"], "status": "verified" },
+    { "path": "credential.keyUrl", "sourceIds": ["chat-api"], "status": "verified" },
+    { "path": "credential.kind", "sourceIds": ["chat-api"], "status": "verified" },
+    { "path": "credential.required", "sourceIds": ["chat-api"], "status": "verified" },
+    { "path": "credential.transports.zai-http-bearer", "sourceIds": ["chat-api"], "status": "verified" },
+    { "path": "endpointTemplates.zai-anthropic.baseUrl", "sourceIds": ["coding-faq"], "status": "verified" },
+    { "path": "endpointTemplates.zai-anthropic.capabilities.streaming", "sourceIds": ["chat-api"], "status": "verified" },
+    { "path": "endpointTemplates.zai-anthropic.capabilities.toolRoundTrips", "sourceIds": ["chat-api"], "status": "verified" },
+    { "path": "endpointTemplates.zai-anthropic.protocol", "sourceIds": ["coding-faq"], "status": "verified" },
+    { "path": "endpointTemplates.zai-openai-chat.baseUrl", "sourceIds": ["coding-faq"], "status": "verified" },
+    { "path": "endpointTemplates.zai-openai-chat.capabilities.streaming", "sourceIds": ["chat-api"], "status": "verified" },
+    { "path": "endpointTemplates.zai-openai-chat.capabilities.toolRoundTrips", "sourceIds": ["chat-api"], "status": "verified" },
+    { "path": "endpointTemplates.zai-openai-chat.protocol", "sourceIds": ["coding-faq"], "status": "verified" },
+    { "path": "kind", "sourceIds": ["coding-faq"], "status": "verified" },
+    { "path": "legacyProfileMigrations.zai.credentialBinding", "sourceIds": ["legacy-source"], "status": "verified" },
+    { "path": "legacyProfileMigrations.zai.descriptorRevision", "sourceIds": ["legacy-source"], "status": "verified" },
+    { "path": "legacyProfileMigrations.zai.migratedEnvironmentVariables.ANTHROPIC_AUTH_TOKEN", "sourceIds": ["legacy-source"], "status": "verified" },
+    { "path": "legacyProfileMigrations.zai.migratedEnvironmentVariables.ANTHROPIC_BASE_URL", "sourceIds": ["legacy-source", "coding-faq"], "status": "verified" },
+    { "path": "legacyProfileMigrations.zai.migratedEnvironmentVariables.ANTHROPIC_MODEL", "sourceIds": ["legacy-source"], "status": "verified" },
+    { "path": "legacyProfileMigrations.zai.primaryModel", "sourceIds": ["legacy-source"], "status": "verified" },
+    { "path": "legacyProfileMigrations.zai.retainedEnvironmentVariables.ANTHROPIC_DEFAULT_HAIKU_MODEL", "sourceIds": ["legacy-source"], "status": "verified" },
+    { "path": "legacyProfileMigrations.zai.retainedEnvironmentVariables.ANTHROPIC_DEFAULT_OPUS_MODEL", "sourceIds": ["legacy-source"], "status": "verified" },
+    { "path": "legacyProfileMigrations.zai.retainedEnvironmentVariables.ANTHROPIC_DEFAULT_SONNET_MODEL", "sourceIds": ["legacy-source"], "status": "verified" },
+    { "path": "legacyProfileMigrations.zai.retainedEnvironmentVariables.API_TIMEOUT_MS", "sourceIds": ["legacy-source"], "status": "verified" },
+    { "path": "websiteUrl", "sourceIds": ["coding-faq"], "status": "verified" }
+  ]
+}

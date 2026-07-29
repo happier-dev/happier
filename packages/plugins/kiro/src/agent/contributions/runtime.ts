@@ -1,12 +1,8 @@
 import { detectKiroCliAuthStatus } from '../auth/status.js';
-import { KIRO_ACP_BACKEND_SPEC } from '../acp/definition.js';
 
 export const KIRO_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
   agentId: 'kiro',
   builtInAcpCatalog: true,
-  acpBackend: {
-    createSpec: () => KIRO_ACP_BACKEND_SPEC,
-  },
   cliAuth: {
     detectAuthStatus: async (params: Readonly<{
       runCommand: (

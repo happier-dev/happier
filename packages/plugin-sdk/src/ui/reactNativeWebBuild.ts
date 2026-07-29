@@ -1,6 +1,7 @@
 import {
     PLUGIN_UI_HOST_RUNTIME_EXTERNAL_SPECIFIERS,
     PluginUiArtifactsManifestEntryV1Schema,
+    type PluginUiArtifactFileV1,
     type PluginUiArtifactsManifestEntryV1,
 } from '@happier-dev/protocol/plugins/ui';
 
@@ -11,7 +12,7 @@ import {
 } from './buildPaths.js';
 import {
     createPluginUiHostRuntimeExternalsVitePlugin,
-    type PluginUiHostRuntimeExternalsVitePluginV1,
+    type PluginUiHostRuntimeExternalsVitePlugin,
 } from './hostRuntimeExternalsBuildPlugin.js';
 
 /**
@@ -42,7 +43,7 @@ const REACT_NATIVE_WEB_ALIAS = Object.freeze([
 ] as const);
 const EMPTY_ROLLUP_EXTERNALS = Object.freeze([] as const);
 
-export type ReactNativeWebViteBuildPresetInputV1 = Readonly<{
+export type ReactNativeWebViteBuildPresetInput = Readonly<{
     contributionId: string;
     sourceEntry: string;
     viteVersion: string;
@@ -53,7 +54,7 @@ export type ReactNativeWebViteBuildPresetInputV1 = Readonly<{
     }>;
 }>;
 
-export type ReactNativeWebViteBuildPresetV1 = Readonly<{
+export type ReactNativeWebViteBuildPreset = Readonly<{
     tier: 'reactNative';
     bundler: 'vite';
     contributionId: string;
@@ -94,10 +95,10 @@ export type ReactNativeWebViteBuildPresetV1 = Readonly<{
     }>;
 }>;
 
-export type ReactNativeWebViteBuildArtifactInputV1 = Readonly<{
+export type ReactNativeWebViteBuildArtifactInput = Readonly<{
     contributionId: string;
     entry: string;
-    files: readonly string[];
+    files: readonly PluginUiArtifactFileV1[];
     digest: string;
     viteVersion: string;
     hostUiApiVersion: string;
@@ -107,7 +108,7 @@ export type ReactNativeWebViteBuildArtifactInputV1 = Readonly<{
     }>;
 }>;
 
-function readPresetInput(input: ReactNativeWebViteBuildPresetInputV1) {
+function readPresetInput(input: ReactNativeWebViteBuildPresetInput) {
     return {
         contributionId: readOutputPathSegment(input.contributionId, 'contributionId'),
         sourceEntry: readRelativeBuildPath(input.sourceEntry, 'sourceEntry'),
@@ -122,8 +123,8 @@ function readPresetInput(input: ReactNativeWebViteBuildPresetInputV1) {
 }
 
 export function defineReactNativeWebViteBuildPreset(
-    input: ReactNativeWebViteBuildPresetInputV1,
-): ReactNativeWebViteBuildPresetV1 {
+    input: ReactNativeWebViteBuildPresetInput,
+): ReactNativeWebViteBuildPreset {
     const parsed = readPresetInput(input);
     return Object.freeze({
         tier: 'reactNative',
@@ -167,17 +168,20 @@ export function defineReactNativeWebViteBuildPreset(
  * stays a plain serializable description, matching every other
  * `define*BuildPreset` helper in this file's siblings.
  */
-export function createReactNativeWebVitePlugins(): readonly [PluginUiHostRuntimeExternalsVitePluginV1] {
+export function createReactNativeWebVitePlugins(): readonly [PluginUiHostRuntimeExternalsVitePlugin] {
     return [createPluginUiHostRuntimeExternalsVitePlugin({
         specifiers: PLUGIN_UI_HOST_RUNTIME_EXTERNAL_SPECIFIERS,
     })];
 }
 
 export function defineReactNativeWebViteBuildArtifact(
-    input: ReactNativeWebViteBuildArtifactInputV1,
+    input: ReactNativeWebViteBuildArtifactInput,
 ): PluginUiArtifactsManifestEntryV1 {
     const entry = readRelativeBuildPath(input.entry, 'entry');
-    const files = input.files.map((file, index) => readRelativeBuildPath(file, `files[${index}]`));
+    const files = input.files.map((file, index) => ({
+        ...file,
+        relativePath: readRelativeBuildPath(file.relativePath, `files[${index}].relativePath`),
+    }));
 
     return PluginUiArtifactsManifestEntryV1Schema.parse({
         contributionId: readRequiredString(input.contributionId, 'contributionId'),

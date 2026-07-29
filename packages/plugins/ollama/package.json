@@ -1,0 +1,27 @@
+{
+  "name": "@happier-dev/plugins-ollama",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist", "package.json"],
+  "scripts": {
+    "tsc": "node ../../../scripts/workspaces/runTypeScriptCli.mjs",
+    "build": "node ../../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
+  },
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+    "./manifest": { "types": "./dist/manifest.d.ts", "default": "./dist/manifest.js" }
+  },
+  "dependencies": {
+    "@happier-dev/plugin-sdk": "0.0.0"
+  },
+  "devDependencies": {
+    "@happier-dev/protocol": "0.0.0",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}

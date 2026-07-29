@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import type { SessionTurnV1 } from '@happier-dev/plugin-sdk/experimental/runtime/session';
-
+import type { CodexAppServerSessionTurn } from '../core';
 import { resolveCodexAppServerRollbackPlanFromSessionTurns } from './rollbackPlan';
 
-function createTurn(overrides: Partial<SessionTurnV1> & Pick<SessionTurnV1, 'turnId'>): SessionTurnV1 {
+function createTurn(
+    overrides: Partial<CodexAppServerSessionTurn> & Pick<CodexAppServerSessionTurn, 'turnId'>,
+): CodexAppServerSessionTurn {
     return {
         status: 'completed',
         startedAt: 100,

@@ -1,4 +1,4 @@
-import type { ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm';
+import type { ScmHostingProviderRef } from '@happier-dev/plugin-sdk/experimental/scm';
 import { describe, expect, it } from 'vitest';
 
 const githubProvider: ScmHostingProviderRef = {
@@ -52,12 +52,14 @@ describe('GitHub REST pull request adapter', () => {
         ]);
       },
     });
+    const controller = new AbortController();
 
     await expect(adapter.listPullRequests({
       provider: githubProvider,
       base: 'main',
       head: 'feature/rest',
       state: 'open',
+      signal: controller.signal,
     })).resolves.toEqual([
       expect.objectContaining({
         number: 1,
@@ -75,6 +77,7 @@ describe('GitHub REST pull request adapter', () => {
       Authorization: ['Bearer', 'redacted-test-token'].join(' '),
       'X-GitHub-Api-Version': '2022-11-28',
     });
+    expect(requests[0]?.init?.signal).toBe(controller.signal);
   });
 
   it('uses operation-scoped runtime token materialization when constructor token resolver is absent', async () => {

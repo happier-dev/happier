@@ -2,7 +2,7 @@ import {
   SCM_OPERATION_ERROR_CODES,
   type ScmDefaultBranchPushPolicy,
   type ScmOperationErrorCode,
-} from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm';
 
 export type DefaultBranchPullRequestAction =
     | Readonly<{

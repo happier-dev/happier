@@ -1,5 +1,6 @@
 import {
   RuntimeDescriptorV1Schema,
+  writeRuntimeDescriptorV1ForPersistence,
   type RuntimeDescriptorV1,
 } from '../runtimeDescriptorV1.js';
 
@@ -65,7 +66,9 @@ export function writeRuntimeDescriptorV1ToMetadata<TMetadata extends Record<stri
 
   return {
     ...rest,
-    runtimeDescriptorV1: descriptor,
-    ...(options.mirrorLegacyAgentRuntimeDescriptorV1 ? { agentRuntimeDescriptorV1: descriptor } : {}),
+    runtimeDescriptorV1: writeRuntimeDescriptorV1ForPersistence(descriptor),
+    ...(options.mirrorLegacyAgentRuntimeDescriptorV1
+      ? { agentRuntimeDescriptorV1: writeRuntimeDescriptorV1ForPersistence(descriptor) }
+      : {}),
   } as TMetadata & RuntimeDescriptorMetadataCarrier;
 }

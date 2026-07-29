@@ -1,6 +1,5 @@
 import type { VoiceRealtimeJsonValue } from '@happier-dev/protocol';
-
-export type VoiceMachineError = Readonly<{ kind: string; reason: string }>;
+import type { VoiceMachineError } from '@happier-dev/bundled-voice-runtime-contract';
 
 export type ElevenLabsSessionState = Readonly<{
   billingMode: 'happier' | 'byo';

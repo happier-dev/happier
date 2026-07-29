@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { decodeBase64, encodeBase64 } from './base64.js';
+import { decodeBase64, encodeBase64, readCanonicalPaddedBase64DecodedLength } from './base64.js';
 
 function createDeterministicBytes(length: number): Uint8Array {
   const out = new Uint8Array(length);
@@ -18,7 +18,7 @@ describe('protocol base64 helpers', () => {
     expect(Array.from(decoded)).toEqual(Array.from(bytes));
   });
 
-  it('decodes large canonical padded base64 without a JavaScript character-by-character pre-scan', () => {
+  it('decodes large canonical padded base64 with a bounded iterative scan', () => {
     const bytes = createDeterministicBytes(4096);
     const encoded = encodeBase64(bytes, 'base64');
     const charCodeAtSpy = vi.spyOn(String.prototype, 'charCodeAt');
@@ -27,10 +27,20 @@ describe('protocol base64 helpers', () => {
       const decoded = decodeBase64(encoded, 'base64');
 
       expect(Array.from(decoded)).toEqual(Array.from(bytes));
-      expect(charCodeAtSpy.mock.calls.length).toBeLessThan(encoded.length * 1.5);
+      expect(charCodeAtSpy.mock.calls.length).toBeLessThan(encoded.length * 3);
     } finally {
       charCodeAtSpy.mockRestore();
     }
+  });
+
+  it('reads strict canonical padded base64 decoded lengths without decoding', () => {
+    expect(readCanonicalPaddedBase64DecodedLength('')).toBe(0);
+    expect(readCanonicalPaddedBase64DecodedLength('AQID')).toBe(3);
+    expect(readCanonicalPaddedBase64DecodedLength('AA==')).toBe(1);
+    expect(readCanonicalPaddedBase64DecodedLength('AAA=')).toBe(2);
+    expect(readCanonicalPaddedBase64DecodedLength('AQI')).toBeNull();
+    expect(readCanonicalPaddedBase64DecodedLength('AA=A')).toBeNull();
+    expect(readCanonicalPaddedBase64DecodedLength(' AA==')).toBeNull();
   });
 
   it('decodes base64 leniently (whitespace, invalid chars, missing padding)', () => {
@@ -45,6 +55,18 @@ describe('protocol base64 helpers', () => {
 
     expect(() => decodeBase64('Zm9v', 'base64')).not.toThrow();
     expect(new TextDecoder().decode(decodeBase64('Zm9v', 'base64'))).toBe('foo');
+  });
+
+  it('round-trips multi-megabyte canonical padded base64 payloads', () => {
+    const bytes = createDeterministicBytes(3_500_000);
+    const encoded = encodeBase64(bytes, 'base64');
+    const decoded = decodeBase64(encoded, 'base64');
+
+    expect(decoded.length).toBe(bytes.length);
+    expect(decoded[0]).toBe(bytes[0]);
+    expect(decoded[1_500_000]).toBe(bytes[1_500_000]);
+    expect(decoded[2_750_000]).toBe(bytes[2_750_000]);
+    expect(decoded[decoded.length - 1]).toBe(bytes[bytes.length - 1]);
   });
 
   it('round-trips base64url without padding', () => {

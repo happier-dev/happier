@@ -29,3 +29,5 @@ export {
   type SubagentTranscriptBindingV1,
   type VendorSessionRefV1,
 } from './subagentRefV1.js';
+
+export * from './durableCustodyV1.js';

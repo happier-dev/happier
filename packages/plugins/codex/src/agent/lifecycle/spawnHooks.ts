@@ -1,3 +1,5 @@
+import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+
 import { validateCodexAcpSpawnAvailability } from '../acp/availability.js';
 import { resolveCodexProviderBindingRuntimeVersionV1 } from '../providerBinding/version.js';
 
@@ -36,19 +38,13 @@ type CodexDaemonSpawnToolResolutionContext = Readonly<{
   }>>;
 }>;
 
-type CodexDaemonSpawnHookContext = Readonly<{
+type CodexDaemonSpawnHookContext = Partial<PluginInvocationContext> & Readonly<{
   tools?: CodexDaemonSpawnToolResolutionContext;
 }>;
 
-type CodexDaemonSpawnPrerequisiteResult = Readonly<{
-  allowed: boolean;
-  reasonCode?: string;
-  errorMessage?: string;
-}>;
-
-type CodexDaemonHookEvent = Readonly<{
-  payload?: unknown;
-}>;
+type CodexDaemonSpawnPrerequisiteResult =
+  | Readonly<{ decision: 'allow' }>
+  | Readonly<{ decision: 'deny'; reasonCode: string; errorMessage: string }>;
 
 function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -56,11 +52,16 @@ function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
     : null;
 }
 
-function readCodexRuntimeSelection(event: CodexDaemonHookEvent): Readonly<Record<string, unknown>> {
-  return readRecord(readRecord(event.payload)?.runtimeSelection) ?? {};
+function readHookPayload(event: unknown): Readonly<Record<string, unknown>> {
+  const record = readRecord(event);
+  return readRecord(record?.payload) ?? record ?? {};
 }
 
-function resolveCodexDaemonBackendMode(event: CodexDaemonHookEvent): 'acp' | 'appServer' | null {
+function readCodexRuntimeSelection(event: unknown): Readonly<Record<string, unknown>> {
+  return readRecord(readHookPayload(event).runtimeSelection) ?? {};
+}
+
+function resolveCodexDaemonBackendMode(event: unknown): 'acp' | 'appServer' | null {
   const runtimeSelection = readCodexRuntimeSelection(event);
   const providerRuntimeSelection = readRecord(runtimeSelection.providerRuntimeSelection);
   return resolveCanonicalCodexBackendMode({
@@ -69,19 +70,21 @@ function resolveCodexDaemonBackendMode(event: CodexDaemonHookEvent): 'acp' | 'ap
   }) ?? null;
 }
 
-function hasCodexProviderBinding(event: CodexDaemonHookEvent): boolean {
-  return readRecord(readCodexRuntimeSelection(event).providerBinding)?.agentTargetKey === 'codex';
+function hasCodexProviderBinding(event: unknown): boolean {
+  const payload = readHookPayload(event);
+  return payload?.agentId === 'codex'
+    && readRecord(readCodexRuntimeSelection(event).providerBinding) !== null;
 }
 
 export async function resolveCodexDaemonSpawnPrerequisites(
-  event: CodexDaemonHookEvent,
+  event: unknown,
   context?: CodexDaemonSpawnHookContext,
 ): Promise<CodexDaemonSpawnPrerequisiteResult> {
   if (hasCodexProviderBinding(event)) {
     const runSystemTool = context?.tools?.runSystemTool;
     if (!runSystemTool) {
       return {
-        allowed: false,
+        decision: 'deny',
         reasonCode: 'codex_provider_runtime_unsupported',
         errorMessage: 'External providers require an installed Codex CLI version check before launch.',
       };
@@ -100,20 +103,20 @@ export async function resolveCodexDaemonSpawnPrerequisites(
     );
     if (!version.ok) {
       return {
-        allowed: false,
+        decision: 'deny',
         reasonCode: version.reasonCode,
         errorMessage: version.errorMessage,
       };
     }
   }
   if (resolveCodexDaemonBackendMode(event) !== 'acp') {
-    return { allowed: true };
+    return { decision: 'allow' };
   }
 
   const tools = context?.tools;
   if (!tools) {
     return {
-      allowed: false,
+      decision: 'deny',
       ...toDaemonSpawnPrerequisiteDenial(resolveCodexAcpSpawnPrerequisiteFailure({
         resolveErrorMessage: 'Codex ACP daemon spawn requires the daemon tool-resolution context.',
       })),
@@ -127,7 +130,7 @@ export async function resolveCodexDaemonSpawnPrerequisites(
   });
   if (!resolvedTool.ok) {
     return {
-      allowed: false,
+      decision: 'deny',
       ...toDaemonSpawnPrerequisiteDenial(resolveCodexAcpSpawnPrerequisiteFailure({
         availabilityErrorMessage: resolvedTool.errorMessage,
       })),
@@ -139,11 +142,11 @@ export async function resolveCodexDaemonSpawnPrerequisites(
     args: [...resolvedTool.args],
   });
   if (availability.ok) {
-    return { allowed: true };
+    return { decision: 'allow' };
   }
 
   return {
-    allowed: false,
+    decision: 'deny',
     ...toDaemonSpawnPrerequisiteDenial(resolveCodexAcpSpawnPrerequisiteFailure({
       command: resolvedTool.command,
       availabilityErrorMessage: availability.errorMessage,
@@ -151,17 +154,14 @@ export async function resolveCodexDaemonSpawnPrerequisites(
   };
 }
 
-function toDaemonSpawnPrerequisiteDenial(input: ReturnType<typeof resolveCodexAcpSpawnPrerequisiteFailure>): Omit<
-  CodexDaemonSpawnPrerequisiteResult,
-  'allowed'
-> {
+function toDaemonSpawnPrerequisiteDenial(input: ReturnType<typeof resolveCodexAcpSpawnPrerequisiteFailure>) {
   return {
     reasonCode: input.reasonCode,
     errorMessage: input.errorMessage,
   };
 }
 
-export function augmentCodexDaemonSpawnEnv(event: CodexDaemonHookEvent): Record<string, string> {
+export function augmentCodexDaemonSpawnEnv(event: unknown): Record<string, string> {
   const backendMode = resolveCodexDaemonBackendMode(event);
   if (backendMode === 'acp' || backendMode === 'appServer') {
     return { HAPPIER_CODEX_BACKEND_MODE: backendMode };

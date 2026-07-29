@@ -9,13 +9,7 @@ vi.mock('@elevenlabs/client', () => ({
 import { createElevenLabsConversationHandle } from './createElevenLabsConversationHandle.js';
 
 const createHandle = () => createElevenLabsConversationHandle({
-  clientTools: {},
-  resolveRedactionPrefs: () => ({
-    shareFilePaths: false,
-    shareSessionSummary: false,
-    sharePermissionRequests: false,
-  }),
-  redactToolResultValue: (value) => value,
+  tools: [],
 });
 
 type TestConversation = Readonly<{

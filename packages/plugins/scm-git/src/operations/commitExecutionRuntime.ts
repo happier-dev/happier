@@ -2,8 +2,8 @@ import { copyFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 
-import type { ScmCommitCreateResponse } from '@happier-dev/plugin-sdk/scm';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
+import type { ScmCommitCreateResponse } from '@happier-dev/plugin-sdk/experimental/scm';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/experimental/scm';
 
 import { runScmCommand } from '../runtime.js';
 import { applyValidatedGitPatch } from './applyValidatedGitPatch.js';

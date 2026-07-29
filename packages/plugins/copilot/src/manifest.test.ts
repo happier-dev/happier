@@ -1,64 +1,38 @@
+import { ingestPluginManifestV2 } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
 
+import { COPILOT_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
 
-function requireCopilotBackend() {
-  const backend = PLUGIN_MANIFEST.contributes?.agents?.find((entry) => entry.id === 'copilot');
-  if (!backend) {
-    throw new Error('Expected Copilot plugin manifest to declare copilot backend contribution');
-  }
-  return backend;
-}
-
 describe('Copilot plugin manifest', () => {
-  it('declares agent settings as plugin-authored contribution data', () => {
-    const contribution = PLUGIN_MANIFEST.contributes.agentSettings?.find((entry) => entry.agentId === 'copilot');
-
-    expect(contribution).toEqual(expect.objectContaining({
-      id: 'copilot.agentSettings.v1',
-      kind: 'agentSettings.v1',
-      storageScope: 'agentAccount',
-    }));
-    expect(contribution?.fields).toEqual([]);
-    expect(contribution?.ui.sections).toEqual([]);
-  });
-
-  it('declares a plugin-owned static ACP backend contribution', () => {
-    const backend = requireCopilotBackend();
-
-    expect(PLUGIN_MANIFEST.id).toBe('happier.agent.copilot');
-    expect(PLUGIN_MANIFEST.uses).toContain('agents');
-    expect(backend).toMatchObject({
-      kindVersion: 1,
-      id: 'copilot',
-      runtime: {
-        kind: 'acp',
-        transport: {
-          kind: 'stdio',
-          launch: {
-            kind: 'agent-cli',
-            agentId: 'copilot',
-            args: ['--acp'],
+  it('uses the strict target manifest and declares its custom ACP handoff', () => {
+    expect(ingestPluginManifestV2(PLUGIN_MANIFEST)).toMatchObject({ ok: true });
+    expect(PLUGIN_MANIFEST).not.toHaveProperty('uses');
+    expect(PLUGIN_MANIFEST).not.toHaveProperty('permissions');
+    expect(PLUGIN_MANIFEST).not.toHaveProperty('activationEvents');
+    expect(PLUGIN_MANIFEST).toMatchObject({ entrypoints: { daemon: './dist/index.js' } });
+    expect(PLUGIN_MANIFEST).not.toHaveProperty('activation');
+    expect(PLUGIN_MANIFEST).toMatchObject({
+      hostAccess: {
+        required: [{
+          id: 'copilot-process',
+          capability: 'process',
+          scope: {
+            executables: [{ kind: 'systemTool', id: 'copilot-cli' }],
+            envKeys: ['COPILOT_GITHUB_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN'],
           },
-        },
-        sessionIdHeaderName: 'copilotSessionId',
-        toolNameInference: {
-          shellBridgeHint: true,
-        },
-        stderrRules: {
-          statusErrors: expect.arrayContaining([
-            expect.objectContaining({
-              includes: ['authentication'],
-              detail: 'Authentication error. Run `copilot login` to authenticate with GitHub.',
-            }),
-          ]),
-        },
-        mcp: { policy: 'pass_through' },
+        }],
+        optional: [],
       },
-      capabilities: {
-        executionRun: { supported: true },
+      contributes: {
+        agents: [{
+          id: 'copilot', title: 'GitHub Copilot', primary: 'sessions',
+          runtime: { kind: 'custom' },
+          capabilities: { sessions: { open: ['create', 'resume'], delivery: ['newTurn', 'steer', 'followUp'], cancel: true } },
+        }],
+        systemTools: [{ id: 'copilot-cli', executableNames: ['copilot'] }],
+        settings: [COPILOT_AGENT_SETTINGS_CONTRIBUTION],
       },
     });
-    expect(backend.runtime).not.toHaveProperty('callbacks');
   });
 });

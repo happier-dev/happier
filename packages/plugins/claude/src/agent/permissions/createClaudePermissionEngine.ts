@@ -1,5 +1,3 @@
-import type { PluginContextV1 } from '@happier-dev/plugin-sdk';
-
 import type { PermissionResult } from '../sdk/types.js';
 import {
     isAskUserQuestionToolName,
@@ -18,6 +16,27 @@ export type ClaudePermissionEngine = Readonly<{
     ): Promise<PermissionResult>;
 }>;
 
+export type ClaudePermissionDecision = Readonly<{
+    decision: string;
+    rationale?: string;
+    updatedInput?: unknown;
+    answers?: unknown;
+    updatedPermissions?: readonly Readonly<Record<string, unknown>>[];
+}>;
+
+export type ClaudePermissionContext = Readonly<{
+    sessions: Readonly<{
+        current: Readonly<{
+            permissions: Readonly<{
+                requestDecision(
+                    request: Readonly<Record<string, unknown>>,
+                    options?: Readonly<{ signal?: AbortSignal }>,
+                ): Promise<ClaudePermissionDecision>;
+            }>;
+        }>;
+    }>;
+}>;
+
 function readToolInputRecord(input: unknown): Record<string, unknown> | null {
     return input && typeof input === 'object' && !Array.isArray(input)
         ? input as Record<string, unknown>
@@ -31,7 +50,7 @@ function normalizeToolInput(input: unknown): Record<string, unknown> {
 function resolveAllowedToolInput(
     toolName: string,
     normalizedInput: Record<string, unknown>,
-    result: Awaited<ReturnType<PluginContextV1['sessions']['current']['permissions']['requestDecision']>>,
+    result: ClaudePermissionDecision,
 ): Record<string, unknown> {
     const baseInput = readToolInputRecord(result.updatedInput) ?? normalizedInput;
     if (!isAskUserQuestionToolName(toolName)) return baseInput;
@@ -55,7 +74,7 @@ function isExitPlanModeToolName(toolName: string): boolean {
 
 function resolveAllowUpdatedPermissions(
     toolName: string,
-    result: Awaited<ReturnType<PluginContextV1['sessions']['current']['permissions']['requestDecision']>>,
+    result: ClaudePermissionDecision,
 ): readonly Readonly<Record<string, unknown>>[] | undefined {
     if (Array.isArray(result.updatedPermissions) && result.updatedPermissions.length > 0) {
         return result.updatedPermissions;
@@ -69,7 +88,7 @@ function resolveAllowUpdatedPermissions(
     return undefined;
 }
 
-export function createClaudePermissionEngine(ctx: PluginContextV1): ClaudePermissionEngine {
+export function createClaudePermissionEngine(ctx: ClaudePermissionContext): ClaudePermissionEngine {
     return Object.freeze({
         async canCallTool(toolName, input, options = {}) {
             const normalizedInput = normalizeToolInput(input);

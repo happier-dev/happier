@@ -14,7 +14,6 @@ export * from './lifecycle/acpSpawnPrerequisites.js';
 export * from './lifecycle/preflight/sessionControls.js';
 export * from './usage/tokenCountMessage.js';
 export * from './usage/pricing.js';
-export * from './transcripts/index.js';
 export * from './rollout/semanticTracker.js';
 export * from './rollout/projection/actions.js';
 export * from './rollout/projection/messages.js';
@@ -33,7 +32,10 @@ export * from './runtime/appServer/recovery/switchProgress.js';
 export * from './runtime/appServer/media/generatedMedia.js';
 export * from './runtime/appServer/wire/fields.js';
 export * from './surfaces/sessions/external/identity.js';
-export * from './surfaces/sessions/external/providerOps.js';
+export {
+  codexExternalSessionsContribution,
+  createCodexExternalSessionsContribution,
+} from './surfaces/sessions/external/contribution.js';
 export * from './surfaces/sessions/external/workingDirectory.js';
 export * from './surfaces/sessions/resume/support.js';
 export * from './surfaces/sessions/handoff/bundle.js';
@@ -54,10 +56,7 @@ export * from './auth/services/openai/cloud/device.js';
 export * from './auth/services/openai/cloud/types.js';
 export * from './auth/services/home/sync/settings.js';
 export * from './auth/services/state/sharing/switchContinuity.js';
-export * from './runtime/terminal/transcriptBinding.js';
-export * from './runtime/terminal/projection.js';
 export * from './runtime/terminal/invocation.js';
 export * from './runtime/core/abortHandler.js';
-export * from './runtime/core/localModePass.js';
 export * from './runtime/core/projectedToolEvent.js';
 export * from './runtime/core/terminationHandler.js';

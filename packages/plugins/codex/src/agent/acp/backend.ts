@@ -1,4 +1,7 @@
-import type { AcpBackendSpecV1 } from '@happier-dev/plugin-sdk';
+import type {
+  AgentAcpRuntimeOptions,
+  AgentSessionOpenRequest,
+} from '@happier-dev/plugin-sdk/agent-runtime';
 
 import { resolveCodexApiKeyAuthMethodId } from '../cli/auth/environment.js';
 import { buildCodexAcpEnvOverrides } from './env.js';
@@ -8,84 +11,46 @@ import {
   resolveCodexAcpExplicitToolHint,
 } from './transport.js';
 
-export const CODEX_ACP_BACKEND_ID = 'codex';
-
-export function createCodexAcpBackendSpec(params: Readonly<{
-  command?: string;
-  args?: readonly string[];
-  env?: Readonly<Record<string, string | undefined>>;
-  projectDir?: string;
-}> = {}): AcpBackendSpecV1 {
-  const env = params.env ?? process.env;
-  const command = params.command ?? 'codex-acp';
-  const timeouts = resolveCodexAcpBackendTimeouts({
-    command,
+export function buildCodexNativeAcpRuntimeOptions(
+  request: AgentSessionOpenRequest,
+): AgentAcpRuntimeOptions {
+  const env = request.launchEnvironment?.values ?? {};
+  const permissionMode = request.configuration?.permissionIntent.value ?? undefined;
+  const spawn = resolveCodexAcpSpawnWithOptions({
     env,
+    permissionMode,
+    currentWorkingDirectory: request.cwd,
   });
-  const callbacks: NonNullable<AcpBackendSpecV1['callbacks']> = Object.freeze({
-    argvBuilder: (callbackParams) => {
-      const spawn = resolveCodexAcpSpawnWithOptions({
-        permissionMode: callbackParams.permissionMode,
-        env: { ...callbackParams.env },
-      });
-      return Object.freeze([...callbackParams.baseArgs, ...spawn.args]);
-    },
-    envBuilder: (callbackParams) => Object.freeze(buildCodexAcpEnvOverrides({
-      baseEnv: callbackParams.env,
-      projectDir: params.projectDir ?? callbackParams.cwd,
-    })),
-    toolNameResolver: ({ toolName, input }) => resolveCodexAcpExplicitToolHint({
-      toolName,
-      input,
-    }),
+  const timeouts = resolveCodexAcpBackendTimeouts({
+    command: spawn.command,
+    env,
   });
   const authMethodId = resolveCodexApiKeyAuthMethodId(env);
 
   return Object.freeze({
-    backendId: CODEX_ACP_BACKEND_ID,
     transport: Object.freeze({
-      kind: 'stdio',
-      launch: Object.freeze(params.command
-        ? {
-            kind: 'executable' as const,
-            command,
-            args: params.args ?? [],
-          }
-        : {
-            kind: 'system-tool' as const,
-            toolId: 'codex-acp',
-            purpose: 'Run Codex ACP',
-            preferredCommand: 'codex-acp',
-            args: params.args ?? [],
-          }),
+      kind: 'stdio' as const,
+      executable: Object.freeze({ kind: 'managedDependency' as const, id: 'codex-acp' }),
+      args: Object.freeze(spawn.args),
+      env: Object.freeze(buildCodexAcpEnvOverrides({
+        baseEnv: env,
+        projectDir: request.cwd,
+      })),
+      timeouts: Object.freeze({ initializeMs: timeouts.initMs }),
+    }),
+    definition: Object.freeze({
+      ...(authMethodId ? { auth: Object.freeze({ methodId: authMethodId }) } : {}),
       timeouts: Object.freeze(timeouts),
+      toolNameInference: Object.freeze({
+        patterns: CODEX_ACP_TOOL_PATTERNS,
+        preferLongestPattern: true,
+        unknownToolNames: ['unknown', 'other', 'unknown tool'],
+      }),
+      toolNameResolver: resolveCodexAcpExplicitToolHint,
+      mcp: Object.freeze({ policy: 'pass_through' as const }),
     }),
-    ux: Object.freeze({
-      name: 'Codex ACP',
-      title: 'Codex',
-      description: 'Codex ACP runtime',
-    }),
-    capabilities: Object.freeze({
-      supportsPermissionRequests: true,
-      supportsLoadSession: true,
-      supportsModes: 'unknown',
-      supportsModels: 'unknown',
-      supportsConfigOptions: 'unknown',
-    }),
-    ...(authMethodId ? { auth: Object.freeze({ methodId: authMethodId }) } : {}),
-    toolNameInference: Object.freeze({
-      patterns: CODEX_ACP_TOOL_PATTERNS,
-      preferLongestPattern: true,
-      unknownToolNames: ['unknown', 'other', 'unknown tool'],
-    }),
-    mcp: Object.freeze({
-      policy: 'pass_through',
-    }),
-    callbacks,
   });
 }
-
-export const CODEX_ACP_BACKEND_SPEC = createCodexAcpBackendSpec();
 
 export function resolveCodexAcpBackendTimeouts(params: Readonly<{
   command: string;

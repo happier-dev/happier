@@ -6,9 +6,9 @@ import type {
   ScmLogEntry,
   ScmLogListRequest,
   ScmLogListResponse,
-} from '@happier-dev/plugin-sdk/scm';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
-import type { ScmBackendRuntimeContext as ScmBackendContext } from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/experimental/scm';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/experimental/scm';
+import type { ScmBackendRuntimeContext as ScmBackendContext } from '@happier-dev/plugin-sdk/experimental/scm/backend';
 
 import { normalizeCommitRef, normalizePathspec, runSaplingCommand as runScmCommand } from '../runtime.js';
 import { mapSaplingErrorCode } from '../parsing/errorCodes.js';

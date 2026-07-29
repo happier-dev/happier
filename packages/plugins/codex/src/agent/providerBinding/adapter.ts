@@ -1,15 +1,15 @@
 import { createHash } from 'node:crypto';
 
 import type {
-  AgentProviderBindingAdapterV1,
-  AgentProviderBindingMaterializeInputV1,
-  AgentProviderBindingPrepareInputV1,
-  AgentProviderBindingPreparedV1,
-} from '@happier-dev/plugin-sdk';
-import type {
-  AgentProviderBindingMaterializationV1,
-  ProviderBindingEnvOverlayV1,
-} from '@happier-dev/protocol';
+  AgentProviderBindingAdapter,
+  AgentProviderBindingMaterializeInput,
+  AgentProviderBindingPrepareInput,
+  AgentProviderBindingPrepared,
+} from '@happier-dev/plugin-sdk/agent-runtime';
+import { areProviderContributionKeysEqualV1 } from '@happier-dev/plugin-sdk/experimental/providers';
+
+type ProviderBindingMaterialization = Awaited<ReturnType<AgentProviderBindingAdapter['materialize']>>;
+type ProviderBindingEnvOverlay = Extract<ProviderBindingMaterialization, { kind: 'engineConfig' }>['env'];
 
 const CODEX_PROVIDER_SECRET_ENV_KEY = 'HAPPIER_CODEX_PROVIDER_API_KEY';
 const CODEX_PROVIDER_BINDING_ADAPTER_VERSION_V1 = 1;
@@ -40,13 +40,13 @@ type ReservedCodexProvider = Readonly<{
 const RESERVED_CODEX_PROVIDERS = Object.freeze([
   Object.freeze({
     adapterBindingKey: 'ollama',
-    contributionKey: 'happier.provider.ollama:providers:ollama',
+    contributionKey: 'happier.provider.ollama/ollama',
     endpointTemplateId: 'ollama-openai-responses',
     normalizedUrl: 'http://localhost:11434/v1',
   }),
   Object.freeze({
     adapterBindingKey: 'lmstudio',
-    contributionKey: 'happier.provider.lmstudio:providers:lmstudio',
+    contributionKey: 'happier.provider.lmstudio/lmstudio',
     endpointTemplateId: 'lmstudio-openai-responses',
     normalizedUrl: 'http://localhost:1234/v1',
   }),
@@ -60,7 +60,8 @@ function resolveReservedCodexProvider(input: Readonly<{
 }>): ReservedCodexProvider | null {
   if (input.protocol !== 'openai-responses') return null;
   return RESERVED_CODEX_PROVIDERS.find((candidate) => (
-    candidate.contributionKey === input.contributionKey
+    input.contributionKey !== null
+    && areProviderContributionKeysEqualV1(candidate.contributionKey, input.contributionKey)
     && candidate.endpointTemplateId === input.endpointTemplateId
     && candidate.normalizedUrl === input.normalizedUrl
   )) ?? null;
@@ -81,7 +82,7 @@ function createCustomCodexProviderKey(input: Readonly<{
   return `happier_${digest}`;
 }
 
-function resolvePreparedBindingKey(input: AgentProviderBindingPrepareInputV1): string {
+function resolvePreparedBindingKey(input: AgentProviderBindingPrepareInput): string {
   const reserved = input.reservedBindingCandidate
     ? resolveReservedCodexProvider({
       contributionKey: input.reservedBindingCandidate.contributionKey,
@@ -97,8 +98,8 @@ function resolvePreparedBindingKey(input: AgentProviderBindingPrepareInputV1): s
 }
 
 function prepareCodexProviderBindingV1(
-  input: AgentProviderBindingPrepareInputV1,
-): AgentProviderBindingPreparedV1 {
+  input: AgentProviderBindingPrepareInput,
+): AgentProviderBindingPrepared {
   return {
     v: 1,
     materialization: 'engineConfig',
@@ -112,7 +113,7 @@ function sortStringRecord(input: Readonly<Record<string, string>>): Record<strin
   );
 }
 
-function assertPreparedBindingMatches(input: AgentProviderBindingMaterializeInputV1): string {
+function assertPreparedBindingMatches(input: AgentProviderBindingMaterializeInput): string {
   if (input.prepared.materialization !== 'engineConfig' || !input.prepared.adapterBindingKey) {
     throw new Error('Codex provider binding requires a prepared engine-config key');
   }
@@ -133,13 +134,13 @@ function assertPreparedBindingMatches(input: AgentProviderBindingMaterializeInpu
 }
 
 function transportsEqual(
-  left: AgentProviderBindingMaterializeInputV1['binding']['runtimeCredentialTransport'],
-  right: Extract<AgentProviderBindingMaterializeInputV1['credential'], { kind: 'apiKey' }>['transport'],
+  left: AgentProviderBindingMaterializeInput['binding']['runtimeCredentialTransport'],
+  right: Extract<AgentProviderBindingMaterializeInput['credential'], { kind: 'apiKey' }>['transport'],
 ): boolean {
   return left !== null && JSON.stringify(left) === JSON.stringify(right);
 }
 
-function resolveCredentialMaterialization(input: AgentProviderBindingMaterializeInputV1): Readonly<{
+function resolveCredentialMaterialization(input: AgentProviderBindingMaterializeInput): Readonly<{
   value: string | null;
   providerFields: Readonly<Record<string, unknown>>;
   additionalRedactionValues?: string[];
@@ -180,7 +181,7 @@ function resolveCredentialMaterialization(input: AgentProviderBindingMaterialize
   };
 }
 
-function buildOwnedEnvironment(secretValue: string | null): ProviderBindingEnvOverlayV1 {
+function buildOwnedEnvironment(secretValue: string | null): ProviderBindingEnvOverlay {
   return CODEX_PROVIDER_OWNED_ENV_KEYS.map((name) => ({
     name,
     value: name === CODEX_PROVIDER_SECRET_ENV_KEY ? secretValue : null,
@@ -188,9 +189,17 @@ function buildOwnedEnvironment(secretValue: string | null): ProviderBindingEnvOv
   }));
 }
 
+function buildModelReasoningConfig(
+  input: AgentProviderBindingMaterializeInput,
+): Readonly<{ model_reasoning_effort?: 'none' }> {
+  return input.binding.selection.model.capabilities?.reasoningControls === 'unsupported'
+    ? { model_reasoning_effort: 'none' }
+    : {};
+}
+
 async function materializeCodexProviderBindingV1(
-  input: AgentProviderBindingMaterializeInputV1,
-): Promise<AgentProviderBindingMaterializationV1> {
+  input: AgentProviderBindingMaterializeInput,
+): Promise<ProviderBindingMaterialization> {
   const adapterBindingKey = assertPreparedBindingMatches(input);
   if (input.binding.endpoint.protocol !== 'openai-responses') {
     throw new Error('Codex provider binding supports only the Responses protocol');
@@ -212,7 +221,11 @@ async function materializeCodexProviderBindingV1(
       v: 1,
       kind: 'engineConfig',
       env: buildOwnedEnvironment(null),
-      engineConfig: { v: 1, modelProvider: adapterBindingKey, config: {} },
+      engineConfig: {
+        v: 1,
+        modelProvider: adapterBindingKey,
+        config: buildModelReasoningConfig(input),
+      },
     };
   }
 
@@ -243,7 +256,10 @@ async function materializeCodexProviderBindingV1(
     engineConfig: {
       v: 1,
       modelProvider: adapterBindingKey,
-      config: { [`model_providers.${adapterBindingKey}`]: providerFields },
+      config: {
+        ...buildModelReasoningConfig(input),
+        [`model_providers.${adapterBindingKey}`]: providerFields,
+      },
     },
     ...(credential.additionalRedactionValues
       ? { additionalRedactionValues: credential.additionalRedactionValues }
@@ -256,4 +272,4 @@ export const CODEX_PROVIDER_BINDING_ADAPTER_V1 = Object.freeze({
   adapterVersion: CODEX_PROVIDER_BINDING_ADAPTER_VERSION_V1,
   prepare: prepareCodexProviderBindingV1,
   materialize: materializeCodexProviderBindingV1,
-} satisfies AgentProviderBindingAdapterV1);
+} satisfies AgentProviderBindingAdapter);

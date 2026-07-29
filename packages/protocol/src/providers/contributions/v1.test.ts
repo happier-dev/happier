@@ -59,6 +59,26 @@ describe('ProviderContributionV1Schema', () => {
     expect(ProviderContributionV1Schema.safeParse(value).success).toBe(false);
   });
 
+  it('requires unique implicit model aliases to target verified static models', () => {
+    const value = structuredClone(validContribution()) as any;
+    value.catalog = {
+      source: 'static', manualModelPolicy: 'allowed',
+      staticModels: [{ id: 'model-current', name: 'Current' }],
+    };
+    value.legacyProfileMigrations = [{
+      sourceProfileId: 'legacy',
+      descriptorRevision: 2,
+      implicitModelAliasReplacements: [{ legacyModelId: 'model-old', replacementModelId: 'model-current' }],
+      migratedEnvironmentVariables: [],
+      retainedEnvironmentVariables: [],
+    }];
+    expect(ProviderContributionV1Schema.safeParse(value).success).toBe(true);
+    value.legacyProfileMigrations[0].implicitModelAliasReplacements.push({
+      legacyModelId: 'model-old', replacementModelId: 'model-missing',
+    });
+    expect(ProviderContributionV1Schema.safeParse(value).success).toBe(false);
+  });
+
   it('normalizes one API-key slot and validates the contribution round trip', () => {
     const parsed = ProviderContributionV1Schema.parse(validContribution());
     expect(parsed.credential).toMatchObject({ slotId: 'apiKey', required: true });
@@ -180,7 +200,7 @@ describe('ProviderContributionV1Schema', () => {
     expect(ProviderContributionV1Schema.safeParse(valid).success).toBe(true);
   });
 
-  it('keeps local discovery and local URL candidates local-only and cross-references the availability endpoint', () => {
+  it('allows adopted-local discovery for an aggregator while keeping local URL candidates discovery-backed', () => {
     const local = structuredClone(validContribution()) as any;
     local.kind = 'local';
     delete local.endpointTemplates[0].baseUrl;
@@ -211,7 +231,11 @@ describe('ProviderContributionV1Schema', () => {
     });
     expect(ProviderContributionV1Schema.safeParse(local).success).toBe(false);
 
-    local.kind = 'cloud';
+    local.catalog.probes[0].endpointTemplateId = 'responses';
+    local.kind = 'aggregator';
+    expect(ProviderContributionV1Schema.safeParse(local).success).toBe(true);
+
+    delete local.discovery;
     expect(ProviderContributionV1Schema.safeParse(local).success).toBe(false);
   });
 

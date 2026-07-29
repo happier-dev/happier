@@ -24,9 +24,9 @@ type GeminiRuntimeConnectedServices = Readonly<{
 
 function readRuntimeConnectedServices(): GeminiRuntimeConnectedServices {
   const contribution = GEMINI_AGENT_RUNTIME_CONTRIBUTION as Readonly<{
-    runtimeControl?: Readonly<{ connectedServices?: GeminiRuntimeConnectedServices }>;
+    connectedServices?: GeminiRuntimeConnectedServices;
   }>;
-  return contribution.runtimeControl?.connectedServices ?? {};
+  return contribution.connectedServices ?? {};
 }
 
 async function writeGeminiChatFixture(params: Readonly<{
@@ -65,6 +65,10 @@ describe('GEMINI_AGENT_RUNTIME_CONTRIBUTION connected services', () => {
     if (originalHome === undefined) delete process.env.HOME;
     else process.env.HOME = originalHome;
     await rm(fakeNativeHome, { recursive: true, force: true });
+  });
+
+  it('leaves spawn prerequisites to the generation-owned activation hook', () => {
+    expect(GEMINI_AGENT_RUNTIME_CONTRIBUTION).not.toHaveProperty('daemonSpawnHooks');
   });
 
   it('exports a token-only cloud connect target for registry projection', async () => {
@@ -167,11 +171,72 @@ describe('GEMINI_AGENT_RUNTIME_CONTRIBUTION connected services', () => {
         severity: 'blocking',
       }],
     });
+    await expect(connectedServices.materializeAuthEnvironment({
+      gemini: {
+        ...oauth,
+        authenticationModeId: 'legacy-oauth-unsupported',
+      },
+    })).resolves.toEqual({
+      env: {},
+      diagnostics: [{
+        code: 'gemini_oauth_deferred_api_key_or_vertex_required',
+        providerId: 'gemini',
+        serviceId: 'gemini',
+        severity: 'blocking',
+      }],
+    });
   });
 
-  it('exports Gemini resume reachability through runtime control', async () => {
+  it('proves only provider activity bound to the exact Gemini credential epoch', async () => {
+    const adapter = GEMINI_AGENT_RUNTIME_CONTRIBUTION.connectedServices.runtimeAuthAdapter as unknown as Readonly<{
+      verifyProviderOutcome?: (input: unknown) => Promise<unknown>;
+    }>;
+    const exactSelection = {
+      kind: 'group',
+      serviceId: 'gemini',
+      groupId: 'gemini-pool',
+      activeProfileId: 'gemini-api',
+      fallbackProfileId: 'gemini-api',
+      generation: 7,
+      credentialRevision: 'csr_abcdefghijklmnopqrstuv',
+    };
+
+    await expect(adapter.verifyProviderOutcome?.({
+      target: { agentId: 'gemini' },
+      selections: [exactSelection],
+      outcome: { kind: 'provider_activity', event: 'assistant_message_end' },
+    })).resolves.toEqual({
+      status: 'verified',
+      source: 'gemini_provider_activity',
+      targets: [{
+        serviceId: 'gemini',
+        profileId: 'gemini-api',
+        groupId: 'gemini-pool',
+        groupGeneration: 7,
+        credentialRevision: 'csr_abcdefghijklmnopqrstuv',
+      }],
+    });
+    await expect(adapter.verifyProviderOutcome?.({
+      target: { agentId: 'gemini' },
+      selections: [{ ...exactSelection, credentialRevision: undefined }],
+      outcome: { kind: 'provider_activity', event: 'assistant_message_end' },
+    })).resolves.toMatchObject({ status: 'unavailable' });
+    await expect(adapter.verifyProviderOutcome?.({
+      target: { agentId: 'gemini' },
+      selections: [exactSelection],
+      outcome: { kind: 'provider_activity', event: 'task_started' },
+    })).resolves.toMatchObject({ status: 'unavailable' });
+    await expect(adapter.verifyProviderOutcome?.({
+      target: { agentId: 'gemini' },
+      selections: [exactSelection],
+      outcome: { kind: 'quota_unknown' },
+    })).resolves.toMatchObject({ status: 'unavailable' });
+  });
+
+  it('exports Gemini resume reachability through the native connected-service contribution', async () => {
     const connectedServices = readRuntimeConnectedServices();
 
+    expect(GEMINI_AGENT_RUNTIME_CONTRIBUTION).not.toHaveProperty('runtimeControl');
     expect(connectedServices.verifyResumeReachable).toEqual(expect.any(Function));
     await expect(connectedServices.verifyResumeReachable?.({
       targetMaterializedRoot: '/tmp/missing-gemini-materialized-root',

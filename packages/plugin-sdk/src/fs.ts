@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, rename, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 
+import { withJsonOwnerFileLock } from './internal/fs/jsonOwnerFileLock.js';
+
 export type FsPathInputV1 = Readonly<{
     path: string;
 }>;
@@ -128,4 +130,19 @@ export async function writeAtomicJsonFile(input: FsAtomicWriteJsonInputV1): Prom
         ...(input.mode === undefined ? {} : { mode: input.mode }),
         ...(input.temporaryDirectory === undefined ? {} : { temporaryDirectory: input.temporaryDirectory }),
     });
+}
+
+export async function withExclusiveFileLock<TResult>(
+    options: Readonly<{
+        lockPath: string;
+        timeoutMs: number;
+    }>,
+    effect: () => Promise<TResult>,
+): Promise<TResult> {
+    return await withJsonOwnerFileLock({
+        lockPath: options.lockPath,
+        timeoutMs: options.timeoutMs,
+        staleAfterMs: 60_000,
+        errorCode: 'exclusive_file_lock_timeout',
+    }, effect);
 }

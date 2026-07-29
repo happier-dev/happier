@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseModelPackManifest } from './manifest.js';
+import { ModelPackRuntimeFamilySchema, parseModelPackManifest } from './manifest.js';
 
 describe('voice model pack manifest', () => {
+  it('recognizes the Moonshine offline runtime-family identifier', () => {
+    expect(ModelPackRuntimeFamilySchema.parse('sherpa_moonshine_offline')).toBe('sherpa_moonshine_offline');
+  });
+
   it('parses a valid manifest', () => {
     const manifest = parseModelPackManifest({
       packId: 'kokoro-tts-en-v1',

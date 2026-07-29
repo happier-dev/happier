@@ -1,68 +1,181 @@
 import type {
-  AgentRuntimeV1,
-  CreateSessionRuntimeParamsV1,
-  PluginContextV1,
-} from '@happier-dev/plugin-sdk';
-import { composeSessionIsolationEnvironment } from '@happier-dev/plugin-sdk/experimental/runtime/session';
+  AgentExecutionRunRuntime,
+  AgentRuntime,
+  AgentRuntimeContext,
+  AgentRuntimeFactory,
+  AgentSessionOpenRequest,
+  AgentSessionRuntime,
+  AgentSessionUsageLimitRecoveryControl,
+} from '@happier-dev/plugin-sdk/agent-runtime';
 
-import { createPiExecutionRunBackend } from '../executionRuns/backend.js';
 import { createPiRuntimeOperations } from './rpc/operations.js';
 
-function readString(value: unknown): string | null {
-  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+const PI_USAGE_LIMIT_RECOVERY_FALLBACK_BACKOFF_MS = 600_000;
+
+const piUsageLimitRecovery: AgentSessionUsageLimitRecoveryControl = {
+  async execute(request) {
+    if (request.kind !== 'checkNow') {
+      return {
+        status: 'unsupported',
+        diagnostic: {
+          code: 'pi_reset_credit_unsupported',
+          severity: 'error',
+        },
+      };
+    }
+    return {
+      status: 'waiting',
+      retryAfterMs: PI_USAGE_LIMIT_RECOVERY_FALLBACK_BACKOFF_MS,
+    };
+  },
+};
+
+type ExecutionEventWithoutSequence = Parameters<Parameters<AgentExecutionRunRuntime['watch']>[0]>[0] extends infer Event
+  ? Event extends { sequence: number } ? Omit<Event, 'sequence'> : never
+  : never;
+
+function readPermissionMode(request: AgentSessionOpenRequest): string | undefined {
+  return request.configuration?.permissionIntent.value ?? undefined;
 }
 
-function readEnv(sessionParams: CreateSessionRuntimeParamsV1): Readonly<Record<string, string>> {
-  const env = composeSessionIsolationEnvironment({
-    isolationEnvironment: sessionParams.isolation?.env,
-    environment: sessionParams.env,
-    unsetEnvKeys: sessionParams.isolation?.unsetEnvKeys,
+function readEnvironment(request: AgentSessionOpenRequest): Readonly<{
+  values: Readonly<Record<string, string>>;
+  unset: readonly string[];
+}> {
+  return request.launchEnvironment ?? { values: {}, unset: [] };
+}
+
+async function openPiSession(
+  request: AgentSessionOpenRequest,
+  context: Pick<AgentRuntimeContext, 'services'>,
+): Promise<AgentSessionRuntime> {
+  if (request.kind === 'fork') {
+    throw new Error('Pi does not support native session fork');
+  }
+  const environment = readEnvironment(request);
+  return await createPiRuntimeOperations({
+    services: context.services,
+    logger: context.services.logger,
+    cwd: request.cwd,
+    env: environment.values,
+    unsetEnvKeys: environment.unset,
+    permissionMode: readPermissionMode(request),
+    resumeSessionId: request.kind === 'resume' ? request.providerSessionId : null,
+    sessionId: request.sessionId,
   });
-  return Object.fromEntries(
-    Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
-  );
 }
 
-function readDirectory(sessionParams: CreateSessionRuntimeParamsV1): string {
-  return readString(sessionParams.cwd)
-    ?? readString(sessionParams.directory)
-    ?? process.cwd();
-}
-
-function readInitialSessionId(sessionParams: CreateSessionRuntimeParamsV1): string | null {
-  const state = sessionParams.initialRuntimeState;
-  if (!state || typeof state !== 'object' || Array.isArray(state)) return null;
-  const record = state as Readonly<Record<string, unknown>>;
-  return readString(record.piSessionId) ?? readString(record.providerSessionId);
-}
-
-function readHappierSessionId(sessionParams: CreateSessionRuntimeParamsV1): string | null {
-  return readString(sessionParams.sessionId);
-}
-
-function readPermissionMode(sessionParams: CreateSessionRuntimeParamsV1): string | undefined {
-  return readString(sessionParams.permissionMode) ?? undefined;
-}
-
-export function createPiBackendEngine(ctx: PluginContextV1): AgentRuntimeV1 {
+async function openPiExecutionRun(
+  request: Parameters<NonNullable<AgentRuntime['executionRuns']>['open']>[0],
+  context: AgentRuntimeContext,
+): Promise<AgentExecutionRunRuntime> {
+  if (request.kind !== 'create') {
+    throw new Error(`Pi execution runs do not support ${request.kind}`);
+  }
+  const session = await openPiSession({
+    kind: 'create',
+    sessionId: request.runId,
+    cwd: request.cwd,
+    ...(request.launchEnvironment ? { launchEnvironment: request.launchEnvironment } : {}),
+  }, context);
+  const listeners = new Set<Parameters<AgentExecutionRunRuntime['watch']>[0]>();
+  const history: Array<Parameters<Parameters<AgentExecutionRunRuntime['watch']>[0]>[0]> = [];
+  let sequence = 0;
+  let turnOrdinal = 0;
+  let activeTurnId: string | null = null;
+  let terminal = false;
+  const emit = (event: ExecutionEventWithoutSequence) => {
+    if (terminal) return;
+    const value = { ...event, sequence: ++sequence } as Parameters<Parameters<AgentExecutionRunRuntime['watch']>[0]>[0];
+    history.push(value);
+    terminal = event.kind === 'run-complete'
+      || event.kind === 'run-failed'
+      || event.kind === 'run-cancelled';
+    for (const listener of listeners) listener(value);
+  };
+  const subscription = session.watch((event) => {
+    if (event.kind === 'message-delta') {
+      emit({
+        runId: request.runId,
+        emittedAtMs: event.emittedAtMs,
+        kind: 'output-delta',
+        channel: event.channel,
+        text: event.text,
+      });
+    }
+    if (event.kind === 'turn-complete') {
+      if (activeTurnId === event.turnId) activeTurnId = null;
+      emit({ runId: request.runId, emittedAtMs: event.emittedAtMs, kind: 'run-complete' });
+    }
+    if (event.kind === 'turn-failed') {
+      if (activeTurnId === event.turnId) activeTurnId = null;
+      emit({
+        runId: request.runId,
+        emittedAtMs: event.emittedAtMs,
+        kind: 'run-failed',
+        diagnostic: event.diagnostic,
+      });
+    }
+    if (event.kind === 'turn-cancelled') {
+      if (activeTurnId === event.turnId) activeTurnId = null;
+      emit({
+        runId: request.runId,
+        emittedAtMs: event.emittedAtMs,
+        kind: 'run-cancelled',
+      });
+    }
+  });
+  const send = async (input: Parameters<AgentExecutionRunRuntime['send']>[0]) => {
+    turnOrdinal += 1;
+    const turnId = `${request.runId}-turn-${turnOrdinal}`;
+    activeTurnId = turnId;
+    let result: Awaited<ReturnType<AgentSessionRuntime['send']>>;
+    try {
+      result = await session.send({
+        inputIds: [`${request.runId}-input-${turnOrdinal}`],
+        input,
+        delivery: { kind: 'newTurn', turnId },
+      });
+    } catch (error) {
+      if (activeTurnId === turnId) activeTurnId = null;
+      throw error;
+    }
+    if (result.status === 'admitted') return { status: 'admitted' as const };
+    if (activeTurnId === turnId) activeTurnId = null;
+    emit({
+      runId: request.runId,
+      emittedAtMs: Date.now(),
+      kind: 'run-failed',
+      ...(result.diagnostic ? { diagnostic: result.diagnostic } : {}),
+    });
+    return { status: result.status, diagnostic: result.diagnostic };
+  };
+  emit({ runId: request.runId, emittedAtMs: Date.now(), kind: 'run-start' });
+  await send(request.input);
   return {
-    runtimeCore: {
-      createSessionRuntime: async (sessionParams: CreateSessionRuntimeParamsV1) => {
-        const initialDirectory = readDirectory(sessionParams);
-        const env = readEnv(sessionParams);
-        const initialSessionId = readInitialSessionId(sessionParams);
-        const initialHappierSessionId = readHappierSessionId(sessionParams);
-        const initialPermissionMode = readPermissionMode(sessionParams);
-        return await createPiRuntimeOperations({
-          ctx,
-          cwd: initialDirectory,
-          env,
-          permissionMode: initialPermissionMode,
-          initialSessionId,
-          happierSessionId: initialHappierSessionId,
-        });
-      },
-      createExecutionRunBackend: (executionRunParams) => createPiExecutionRunBackend({ ctx, executionRunParams }),
+    send,
+    async stop(options) {
+      if (!activeTurnId) return { status: 'notRunning' };
+      const result = await session.cancel?.({ turnId: activeTurnId, reason: 'user' }, options);
+      return { status: result?.status ?? 'unsupported' };
+    },
+    watch(listener) {
+      for (const event of history) listener(event);
+      if (!terminal) listeners.add(listener);
+      return { dispose: () => { listeners.delete(listener); } };
+    },
+    async dispose() {
+      subscription.dispose();
+      listeners.clear();
+      await session.dispose();
     },
   };
 }
+
+export const createPiAgentRuntime: AgentRuntimeFactory = () => ({
+  sessions: {
+    open: openPiSession,
+    usageLimitRecovery: piUsageLimitRecovery,
+  },
+  executionRuns: { open: openPiExecutionRun },
+});

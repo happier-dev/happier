@@ -1,8 +1,8 @@
 import type {
   ScmChangeDiscardRequest,
   ScmChangeDiscardResponse,
-} from '@happier-dev/plugin-sdk/scm';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/experimental/scm';
 
 import { normalizePathspec, runScmCommand } from '../runtime.js';
 import type { ScmBackendContext } from '../types.js';

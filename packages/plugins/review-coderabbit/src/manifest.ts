@@ -1,47 +1,85 @@
-import { definePluginManifest, type PluginManifestV2 } from '@happier-dev/plugin-sdk';
+import type { PluginManifest } from '@happier-dev/plugin-sdk/manifest';
 
-import { coderabbitReviewDescriptor } from './agent/reviews/descriptor.js';
 import { createCodeRabbitReviewExecutionProfile } from './agent/reviews/profile.js';
+import { CODERABBIT_SYSTEM_TOOL_ID } from './agent/reviews/systemTool.js';
 
-export const PLUGIN_MANIFEST = definePluginManifest({
+export const PLUGIN_MANIFEST = {
   schemaVersion: 2,
   id: 'happier.review.coderabbit',
   version: '0.0.0',
   displayName: 'CodeRabbit review engine',
   description: 'Runs CodeRabbit as a review-only execution engine.',
-  source: {
-    kind: 'package',
-    locator: '@happier-dev/plugins-review-coderabbit',
-    trustPolicy: 'local_trusted',
-    installPolicy: 'link',
-    resolvedVersion: '0.0.0',
-  },
-  engines: { happier: '^0.0.0' },
-  activationEvents: ['onReviewProvider:coderabbit'],
-  uses: ['agents', 'executionRunProfiles'],
-  entrypoints: { main: './dist/index.js' },
-  permissions: {
-    required: [],
-    optional: [{
-      capability: 'reviews.comments.write.direct',
-      reason: 'Write approved CodeRabbit review comments directly when the user grants direct-write authority.',
+  engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
+  entrypoints: { daemon: './dist/index.js' },
+  hostAccess: {
+    required: [{
+      id: 'coderabbit-workspace',
+      capability: 'filesystem',
+      reason: 'Use the admitted execution-run workspace as the CodeRabbit process working directory.',
+      scope: {
+        locations: [{ root: 'workspace' }],
+        access: ['read'],
+      },
+    }, {
+      id: 'coderabbit-process',
+      capability: 'process',
+      reason: 'Launch the user-installed CodeRabbit review CLI for an admitted review run.',
+      scope: {
+        executables: [{ kind: 'systemTool', id: CODERABBIT_SYSTEM_TOOL_ID }],
+        envKeys: [
+          'CODERABBIT_API_KEY',
+          'HAPPIER_CODERABBIT_REVIEW_TIMEOUT_MS',
+          'HAPPIER_CODERABBIT_REVIEW_RATE_LIMIT_MAX_ATTEMPTS',
+          'HAPPIER_CODERABBIT_REVIEW_MAX_ELIGIBLE_FILES',
+        ],
+      },
     }],
+    optional: [],
   },
   contributes: {
     agents: [{
-      kindVersion: 1,
-      id: coderabbitReviewDescriptor.id,
+      id: 'coderabbit',
       title: 'CodeRabbit',
       runtime: { kind: 'custom' },
-      capabilities: coderabbitReviewDescriptor.capabilities,
-      surfaceHandlers: [],
+      cli: {
+        executable: {
+          binaryName: 'coderabbit',
+          knownUserBinDirSuffixes: null,
+          sourcePreference: 'system-first',
+        },
+        install: {
+          managed: null,
+          manual: { kind: 'command' },
+          guideUrl: null,
+          docsUrl: null,
+        },
+        auth: {
+          support: 'status_only',
+          probe: {
+            parser: 'unknown',
+            backgroundChecks: 'safe',
+            statusArgs: null,
+            envVars: ['CODERABBIT_API_KEY'],
+          },
+          loginLaunches: [],
+        },
+      },
+      primary: 'executionRuns',
+      capabilities: { executionRuns: { open: ['create'], checkpoint: false, stop: true } },
     }],
     executionRunProfiles: [createCodeRabbitReviewExecutionProfile()],
-    systemTools: [{
-      toolId: 'coderabbit',
-      displayName: 'CodeRabbit',
-      source: 'system',
-      lookupNames: ['coderabbit'],
+    resources: [{
+      id: 'review-prompt-resource',
+      kind: 'prompt',
+      path: './resources/review-prompt.md',
+      contentType: 'text/markdown',
     }],
+    promptAssets: [{
+      id: 'review-prompt',
+      kind: 'systemPrompt',
+      resource: 'review-prompt-resource',
+      target: { kind: 'agent', agent: 'coderabbit' },
+    }],
+    systemTools: [{ id: CODERABBIT_SYSTEM_TOOL_ID, title: 'CodeRabbit CLI', executableNames: ['coderabbit'] }],
   },
-} satisfies PluginManifestV2);
+} satisfies PluginManifest;

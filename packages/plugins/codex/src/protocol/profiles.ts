@@ -1,4 +1,4 @@
-import type { AIBackendProfile } from '@happier-dev/plugin-sdk/manifest';
+import type { AIBackendProfile } from '@happier-dev/plugin-sdk/experimental/providers';
 
 export const CODEX_BUILT_IN_BACKEND_PROFILES = [
   {

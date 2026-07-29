@@ -1,3 +1,4 @@
+import { HOST_PRIVATE_PLUGIN_INSTALL_DECISION_RPC_METHOD } from '../../../../marketplace/internal.js';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '../../../../rpc/index.js';
 import { MachineLiveStreamRelayCapsV1Schema, type MachineLiveStreamRelayCaps } from '../stream/v1.js';
 import { resolveMachineRpcGovernance, type MachineRpcGovernanceClassification } from './governanceV1.js';
@@ -27,6 +28,10 @@ export type MachineRpcRoutePolicyScopeV1 = Readonly<{
 }>;
 
 export type MachineRpcRouteRelayFallbackPolicyV1 = Readonly<{
+  /**
+   * Legacy Machine-RPC fallback classification. This is not a
+   * `PeerFlowKindV1` and never admits or identifies a `voice_media` tunnel.
+   */
   flowKind: 'daemon_voice_audio';
   defaultSharedServerMode: 'disabled';
   authorizationRequired: boolean;
@@ -52,18 +57,18 @@ export type MachineRpcRoutePolicyV1 = Readonly<{
 export type MachineRpcRelayFallbackDeploymentKind = 'shared_server' | 'self_hosted';
 
 export const DAEMON_VOICE_AUDIO_RELAY_CAP_PROFILE_ID = 'machine_live_stream_relay_caps_v1';
-export const DAEMON_VOICE_STT_RELAY_TUNNEL_ID_PREFIX = 'voice-stt:';
+export const VOICE_MEDIA_RELAY_TUNNEL_ID_PREFIX = 'voice-media:';
 
-export function createDaemonVoiceSttRelayTunnelId(input: Readonly<{
+export function createVoiceMediaRelayTunnelId(input: Readonly<{
   machineId: string;
   requestId: string;
 }>): string {
-  return `${DAEMON_VOICE_STT_RELAY_TUNNEL_ID_PREFIX}${input.machineId}:${input.requestId}`;
+  return `${VOICE_MEDIA_RELAY_TUNNEL_ID_PREFIX}${input.machineId}:${input.requestId}`;
 }
 
-export function isDaemonVoiceSttRelayTunnelId(tunnelId: string): boolean {
-  return tunnelId.startsWith(DAEMON_VOICE_STT_RELAY_TUNNEL_ID_PREFIX)
-    && tunnelId.length > DAEMON_VOICE_STT_RELAY_TUNNEL_ID_PREFIX.length;
+export function isVoiceMediaRelayTunnelId(tunnelId: string): boolean {
+  return tunnelId.startsWith(VOICE_MEDIA_RELAY_TUNNEL_ID_PREFIX)
+    && tunnelId.length > VOICE_MEDIA_RELAY_TUNNEL_ID_PREFIX.length;
 }
 
 export type MachineRpcRelayFallbackDecision = Readonly<
@@ -168,6 +173,16 @@ function actionSpecServerRequired(
   };
 }
 
+const HOST_PRIVATE_PLUGIN_INSTALL_DECISION_ROUTE_POLICY: MachineRpcRoutePolicyV1 = Object.freeze({
+  method: HOST_PRIVATE_PLUGIN_INSTALL_DECISION_RPC_METHOD,
+  routeClass: 'direct_medium_risk_receipted',
+  rationale: 'Present-user plugin installation approval mutates daemon-owned trust and installation state through a host-private exact-machine command; direct routing requires command receipt coverage.',
+  ownerPacket: 'PMS-5',
+  rpcClassification: 'internal_only',
+  commandReceiptRequired: true,
+  scope: DIRECT_EPHEMERAL_SCOPE,
+});
+
 const DIRECT_EPHEMERAL_POLICIES = Object.freeze([
   directEphemeral(RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST, 'Daemon-local execution run registry read; no server persistence, transcript write, or cross-device fanout.'),
   directEphemeral(RPC_METHODS.DAEMON_MEMORY_STATUS, 'Daemon-local memory worker status read with no mutation or server persistence.'),
@@ -175,13 +190,18 @@ const DIRECT_EPHEMERAL_POLICIES = Object.freeze([
   directEphemeral(RPC_METHODS.DAEMON_VOICE_INFERENCE_STATUS, 'Daemon-local voice inference worker status read.'),
   directEphemeral(RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_LIST, 'Daemon-local installed/available model list read.'),
   directEphemeral(RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_STATUS, 'Daemon-local model status read.'),
-  directEphemeral(RPC_METHODS.DAEMON_VOICE_CREDENTIAL_STATUS, 'Daemon-local voice credential presence and protection status read; secret material never leaves the daemon-owned broker.'),
-  directEphemeral(RPC_METHODS.DAEMON_VOICE_CREDENTIAL_PROVIDER_CATALOG, 'Daemon-owned credential broker catalog read; provider credentials remain inside the daemon boundary.'),
   directEphemeral(RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_MODELS_LIST, 'Daemon-owned OpenAI-compatible model catalog read with credentials retained inside the daemon boundary.'),
+  directEphemeral(RPC_METHODS.DAEMON_VOICE_SPEECH_CATALOG, 'Resolver-backed speech catalog read; SavedSecret material remains inside the daemon operation.'),
   directEphemeral(RPC_METHODS.DAEMON_EXTENSIONS_RELOAD_STATUS, 'Daemon-local extension reload status read.'),
   directEphemeral(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE, 'Daemon-local contribution registry projection describe read.'),
+  directEphemeral(RPC_METHODS.DAEMON_MARKETPLACE_INDEX_QUERY, 'Daemon-local marketplace index query reads the current machine-owned source projection without server persistence or cross-device fanout.'),
+  directEphemeral(RPC_METHODS.DAEMON_NPM_REGISTRY_PROFILES_GET, 'Daemon-local npm registry profile read keeps private registry configuration inside the selected machine boundary.'),
+  directEphemeral(RPC_METHODS.DAEMON_PLUGIN_SESSION_HOOKS_STATUS_GET, 'Daemon-local Agent session-hook status returns only portable installation state and diagnostics.'),
   directEphemeral(RPC_METHODS.DAEMON_PLUGIN_SETTINGS_GET, 'Daemon-local plugin settings read with no server persistence or cross-device fanout.'),
+  directEphemeral(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_RESOLVE, 'Daemon-local structured-message resolution performs generation-leased validation and immutable resource reads without server persistence.'),
   directEphemeral(RPC_METHODS.DAEMON_PLUGIN_UI_ARTIFACT_BYTES_READ, 'Daemon-local installed plugin UI artifact byte read with no server persistence or cross-device fanout.'),
+  directEphemeral(RPC_METHODS.DAEMON_VOICE_DIAGNOSTICS_STATUS, 'Exact-machine Voice diagnostics status reads private daemon-local retention state without mutation or server persistence.'),
+  directEphemeral(RPC_METHODS.DAEMON_VOICE_DIAGNOSTICS_ARTIFACT_DOWNLOAD_CHUNK, 'Exact-machine Voice diagnostics export chunk reads encrypted bytes from an already-authorized ephemeral download session.'),
   directEphemeral(RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_SNAPSHOT, 'Daemon-local local-services inventory snapshot read with no server persistence or cross-device fanout.'),
   directEphemeral(RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_REFRESH, 'Daemon-local local-services inventory refresh with typed snapshot response and no server persistence or cross-device fanout.'),
   directEphemeral(RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT, 'Daemon-local local-services launcher snapshot read with no server persistence or cross-device fanout.'),
@@ -220,10 +240,20 @@ const DIRECT_MEDIUM_RISK_RECEIPTED_POLICIES = Object.freeze([
   directMediumRiskReceipted(RPC_METHODS.DAEMON_LOCAL_SERVICES_PUBLIC_PREVIEW_CREATE, 'Daemon-mediated public-preview create can expose a local service through a public URL; direct routing requires command receipt coverage and server-side authorization.'),
   directMediumRiskReceipted(RPC_METHODS.DAEMON_LOCAL_SERVICES_PUBLIC_PREVIEW_REVOKE, 'Daemon-mediated public-preview revoke terminates a public exposure; direct routing requires command receipt coverage and server-side authorization.'),
   directMediumRiskReceipted(RPC_METHODS.DAEMON_BROWSER_CONTEXT_DISPATCH, 'Daemon-local browser context dispatch can capture, attach, clear, or annotate browser context through one typed runtime dispatcher; direct routing requires command receipt coverage.'),
+  directMediumRiskReceipted(RPC_METHODS.DAEMON_NPM_REGISTRY_PROFILES_MUTATE, 'Daemon-local npm registry profile mutation writes private machine configuration; direct routing requires command receipt coverage.'),
+  directMediumRiskReceipted(RPC_METHODS.DAEMON_PLUGIN_SESSION_HOOKS_INSTALL, 'Explicit Agent session-hook install mutates machine-local Agent configuration and rotates a scoped credential; direct routing requires command receipt coverage.'),
+  directMediumRiskReceipted(RPC_METHODS.DAEMON_PLUGIN_SESSION_HOOKS_DISABLE, 'Explicit Agent session-hook disable mutates machine-local Agent configuration; direct routing requires command receipt coverage.'),
+  directMediumRiskReceipted(RPC_METHODS.DAEMON_PLUGIN_SESSION_HOOKS_ENABLE, 'Explicit Agent session-hook enable mutates machine-local Agent configuration; direct routing requires command receipt coverage.'),
+  directMediumRiskReceipted(RPC_METHODS.DAEMON_PLUGIN_SESSION_HOOKS_UNINSTALL, 'Explicit Agent session-hook uninstall removes owned machine-local configuration and revokes its scoped credential; direct routing requires command receipt coverage.'),
   directMediumRiskReceipted(RPC_METHODS.DAEMON_PLUGIN_SETTINGS_SET, 'Daemon-local plugin settings mutation writes machine-scoped configuration; direct routing requires command receipt coverage.'),
-  directMediumRiskReceipted(RPC_METHODS.DAEMON_VOICE_CREDENTIAL_STORE, 'Stores secret material in the daemon-owned protected credential broker; direct routing keeps the secret machine-local and requires command receipt coverage.'),
-  directMediumRiskReceipted(RPC_METHODS.DAEMON_VOICE_CREDENTIAL_DELETE, 'Deletes daemon-owned protected credential material; direct routing requires command receipt coverage.'),
-  directMediumRiskReceipted(RPC_METHODS.DAEMON_VOICE_CREDENTIAL_MINT_CLIENT_AUTH, 'Mints a bounded client authentication artifact from daemon-owned secret material; direct routing requires command receipt coverage.'),
+  HOST_PRIVATE_PLUGIN_INSTALL_DECISION_ROUTE_POLICY,
+  directMediumRiskReceipted(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE, 'Daemon-local structured-message action execution enters the canonical plugin action executor; direct routing requires command receipt coverage.'),
+  directMediumRiskReceipted(RPC_METHODS.DAEMON_VOICE_DIAGNOSTICS_CONFIGURE, 'Exact-machine Voice diagnostics configuration mutates private local retention policy; direct routing requires command receipt coverage.'),
+  directMediumRiskReceipted(RPC_METHODS.DAEMON_VOICE_DIAGNOSTICS_DELETE_ALL, 'Exact-machine Voice diagnostics delete-all destroys private retained artifacts and active export sessions; direct routing requires command receipt coverage.'),
+  directMediumRiskReceipted(RPC_METHODS.DAEMON_VOICE_DIAGNOSTICS_REVOKE_CAPTURE, 'Exact-machine Voice diagnostics revocation mutates local capture authorization; direct routing requires command receipt coverage.'),
+  directMediumRiskReceipted(RPC_METHODS.DAEMON_VOICE_DIAGNOSTICS_ARTIFACT_DOWNLOAD_INIT, 'Exact-machine Voice diagnostics export init authorizes and opens an encrypted ephemeral download session; direct routing requires command receipt coverage.'),
+  directMediumRiskReceipted(RPC_METHODS.DAEMON_VOICE_DIAGNOSTICS_ARTIFACT_DOWNLOAD_FINALIZE, 'Exact-machine Voice diagnostics export finalize closes an ephemeral download session; direct routing requires command receipt coverage.'),
+  directMediumRiskReceipted(RPC_METHODS.DAEMON_VOICE_DIAGNOSTICS_ARTIFACT_DOWNLOAD_ABORT, 'Exact-machine Voice diagnostics export abort closes an ephemeral download session; direct routing requires command receipt coverage.'),
   directMediumRiskReceipted(RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_CHAT, 'Dispatches bounded text to an explicitly configured OpenAI-compatible provider through the daemon-owned credential boundary; direct routing requires command receipt coverage.'),
   directMediumRiskReceipted(RPC_METHODS.DAEMON_LIVE_STREAM_RELAY_START, 'Delivers a server-minted signed live-stream start request to the source daemon; direct routing requires command receipt coverage before the server re-verifies the echoed authorization.'),
   directMediumRiskReceipted(RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART_ALL, 'Daemon-local session-runner bulk restart mutates local runtime processes; direct routing requires command receipt coverage.'),
@@ -261,13 +291,13 @@ const DAEMON_VOICE_AUDIO_DIRECT_METHODS = [
   RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_SYNTHESIZE,
   RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_DOWNLOAD_CHUNK,
   RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_DOWNLOAD_FINALIZE,
-  RPC_METHODS.DAEMON_VOICE_GOOGLE_TRANSCRIBE_UPLOAD_INIT,
-  RPC_METHODS.DAEMON_VOICE_GOOGLE_TRANSCRIBE_UPLOAD_CHUNK,
-  RPC_METHODS.DAEMON_VOICE_GOOGLE_TRANSCRIBE_UPLOAD_FINALIZE,
-  RPC_METHODS.DAEMON_VOICE_GOOGLE_TRANSCRIBE,
-  RPC_METHODS.DAEMON_VOICE_GOOGLE_SYNTHESIZE,
-  RPC_METHODS.DAEMON_VOICE_GOOGLE_DOWNLOAD_CHUNK,
-  RPC_METHODS.DAEMON_VOICE_GOOGLE_DOWNLOAD_FINALIZE,
+  RPC_METHODS.DAEMON_VOICE_SPEECH_TRANSCRIBE_UPLOAD_INIT,
+  RPC_METHODS.DAEMON_VOICE_SPEECH_TRANSCRIBE_UPLOAD_CHUNK,
+  RPC_METHODS.DAEMON_VOICE_SPEECH_TRANSCRIBE_UPLOAD_FINALIZE,
+  RPC_METHODS.DAEMON_VOICE_SPEECH_TRANSCRIBE,
+  RPC_METHODS.DAEMON_VOICE_SPEECH_SYNTHESIZE,
+  RPC_METHODS.DAEMON_VOICE_SPEECH_DOWNLOAD_CHUNK,
+  RPC_METHODS.DAEMON_VOICE_SPEECH_DOWNLOAD_FINALIZE,
 ] as const;
 
 const DAEMON_VOICE_AUDIO_DIRECT_METHOD_SET = new Set<string>(DAEMON_VOICE_AUDIO_DIRECT_METHODS);
@@ -281,7 +311,7 @@ const DAEMON_VOICE_AUDIO_DIRECT_POLICIES = Object.freeze(
 );
 
 const SESSION_DURABLE_METHODS = [
-  RPC_METHODS.SPAWN_HAPPY_SESSION, RPC_METHODS.STOP_SESSION, RPC_METHODS.SESSION_CONTINUE_WITH_REPLAY, RPC_METHODS.SESSION_FORK,
+  RPC_METHODS.SPAWN_HAPPY_SESSION, RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE, RPC_METHODS.DAEMON_SPAWN_SESSION_ABANDON, RPC_METHODS.STOP_SESSION, RPC_METHODS.SESSION_CONTINUE_WITH_REPLAY, RPC_METHODS.SESSION_FORK, RPC_METHODS.SESSION_FORK_PROVIDER_SAFE,
   RPC_METHODS.SESSION_PERMISSION_RESPOND, RPC_METHODS.SESSION_USER_ACTION_ANSWER, RPC_METHODS.SESSION_PERMISSION_MODE_SET,
   RPC_METHODS.DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH,
   RPC_METHODS.DAEMON_SESSION_GOAL_GET,
@@ -306,8 +336,10 @@ const SESSION_DURABLE_METHODS = [
   SESSION_RPC_METHODS.SESSION_CHECKPOINT_CODE_ROLLBACK,
   SESSION_RPC_METHODS.SESSION_CHECKPOINT,
   SESSION_RPC_METHODS.SESSION_RESTORE,
+  SESSION_RPC_METHODS.SESSION_MODEL_TRANSITION,
   SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND, SESSION_RPC_METHODS.EXECUTION_RUN_START, SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE,
   SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START, SESSION_RPC_METHODS.EXECUTION_RUN_SEND, SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START,
+  SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START_V2, SESSION_RPC_METHODS.EXECUTION_RUN_USER_TRANSCRIPT_COMMIT_V1,
   SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ, SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_CANCEL, SESSION_RPC_METHODS.EXECUTION_RUN_STOP,
   SESSION_RPC_METHODS.EXECUTION_RUN_LIST, SESSION_RPC_METHODS.EXECUTION_RUN_GET, SESSION_RPC_METHODS.EXECUTION_RUN_ACTION,
   SESSION_RPC_METHODS.SESSION_ROLLBACK,
@@ -337,6 +369,11 @@ const REVIEW_COMMENT_METHODS = [
 const SESSION_AUTH_CONTROL_METHODS = [
   SESSION_RPC_METHODS.SESSION_CONNECTED_SERVICE_AUTH_APPLY_GENERATION,
   SESSION_RPC_METHODS.SESSION_CONNECTED_SERVICE_AUTH_READ_RUNTIME_IDENTITY,
+  SESSION_RPC_METHODS.SESSION_PROVIDER_INPUT_ADMISSION,
+  SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_INSPECT,
+  SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_START,
+  SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_STOP,
+  SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_WATCH,
 ] as const;
 
 const SESSION_USAGE_LIMIT_RECOVERY_CREDIT_METHODS = [
@@ -346,7 +383,8 @@ const SESSION_USAGE_LIMIT_RECOVERY_CREDIT_METHODS = [
 
 const TRANSFER_CONTROL_METHODS = [
   RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT, RPC_METHODS.DAEMON_TRANSFER_UPLOAD_CHUNK, RPC_METHODS.DAEMON_TRANSFER_UPLOAD_FINALIZE,
-  RPC_METHODS.DAEMON_TRANSFER_UPLOAD_ABORT, RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_PREPARE, RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE,
+  RPC_METHODS.DAEMON_TRANSFER_UPLOAD_ABORT, RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_PREPARE, RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_ABORT,
+  RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE,
   RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_INIT, RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_CHUNK, RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_FINALIZE,
   RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_ABORT, RPC_METHODS.DAEMON_PROMPT_ASSETS_UPLOAD_INIT, RPC_METHODS.DAEMON_PROMPT_ASSETS_UPLOAD_CHUNK,
   RPC_METHODS.DAEMON_PROMPT_ASSETS_UPLOAD_FINALIZE, RPC_METHODS.DAEMON_PROMPT_ASSETS_UPLOAD_ABORT, RPC_METHODS.DAEMON_PROMPT_ASSETS_DOWNLOAD_INIT,
@@ -365,6 +403,7 @@ const LOCAL_MUTATION_METHODS = [
   RPC_METHODS.DAEMON_TERMINAL_STREAM_INPUT,
   RPC_METHODS.DAEMON_MEMORY_SETTINGS_SET,
   RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_INSTALL,
+  RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_LICENSE_ACCEPT,
   RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_REMOVE,
   RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_WARM,
   RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_ABORT,
@@ -377,9 +416,8 @@ const LOCAL_MUTATION_METHODS = [
   RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_TRANSCRIBE_UPLOAD_ABORT,
   RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_DOWNLOAD_ABORT,
   RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_REQUEST_CANCEL,
-  RPC_METHODS.DAEMON_VOICE_GOOGLE_TRANSCRIBE_UPLOAD_ABORT,
-  RPC_METHODS.DAEMON_VOICE_GOOGLE_DOWNLOAD_ABORT,
-  RPC_METHODS.DAEMON_VOICE_ELEVENLABS_PROVISION,
+  RPC_METHODS.DAEMON_VOICE_SPEECH_TRANSCRIBE_UPLOAD_ABORT,
+  RPC_METHODS.DAEMON_VOICE_SPEECH_DOWNLOAD_ABORT,
   RPC_METHODS.DAEMON_PROVIDERS_CONNECTION_MUTATE,
   RPC_METHODS.DAEMON_PROVIDERS_MODEL_SETTINGS_MUTATE,
   RPC_METHODS.DAEMON_PROVIDERS_PROFILE_MIGRATION_CONFIRM,
@@ -510,11 +548,19 @@ export const MACHINE_RPC_ROUTE_POLICIES = Object.freeze([
   ...DIRECT_EPHEMERAL_POLICIES,
   ...DIRECT_MEDIUM_RISK_RECEIPTED_POLICIES,
   ...DAEMON_VOICE_AUDIO_DIRECT_POLICIES,
+  actionSpecServerRequired(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESUME, 'destructive_or_recovery_mutation', 'Interrupted handoff Resume records explicit revision-bound recovery intent and stays server-routed.', 'session.handoff.prepare_target.resume'),
   actionSpecServerRequired(RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE, 'destructive_or_recovery_mutation', 'External-session link creation mutates durable session linkage and stays server-routed.', 'sessions.external.link.ensure'),
   actionSpecServerRequired(RPC_METHODS.DAEMON_EXTERNAL_SESSION_ATTACH, 'destructive_or_recovery_mutation', 'External-session follow mutates follow leases and stays server-routed.', 'sessions.external.follow'),
   actionSpecServerRequired(RPC_METHODS.DAEMON_EXTERNAL_SESSION_DETACH, 'destructive_or_recovery_mutation', 'External-session unfollow mutates follow leases and stays server-routed.', 'sessions.external.unfollow'),
-  actionSpecServerRequired(RPC_METHODS.DAEMON_EXTERNAL_SESSION_FOLLOW_POLICY_SET, 'destructive_or_recovery_mutation', 'External-session follow policy changes background follow state and stay server-routed.', 'sessions.external.followPolicy.set'),
+  actionSpecServerRequired(RPC_METHODS.DAEMON_EXTERNAL_SESSION_BACKGROUND_FOLLOW_SET, 'destructive_or_recovery_mutation', 'External-session background-follow changes stay server-routed.', 'sessions.external.backgroundFollow.set'),
   actionSpecServerRequired(RPC_METHODS.DAEMON_EXTERNAL_SESSION_TAKEOVER, 'destructive_or_recovery_mutation', 'External-session takeover moves ownership into Happier runtime and stays server-routed.', 'sessions.external.takeover'),
+  actionSpecServerRequired(RPC_METHODS.DAEMON_EXTERNAL_SESSION_MATERIALIZE_START, 'destructive_or_recovery_mutation', 'External-session materialization starts a durable operation and stays server-routed.', 'sessions.external.materialize.start'),
+  actionSpecServerRequired(RPC_METHODS.DAEMON_EXTERNAL_SESSION_TAKEOVER_START, 'destructive_or_recovery_mutation', 'External-session takeover start selects a durable operation claim and stays server-routed.', 'sessions.external.takeover.start'),
+  actionSpecServerRequired(RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_STATUS_GET, 'server_persistence', 'External-session operation status passively reads durable operation state and stays server-routed.', 'sessions.external.operation.status.get'),
+  actionSpecServerRequired(RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_CANCEL, 'destructive_or_recovery_mutation', 'External-session operation cancellation records explicit durable intent and stays server-routed.', 'sessions.external.operation.cancel'),
+  actionSpecServerRequired(RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_RESUME, 'destructive_or_recovery_mutation', 'External-session operation Resume records explicit durable recovery intent and stays server-routed.', 'sessions.external.operation.resume'),
+  actionSpecServerRequired(RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_RETRY, 'destructive_or_recovery_mutation', 'External-session operation Retry records explicit durable recovery intent and stays server-routed.', 'sessions.external.operation.retry'),
+  actionSpecServerRequired(RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_DISCARD, 'destructive_or_recovery_mutation', 'External-session operation discard is destructive and stays server-routed.', 'sessions.external.operation.discard'),
   actionSpecServerRequired(RPC_METHODS.DAEMON_EXTERNAL_SESSIONS_CANDIDATES_LIST, 'ambiguous', 'External-session candidate discovery can expose local provider metadata and stays server-routed.', 'sessions.external.candidates.list'),
   actionSpecServerRequired(RPC_METHODS.DAEMON_EXTERNAL_SESSION_STATUS_GET, 'ambiguous', 'External-session status reads process/provider state and stay server-routed.', 'sessions.external.status.get'),
   actionSpecServerRequired(RPC_METHODS.DAEMON_EXTERNAL_SESSION_TRANSCRIPT_PAGE, 'reconnect_catch_up', 'External-session transcript page reads participate in reconnect/catch-up semantics and stay server-routed.', 'sessions.external.transcript.page'),
@@ -523,17 +569,27 @@ export const MACHINE_RPC_ROUTE_POLICIES = Object.freeze([
   actionSpecServerRequired(RPC_METHODS.DAEMON_DIRECT_SESSION_LINK_ENSURE_LEGACY, 'destructive_or_recovery_mutation', 'Legacy direct-session alias for external-session link creation stays server-routed.', 'sessions.external.link.ensure'),
   actionSpecServerRequired(RPC_METHODS.DAEMON_DIRECT_SESSION_ATTACH_LEGACY, 'destructive_or_recovery_mutation', 'Legacy direct-session alias for external-session follow stays server-routed.', 'sessions.external.follow'),
   actionSpecServerRequired(RPC_METHODS.DAEMON_DIRECT_SESSION_DETACH_LEGACY, 'destructive_or_recovery_mutation', 'Legacy direct-session alias for external-session unfollow stays server-routed.', 'sessions.external.unfollow'),
-  actionSpecServerRequired(RPC_METHODS.DAEMON_DIRECT_SESSION_FOLLOW_POLICY_SET_LEGACY, 'destructive_or_recovery_mutation', 'Legacy direct-session alias for external-session follow policy stays server-routed.', 'sessions.external.followPolicy.set'),
+  actionSpecServerRequired(RPC_METHODS.DAEMON_DIRECT_SESSION_FOLLOW_POLICY_SET_LEGACY, 'destructive_or_recovery_mutation', 'Legacy direct-session alias for external-session follow policy stays server-routed.', 'sessions.external.backgroundFollow.set'),
   actionSpecServerRequired(RPC_METHODS.DAEMON_DIRECT_SESSION_STATUS_GET_LEGACY, 'ambiguous', 'Legacy direct-session alias for external-session status stays server-routed.', 'sessions.external.status.get'),
   actionSpecServerRequired(RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_PAGE_LEGACY, 'reconnect_catch_up', 'Legacy direct-session alias for external-session transcript page stays server-routed.', 'sessions.external.transcript.page'),
   actionSpecServerRequired(RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_READ_AFTER_LEGACY, 'reconnect_catch_up', 'Legacy direct-session alias for external-session transcript read-after stays server-routed.', 'sessions.external.transcript.readAfter'),
   actionSpecServerRequired(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_LEGACY, 'destructive_or_recovery_mutation', 'Legacy direct-session alias for external-session takeover stays server-routed.', 'sessions.external.takeover'),
   actionSpecServerRequired(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST_LEGACY, 'destructive_or_recovery_mutation', 'Legacy direct-session takeoverPersist alias stays server-routed through external-session takeover.', 'sessions.external.takeover'),
   actionSpecServerRequired(SESSION_RPC_METHODS.SESSION_TERMINAL_COMPOSER_CLEAR, 'destructive_or_recovery_mutation', 'Terminal composer clear mutates a live session runtime draft and stays server-routed.', 'session.terminalComposer.clear', SESSION_SERVER_REQUIRED_SCOPE),
+  actionSpecServerRequired(SESSION_RPC_METHODS.SESSION_PENDING_INPUT_INTERRUPT_AND_RUN, 'destructive_or_recovery_mutation', 'Interrupt-and-run stops a live provider turn and promotes an exact queued prompt, so it stays on the authenticated server-scoped session route.', 'session.pendingInput.interruptAndRun', SESSION_SERVER_REQUIRED_SCOPE),
   ...serverRequiredRows(PLUGIN_PERMISSION_GRANT_METHODS, 'auth', 'Plugin permission grant reads and mutations are authorization policy state and stay server-routed.'),
   ...serverRequiredRows(REVIEW_COMMENT_METHODS, 'server_persistence', 'Review comment reads and mutations operate on durable review-comment state and stay server-routed.'),
   ...serverRequiredRows(SESSION_AUTH_CONTROL_METHODS, 'auth', 'Session connected-service auth runtime controls expose or mutate authentication state and stay server-routed.', SESSION_SERVER_REQUIRED_SCOPE),
   ...serverRequiredRows(SESSION_USAGE_LIMIT_RECOVERY_CREDIT_METHODS, 'billing', 'Session usage-limit reset-credit consumption spends quota recovery state and stays server-routed.', SESSION_SERVER_REQUIRED_SCOPE),
+  ...serverRequiredRows(
+    [
+      SESSION_RPC_METHODS.SESSION_PENDING_QUEUE_WAKE_CAPABILITY_GET_V1,
+      SESSION_RPC_METHODS.SESSION_PENDING_QUEUE_WAKE_V1,
+    ],
+    'pending_queue',
+    'Verdict-free Pending wake capability discovery and publication stay on the authenticated exact-session route; they neither decide eligibility nor create a machine-direct authority path.',
+    SESSION_SERVER_REQUIRED_SCOPE,
+  ),
   serverRequired(RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART, 'durable_session_write', 'Per-session runner restart depends on server-authoritative session write access and stays server-routed.', SESSION_SERVER_REQUIRED_SCOPE),
   ...serverRequiredRows(SESSION_DURABLE_METHODS, 'durable_session_write', 'Session and execution-run lifecycle/state methods remain server-required because they can assign sequence, write durable session state, or fan out across devices.', SESSION_SERVER_REQUIRED_SCOPE),
   ...serverRequiredRows(TRANSFER_CONTROL_METHODS, 'server_persistence', 'Transfer control-plane RPC remains server-required; PMS bounded-transfer flows own direct byte movement and durable token/control reconciliation.'),
@@ -569,6 +625,7 @@ function collectRegisteredMachineRpcMethods(): readonly string[] {
   return Object.freeze([
     ...Object.values(RPC_METHODS),
     ...Object.values(SESSION_RPC_METHODS),
+    HOST_PRIVATE_PLUGIN_INSTALL_DECISION_RPC_METHOD,
   ]);
 }
 

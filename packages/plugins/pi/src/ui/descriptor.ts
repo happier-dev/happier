@@ -27,7 +27,7 @@ export const PI_UI_DESCRIPTOR = Object.freeze({
     picker: {
       iconName: 'code-slash-outline',
       iconScale: 0.9,
-      cliGlyphTokenId: 'agentGlyph.pi',
+      cliGlyph: 'PI',
       cliGlyphScale: 1.0,
       profileCompatibilityGlyphScale: 1.0,
     },
@@ -36,9 +36,6 @@ export const PI_UI_DESCRIPTOR = Object.freeze({
       iconScaleRatio: 0.22,
     },
     icon: { assetId: 'pi' },
-  },
-  settings: {
-    descriptorId: 'pi.agentSettings.v1',
   },
   behavior: {
     descriptorId: 'pi.uiBehavior.v1',

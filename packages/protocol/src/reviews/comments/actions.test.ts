@@ -5,8 +5,10 @@ import {
   REVIEW_COMMENT_ACTION_IDS_V1,
   REVIEW_COMMENT_PRINCIPAL_HEADER_V1,
   ReviewCommentActionIdV1Schema,
+  ReviewCommentActionInputSchemasV1,
   ReviewCommentBulkTransitionRequestV1Schema,
   ReviewCommentBulkTransitionResponseV1Schema,
+  ReviewCommentCreateResponseV1Schema,
   ReviewCommentListRequestV1Schema,
   ReviewCommentOperationErrorCodeV1Schema,
   ReviewCommentPrincipalHeaderV1Schema,
@@ -15,6 +17,36 @@ import {
 import { getActionSpec } from '../../actions/actionSpecs.js';
 
 describe('review comment operation contracts', () => {
+  it('bounds create mutation identity to the cross-provider storage contract', () => {
+    const base = {
+      projectId: 'project-1',
+      anchor: { kind: 'file' as const, filePath: 'src/example.ts' },
+      snapshot: {
+        kind: 'binary' as const,
+        sizeBytes: 1,
+        sha256: 'hash',
+        source: 'workingTree' as const,
+        capturedAt: 1,
+      },
+      body: 'Review body',
+    };
+
+    expect(ReviewCommentActionInputSchemasV1['reviews.comments.create'].safeParse({
+      ...base,
+      clientMutationId: 'm'.repeat(191),
+    }).success).toBe(true);
+    expect(ReviewCommentActionInputSchemasV1['reviews.comments.create'].safeParse({
+      ...base,
+      clientMutationId: 'm'.repeat(192),
+    }).success).toBe(false);
+  });
+
+  it('publishes a truthful create replay flag and stable idempotency conflict code', () => {
+    expect(ReviewCommentCreateResponseV1Schema.shape.replayed.parse(true)).toBe(true);
+    expect(ReviewCommentOperationErrorCodeV1Schema.parse('review_comment_idempotency_conflict'))
+      .toBe('review_comment_idempotency_conflict');
+  });
+
   it('publishes stable action ids without registering a parallel review-engine family', () => {
     expect(REVIEW_COMMENT_ACTION_IDS_V1).toEqual([
       'reviews.comments.create',
@@ -68,12 +100,11 @@ describe('review comment operation contracts', () => {
       actor: { kind: 'plugin', pluginId: 'review-coderabbit' },
     })).toEqual({
       actor: { kind: 'plugin', pluginId: 'review-coderabbit' },
-      grants: [],
     });
   });
 
-  it('accepts machine-installation-signed plugin principal proofs without making grants authoritative', () => {
-    const parsed = ReviewCommentPrincipalHeaderV1Schema.parse({
+  it('rejects obsolete client-claimed grants from machine-signed principal headers', () => {
+    expect(() => ReviewCommentPrincipalHeaderV1Schema.parse({
       actor: { kind: 'plugin', pluginId: 'review-coderabbit' },
       grants: ['reviews.comments.write.direct'],
       proof: {
@@ -88,24 +119,7 @@ describe('review comment operation contracts', () => {
         bodySha256Base64Url: 'body-hash-1',
         signatureBase64Url: 'sig-1',
       },
-    });
-
-    expect(parsed).toEqual({
-      actor: { kind: 'plugin', pluginId: 'review-coderabbit' },
-      grants: ['reviews.comments.write.direct'],
-      proof: {
-        v: 1,
-        alg: 'ed25519-machine-installation-v1',
-        machineId: 'machine-1',
-        installationId: 'installation-1',
-        issuedAt: 1710000000000,
-        nonce: 'nonce-1',
-        method: 'POST',
-        path: '/v1/reviews/comments',
-        bodySha256Base64Url: 'body-hash-1',
-        signatureBase64Url: 'sig-1',
-      },
-    });
+    })).toThrow();
   });
 
   it('builds stable plugin principal signing input from actor and request-bound proof metadata only', () => {
@@ -127,6 +141,53 @@ describe('review comment operation contracts', () => {
     expect(input).toBe(
       'happier.reviewCommentPrincipal.v1\u0000{"actor":{"kind":"plugin","pluginId":"review-coderabbit"},"proof":{"alg":"ed25519-machine-installation-v1","bodySha256Base64Url":"body-hash-1","installationId":"installation-1","issuedAt":1710000000000,"machineId":"machine-1","method":"POST","nonce":"nonce-1","path":"/v1/reviews/comments","v":1}}',
     );
+  });
+
+  it('binds exact execution-run current intent into the machine-signed principal', () => {
+    const currentIntent = {
+      v: 1 as const,
+      kind: 'execution_run_host_action' as const,
+      actionId: 'reviews.comments.create' as const,
+      subjectFingerprint: 'a'.repeat(64),
+      effectBodySha256Base64Url: 'b'.repeat(43),
+      sessionId: 'session-1',
+      runId: 'run-1',
+      callId: 'call-1',
+      profileId: 'acme.review/review',
+      pluginId: 'acme.review',
+      agentId: 'claude',
+      projectId: 'project-1',
+      workspaceId: 'workspace-1',
+      immutableGenerationId: 'generation-1',
+      packageDigest: `sha256:${'c'.repeat(64)}`,
+      manifestDigest: `sha256:${'d'.repeat(64)}`,
+    };
+    const parsed = ReviewCommentPrincipalHeaderV1Schema.parse({
+      actor: { kind: 'agent', agentId: 'claude', sessionId: 'session-1' },
+      currentIntent,
+    });
+
+    expect(parsed.currentIntent).toEqual(currentIntent);
+    const input = new TextDecoder().decode(createReviewCommentPrincipalSigningInputV1({
+      actor: parsed.actor,
+      currentIntent: parsed.currentIntent,
+      proof: {
+        v: 1,
+        alg: 'ed25519-machine-installation-v1',
+        machineId: 'machine-1',
+        installationId: 'installation-1',
+        issuedAt: 1710000000000,
+        nonce: 'nonce-1',
+        method: 'POST',
+        path: '/v1/reviews/comments',
+        bodySha256Base64Url: currentIntent.effectBodySha256Base64Url,
+      },
+    }));
+    expect(input).toContain(`\"currentIntent\":${stringifyReviewCommentPrincipalCanonicalJsonV1(currentIntent)}`);
+    expect(() => ReviewCommentPrincipalHeaderV1Schema.parse({
+      actor: parsed.actor,
+      currentIntent: { ...currentIntent, extraAuthority: true },
+    })).toThrow();
   });
 
   it('canonicalizes principal request bodies with stable object key ordering', () => {

@@ -8,6 +8,7 @@ import {
   sanitizeSessionStructuredInputMeta,
   type HappierStructuredInputV1 as HappierStructuredInputV1Envelope,
 } from '../runtime/input/index.js';
+import { PendingLocalIdSchema } from './pending/pendingLocalId.js';
 
 type MetadataRecord = Record<string, unknown>;
 
@@ -33,7 +34,7 @@ export type SessionUserMessageSendMeta = z.infer<typeof SessionUserMessageSendMe
 
 export const SessionUserMessageSendRequestSchema = z.object({
   text: z.string().min(1),
-  localId: z.string().min(1).optional(),
+  localId: PendingLocalIdSchema.optional(),
   meta: SessionUserMessageSendMetaSchema.default({}),
 }).passthrough();
 export type SessionUserMessageSendRequest = z.infer<typeof SessionUserMessageSendRequestSchema>;

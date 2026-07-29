@@ -1,4 +1,4 @@
-import type { ResolvedMcpServerSpecV1 } from '@happier-dev/plugin-sdk/mcp';
+import type { AgentSessionMcpServer } from '@happier-dev/plugin-sdk/agent-runtime';
 
 import type { AntigravityLocalharnessMcpServerConfig } from '../client/protocol.js';
 
@@ -17,7 +17,9 @@ export type AntigravityLocalharnessMcpMapping = Readonly<{
 const SAFE_REMOTE_MCP_PROTOCOLS = new Set(['http:', 'https:']);
 const URL_WHITESPACE_PATTERN = /\s/u;
 
-function readServerName(server: ResolvedMcpServerSpecV1): string {
+export type AntigravityLocalharnessMcpServer = AgentSessionMcpServer;
+
+function readServerName(server: AntigravityLocalharnessMcpServer): string {
   return server.name || server.id;
 }
 
@@ -39,7 +41,7 @@ function readSafeRemoteUrl(value: unknown): string | null {
 }
 
 function unsupportedServer(
-  server: ResolvedMcpServerSpecV1,
+  server: AntigravityLocalharnessMcpServer,
   reason: AntigravityLocalharnessUnsupportedMcpServer['reason'],
 ): AntigravityLocalharnessUnsupportedMcpServer {
   return Object.freeze({
@@ -51,7 +53,7 @@ function unsupportedServer(
 }
 
 export function mapMcpServersToLocalharnessConfig(
-  servers: readonly ResolvedMcpServerSpecV1[],
+  servers: readonly AntigravityLocalharnessMcpServer[],
 ): AntigravityLocalharnessMcpMapping {
   const configs: AntigravityLocalharnessMcpServerConfig[] = [];
   const unsupported: AntigravityLocalharnessUnsupportedMcpServer[] = [];

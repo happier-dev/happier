@@ -1,6 +1,7 @@
-import type { PluginContextV1 } from '@happier-dev/plugin-sdk';
+import type { ProviderAccountUsageSnapshotV1 } from '@happier-dev/plugin-sdk/experimental/cloud/usage';
 import { buildProviderAccountUsageOpaqueLocalCredentialRef } from '@happier-dev/plugin-sdk/experimental/cloud/usage';
 import { HAPPIER_CLAUDE_CONFIG_DIR_ENV } from '@happier-dev/plugin-sdk/experimental/envConstants';
+import type { ClaudeRuntimeLogger } from './dependencies.js';
 
 import {
   mapClaudeRateLimitEventToUsageDetails,
@@ -12,13 +13,42 @@ import {
   mapClaudeUsageLimitDetailsToProviderAccountUsageSnapshot,
 } from '../auth/services/usage/snapshot.js';
 
-type ClaudeRuntimeAccountUsageContext = Readonly<{
-  agentRuntime: Pick<PluginContextV1['agentRuntime'], 'accountUsage'>;
-  logger: PluginContextV1['logger'];
+type ClaudeConnectedServiceId =
+  | 'anthropic'
+  | 'bitbucket'
+  | 'claude-subscription'
+  | 'gemini'
+  | 'github'
+  | 'openai'
+  | 'openai-codex';
+
+type ClaudeProviderAccountUsageSourceContext = Readonly<{
+  serviceId: ClaudeConnectedServiceId;
+  profileId: string;
+  bindingKind: 'profile' | 'group_member';
+  groupId?: string;
+  groupGeneration?: number;
+}> | null;
+
+export type ClaudeRuntimeAccountUsageService = Readonly<{
+  resolveSourceContext?(input: Readonly<{
+    serviceId: 'claude-subscription';
+    env?: Readonly<Record<string, string>>;
+  }>, options?: Readonly<{ signal?: AbortSignal }>): Promise<ClaudeProviderAccountUsageSourceContext>;
+  recordSnapshot?(input: Readonly<{
+    sessionId?: string | null;
+    snapshot: ProviderAccountUsageSnapshotV1;
+    source?: Exclude<ClaudeProviderAccountUsageSourceContext, null> | null;
+  }>, options?: Readonly<{ signal?: AbortSignal }>): Promise<Readonly<
+    | { status: 'recorded'; recordId?: string; persisted?: boolean }
+    | { status: 'unavailable' | 'rejected'; reason?: string }
+  >>;
 }>;
-type ClaudeProviderAccountUsageSourceContext = Awaited<
-  ReturnType<PluginContextV1['agentRuntime']['accountUsage']['resolveSourceContext']>
->;
+
+export type ClaudeRuntimeAccountUsageContext = Readonly<{
+  agentRuntime: Readonly<{ accountUsage: ClaudeRuntimeAccountUsageService }>;
+  logger: Pick<ClaudeRuntimeLogger, 'debug'>;
+}>;
 
 type ClaudeRuntimeAccountUsageParams = Readonly<{
   ctx: ClaudeRuntimeAccountUsageContext;

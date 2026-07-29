@@ -1,28 +1,29 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, type Mock, vi } from 'vitest';
 
-import type { ManagedServerSnapshotV1, PluginContextV1 } from '@happier-dev/plugin-sdk';
-import type { RuntimeEventV1 } from '@happier-dev/plugin-sdk/experimental/runtime/session';
 import {
   createAdapterHarness,
-  createPluginContextV1Fixture,
   type AdapterHarnessV1,
 } from '@happier-dev/plugin-sdk/experimental/testing/adapterHarness';
 
-import {
-  OPEN_CODE_BROKER_SELECTIONS_ENV,
-  serializeOpenCodeBrokerSelections,
-} from '../../auth/services/broker/index.js';
 import type { OpenCodeRuntimeTurnOperations } from './operations.js';
-import { createOpenCodePublicSessionRuntime } from './sessionRuntime.js';
+import type { OpenCodeRuntimeEvent } from './runtimeEvents.js';
+import { createOpenCodeSessionRuntime } from './sessionRuntime.js';
 import { createOpenCodeServerRuntime } from './runtime.js';
 import type { OpenCodeServerClient } from './openCodeServerClient.js';
+import { OpenCodeSseHttpError } from './openCodeSse.js';
+import type {
+  OpenCodeManagedServerSnapshot,
+  OpenCodeRuntimeContext,
+} from './runtimeContext.js';
 
 type RuntimeWithProviderEvents = OpenCodeRuntimeTurnOperations & Readonly<{
   handleProviderEvent(event: unknown): Promise<void>;
 }>;
 
 type TestOpenCodeClient = OpenCodeServerClient & Readonly<{
-  emitProviderEvent(event: unknown): void;
+  sessionPromptImplementation: Mock<OpenCodeServerClient['sessionPromptAsync']>;
+  suppressNextNativePromptPersistence(): void;
+  emitProviderEvent(event: unknown, delivery?: Readonly<{ provenance: string; connectionGeneration: number }>): void;
   setMessages(messages: readonly unknown[]): void;
   globalConfigGet(): Promise<Readonly<Record<string, unknown>>>;
   permissionReply(input: Readonly<{
@@ -37,58 +38,183 @@ type TestOpenCodeClient = OpenCodeServerClient & Readonly<{
 }>;
 
 const activeHarnesses: AdapterHarnessV1[] = [];
+const runtimeEventsByHarness = new WeakMap<AdapterHarnessV1, OpenCodeRuntimeEvent[]>();
 
 afterEach(() => {
-  let validationError: unknown;
   for (const harness of activeHarnesses) {
-    try {
-      harness.expectAllEventsValidated();
-    } catch (error) {
-      validationError ??= error;
-    } finally {
-      harness.dispose();
-    }
+    harness.dispose();
   }
   activeHarnesses.length = 0;
   vi.useRealTimers();
-  if (validationError) throw validationError;
 });
 
-function createContextFixture(options?: Parameters<typeof createPluginContextV1Fixture>[0]) {
+function createContextFixture(options?: Readonly<{
+  onPermissionDecision?: (
+    request: unknown,
+  ) => Promise<Readonly<{ decision: string; rationale?: string }>>;
+  onSessionStateFieldWrite?: (request: unknown) => Promise<void>;
+}>) {
   const harness = createAdapterHarness();
   activeHarnesses.push(harness);
-  const fixture = createPluginContextV1Fixture(options);
+  const runtimeEvents: OpenCodeRuntimeEvent[] = [];
+  runtimeEventsByHarness.set(harness, runtimeEvents);
+  const metadataWrites: unknown[] = [];
+  const stateFieldWrites: unknown[] = [];
+  const transcriptAppends: unknown[] = [];
+  const logs: Array<Readonly<{
+    level: 'debug' | 'info' | 'warn' | 'error';
+    message: string;
+    fields?: Readonly<Record<string, unknown>>;
+  }>> = [];
+  const sessionStorage = new Map<string, unknown>();
+  const abortController = new AbortController();
+  const recordLog = (
+    level: 'debug' | 'info' | 'warn' | 'error',
+    message: string,
+    fields?: Readonly<Record<string, unknown>>,
+  ) => {
+    logs.push({ level, message, ...(fields ? { fields } : {}) });
+  };
+  const ctx: OpenCodeRuntimeContext = {
+    logger: {
+      debug: (message, fields) => recordLog('debug', message, fields),
+      info: (message, fields) => recordLog('info', message, fields),
+      warn: (message, fields) => recordLog('warn', message, fields),
+      error: (message, fields) => recordLog('error', message, fields),
+    },
+    abort: {
+      signal: abortController.signal,
+      compose: (signals) => AbortSignal.any(signals),
+    },
+    config: { values: {} },
+    env: { list: () => ({}) },
+    managedServer: {
+      supervise: vi.fn(async () => {
+        throw new Error('managed server is outside the OpenCode runtime fixture');
+      }),
+    },
+    ui: {
+      askQuestions: vi.fn(async () => ({ status: 'cancelled' as const })),
+    },
+    sessions: {
+      current: {
+        permissions: {
+          requestDecision: async (request) => {
+            const result = await options?.onPermissionDecision?.(request)
+              ?? { decision: 'approved' as const };
+            if (result.decision === 'approved') {
+              return { status: 'approved' as const, persistence: 'once' as const };
+            }
+            return {
+              status: 'denied' as const,
+              ...(result.rationale ? { rationale: result.rationale } : {}),
+            };
+          },
+        },
+      },
+      async writeStateField(request) {
+        stateFieldWrites.push(request);
+        await options?.onSessionStateFieldWrite?.(request);
+      },
+    },
+    storage: {
+      session: {
+        get: async (key) => sessionStorage.get(key),
+        set: async (key, value) => {
+          sessionStorage.set(key, value);
+        },
+      },
+    },
+    experimental: { telemetry: { emit: vi.fn() } },
+  };
 
   return {
-    ctx: fixture.ctx,
+    ctx,
     harness,
-    runtimeEvents: harness.canonical(),
-    metadataWrites: fixture.records.sessionMetadataWrites,
-    stateFieldWrites: fixture.records.sessionStateFieldWrites,
-    logs: fixture.records.logs,
-    transcriptAppends: fixture.records.transcriptAppends,
+    runtimeEvents,
+    metadataWrites,
+    stateFieldWrites,
+    logs,
+    transcriptAppends,
   };
 }
 
 function createClientFixture(): TestOpenCodeClient {
   let messages: readonly unknown[] = [];
-  let providerEventHandler: ((event: unknown) => void) | null = null;
+  let providerEventHandler: ((
+    event: unknown,
+    delivery?: Readonly<{ provenance: string; connectionGeneration: number }>,
+  ) => void) | null = null;
+  let nativePromptSequence = 0;
+  let suppressNextNativePromptPersistence = false;
+  const sessionPromptImplementation = vi.fn<OpenCodeServerClient['sessionPromptAsync']>(
+    async () => undefined,
+  );
   return {
-    emitProviderEvent(event) {
-      providerEventHandler?.(event);
+    sessionPromptImplementation,
+    suppressNextNativePromptPersistence() {
+      suppressNextNativePromptPersistence = true;
+    },
+    emitProviderEvent(event, delivery = { provenance: 'accepted-live', connectionGeneration: 1 }) {
+      providerEventHandler?.(event, delivery);
     },
     setMessages(nextMessages) {
       messages = nextMessages;
     },
     sessionCreate: vi.fn(async () => ({ id: 'ses-1' })),
-    sessionPromptAsync: vi.fn(async () => undefined),
+    sessionFork: vi.fn(async () => ({ id: 'ses-forked' })),
+    sessionPromptAsync: vi.fn(async (input) => {
+      nativePromptSequence += 1;
+      const messageId = `msg_${nativePromptSequence.toString(16).padStart(12, '0')}00000000000000`;
+      const response = await sessionPromptImplementation({
+        ...input,
+        messageId,
+      });
+      if (suppressNextNativePromptPersistence) {
+        suppressNextNativePromptPersistence = false;
+        return response;
+      }
+      const alreadyPersisted = messages.some((message) => {
+        if (!message || typeof message !== 'object' || Array.isArray(message)) return false;
+        const info = 'info' in message ? message.info : null;
+        return Boolean(
+          info
+          && typeof info === 'object'
+          && !Array.isArray(info)
+          && 'id' in info
+          && info.id === messageId,
+        );
+      });
+      if (!alreadyPersisted) {
+        messages = [
+          ...messages,
+          {
+            info: {
+              id: messageId,
+              role: 'user',
+              sessionID: input.sessionId,
+              time: { created: Date.now() },
+            },
+            parts: input.parts ?? [{
+              id: `part-native-user-${nativePromptSequence}`,
+              type: 'text',
+              text: input.text,
+            }],
+          },
+        ];
+      }
+      return response;
+    }),
     sessionAbort: vi.fn(async () => undefined),
+    sessionSummarize: vi.fn(async () => undefined),
     sessionStatus: vi.fn(async () => ({ type: 'idle' })),
     sessionMessages: vi.fn(async () => messages),
     sessionTodo: vi.fn(async () => [
       { id: 'todo-1', content: 'Ship OpenCode runtime', status: 'in_progress', priority: 'high' },
     ]),
     permissionReply: vi.fn(async () => undefined),
+    questionReply: vi.fn(async () => undefined),
+    questionReject: vi.fn(async () => undefined),
     appSkills: vi.fn(async () => []),
     globalConfigGet: vi.fn(async () => ({})),
     subscribeGlobalEvents: vi.fn(async ({ onEvent }) => {
@@ -100,10 +226,10 @@ function createClientFixture(): TestOpenCodeClient {
 
 async function createStartedRuntime(params?: Readonly<{
   client?: TestOpenCodeClient;
-  ctx?: PluginContextV1;
+  ctx?: OpenCodeRuntimeContext;
   env?: Readonly<Record<string, string>>;
   harness?: AdapterHarnessV1;
-  readManagedServerSnapshot?: () => ManagedServerSnapshotV1 | null;
+  readManagedServerSnapshot?: () => OpenCodeManagedServerSnapshot | null;
 }>): Promise<RuntimeWithProviderEvents> {
   const runtimeParams = {
     ctx: params?.ctx ?? createContextFixture().ctx,
@@ -115,9 +241,37 @@ async function createStartedRuntime(params?: Readonly<{
     readManagedServerSnapshot: params?.readManagedServerSnapshot,
   };
   const runtime = createOpenCodeServerRuntime(runtimeParams) as RuntimeWithProviderEvents;
-  params?.harness?.attachRuntime(runtime);
-  await runtime.startOrLoadSession();
+  const runtimeEvents = params?.harness
+    ? runtimeEventsByHarness.get(params.harness)
+    : undefined;
+  if (runtimeEvents) {
+    runtime.subscribeRuntimeEvents((event) => {
+      runtimeEvents.push(event);
+    });
+  }
+  await runtime.openSession({ kind: 'create' });
   return runtime;
+}
+
+function createNativeSessionRuntimeForTest(operations: OpenCodeRuntimeTurnOperations) {
+  return createOpenCodeSessionRuntime({
+    operations,
+    request: {
+      kind: 'create',
+      sessionId: 'happy-session-1',
+      cwd: '/repo',
+    },
+    disposeOperations: async () => {
+      await operations.resetOrDisposeRuntime();
+    },
+  });
+}
+
+let testHostTurnSequence = 0;
+
+function beginTestHostTurn(runtime: OpenCodeRuntimeTurnOperations): void {
+  testHostTurnSequence += 1;
+  runtime.beginTurnLifecycle(`test-host-turn-${testHostTurnSequence}`);
 }
 
 async function flushMicrotasks(): Promise<void> {
@@ -146,6 +300,73 @@ describe('createOpenCodeServerRuntime', () => {
 
     expect(typeof runtime.subscribeRuntimeEvents).toBe('function');
     expect('subscribeRuntimeMessages' in runtime).toBe(false);
+  });
+
+  it('refuses prompt submission before provider work when the host has not begun a turn lifecycle', async () => {
+    const client = createClientFixture();
+    const runtime = createOpenCodeServerRuntime({
+      ctx: createContextFixture().ctx,
+      directory: '/repo',
+      happierSessionId: 'happy-session-without-turn',
+      baseUrl: 'http://127.0.0.1:49196',
+      client,
+    });
+
+    await expect(runtime.sendTurnPrompt('must not reach OpenCode')).rejects.toThrow(
+      'OpenCode prompt submission requires an active host turn lifecycle',
+    );
+
+    expect(client.sessionCreate).not.toHaveBeenCalled();
+    expect(client.sessionPromptAsync).not.toHaveBeenCalled();
+  });
+
+  it('opens a provider-native fork as a distinct child session at the exact checkpoint', async () => {
+    const client = createClientFixture();
+    const runtime = createOpenCodeServerRuntime({
+      ctx: createContextFixture().ctx,
+      directory: '/repo',
+      happierSessionId: 'happy-child',
+      baseUrl: 'http://127.0.0.1:49196',
+      client,
+    });
+
+    await expect(runtime.openSession({
+      kind: 'fork',
+      source: {
+        providerSessionId: 'ses-parent',
+        providerCheckpoint: {
+          kind: 'opencode_exclusive_message_id',
+          messageId: 'msg-checkpoint',
+        },
+      },
+    })).resolves.toBe('ses-forked');
+
+    expect(client.sessionFork).toHaveBeenCalledWith({
+      sessionId: 'ses-parent',
+      messageId: 'msg-checkpoint',
+    });
+    expect(runtime.readSessionIdentity()).toEqual({ sessionId: 'ses-forked' });
+    expect(client.sessionCreate).not.toHaveBeenCalled();
+  });
+
+  it('resumes the exact provider session without creating or forking another identity', async () => {
+    const client = createClientFixture();
+    const runtime = createOpenCodeServerRuntime({
+      ctx: createContextFixture().ctx,
+      directory: '/repo',
+      happierSessionId: 'happy-resume',
+      baseUrl: 'http://127.0.0.1:49196',
+      client,
+    });
+
+    await expect(runtime.openSession({
+      kind: 'resume',
+      providerSessionId: 'ses-existing',
+    })).resolves.toBe('ses-existing');
+
+    expect(runtime.readSessionIdentity()).toEqual({ sessionId: 'ses-existing' });
+    expect(client.sessionCreate).not.toHaveBeenCalled();
+    expect(client.sessionFork).not.toHaveBeenCalled();
   });
 
   it('publishes native todo updates through the registered runtime work-state field', async () => {
@@ -218,6 +439,9 @@ describe('createOpenCodeServerRuntime', () => {
   it('passes runtime model and singular configOption updates as OpenCode prompt fields', async () => {
     const { ctx, harness, runtimeEvents, transcriptAppends } = createContextFixture();
     const client = createClientFixture();
+    vi.mocked(client.providersList).mockResolvedValue([{
+      id: 'opencode',
+    }]);
     const runtime = await createStartedRuntime({ ctx, client, harness });
 
     await runtime.updateSessionRuntimeConfig({
@@ -229,9 +453,10 @@ describe('createOpenCodeServerRuntime', () => {
     await runtime.updateSessionRuntimeConfig({
       configOption: { id: 'temperature', value: 0.2 },
     });
+    beginTestHostTurn(runtime);
     await runtime.sendTurnPrompt('Use deeper reasoning.');
 
-    expect(client.sessionPromptAsync).toHaveBeenCalledWith({
+    expect(client.sessionPromptAsync).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: 'ses-1',
       text: 'Use deeper reasoning.',
       model: {
@@ -242,7 +467,7 @@ describe('createOpenCodeServerRuntime', () => {
       config: {
         temperature: 0.2,
       },
-    });
+    }));
     expect(transcriptAppends).toHaveLength(0);
     expect(runtimeEvents).not.toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -251,46 +476,213 @@ describe('createOpenCodeServerRuntime', () => {
     ]));
   });
 
-  it('lets OpenCode generate provider user message ids for async prompt turns', async () => {
-    const { ctx, harness } = createContextFixture();
+  it('recovers the server-owned prompt identity and ignores stale prompt-response assistants until the exact parent completes', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const { ctx, harness, runtimeEvents } = createContextFixture();
     const client = createClientFixture();
+    const priorUser = {
+      info: {
+        id: 'msg_00000000100100000000000000',
+        role: 'user',
+        sessionID: 'ses-1',
+        time: { created: 900 },
+      },
+      parts: [{ id: 'part-prior-user', type: 'text', text: 'Earlier prompt' }],
+    };
+    const priorTerminalAssistant = {
+      info: {
+        id: 'msg_00000000100200000000000000',
+        parentID: priorUser.info.id,
+        role: 'assistant',
+        sessionID: 'ses-1',
+        time: { created: 910, completed: 920 },
+        finish: 'stop',
+      },
+      parts: [{ id: 'part-prior-assistant', type: 'text', text: 'STALE_PRIOR_RESPONSE' }],
+    };
+    const nativeCurrentUser = {
+      info: {
+        id: 'msg_00000000200100000000000000',
+        role: 'user',
+        sessionID: 'ses-1',
+        time: { created: 1_001 },
+      },
+      parts: [{ id: 'part-current-user', type: 'text', text: 'Current prompt' }],
+    };
+    client.setMessages([priorUser, priorTerminalAssistant]);
+    client.suppressNextNativePromptPersistence();
+    vi.mocked(client.sessionPromptImplementation).mockImplementationOnce(async () => {
+      client.setMessages([priorUser, priorTerminalAssistant, nativeCurrentUser]);
+      return priorTerminalAssistant;
+    });
     const runtime = await createStartedRuntime({ ctx, client, harness });
 
-    await runtime.sendTurnPrompt('Let OpenCode own message ordering.');
+    beginTestHostTurn(runtime);
+    await expect(runtime.sendTurnPrompt('Current prompt')).resolves.toEqual({
+      providerUserMessageId: nativeCurrentUser.info.id,
+    });
+    await flushMicrotasks();
 
     const promptCall = vi.mocked(client.sessionPromptAsync).mock.calls[0]?.[0];
     expect(promptCall).toMatchObject({
       sessionId: 'ses-1',
-      text: 'Let OpenCode own message ordering.',
+      text: 'Current prompt',
     });
     expect(promptCall).not.toHaveProperty('messageId');
+    expect(runtimeEvents).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'transcript-agent-message-committed',
+        localId: `opencode:ses-1:${priorTerminalAssistant.info.id}`,
+      }),
+      expect.objectContaining({ kind: 'turn-complete' }),
+    ]));
+
+    const exactParentAssistant = {
+      info: {
+        id: 'msg_00000000200200000000000000',
+        parentID: nativeCurrentUser.info.id,
+        role: 'assistant',
+        sessionID: 'ses-1',
+        time: { created: 1_010, completed: 1_020 },
+        finish: 'stop',
+      },
+      parts: [{ id: 'part-current-assistant', type: 'text', text: 'EXACT_CURRENT_RESPONSE' }],
+    };
+    client.setMessages([
+      priorUser,
+      priorTerminalAssistant,
+      nativeCurrentUser,
+      exactParentAssistant,
+    ]);
+    await runtime.handleProviderEvent({
+      payload: {
+        type: 'session.idle',
+        properties: { sessionID: 'ses-1' },
+      },
+    });
+
+    expect(runtimeEvents.filter((event) => (
+      event.kind === 'transcript-agent-message-committed'
+      && event.localId === `opencode:ses-1:${exactParentAssistant.info.id}`
+    ))).toEqual([
+      expect.objectContaining({
+        body: { type: 'message', message: 'EXACT_CURRENT_RESPONSE' },
+      }),
+    ]);
+    expect(runtimeEvents.filter((event) => event.kind === 'turn-complete')).toHaveLength(1);
+    expect(JSON.stringify(runtimeEvents)).not.toContain('STALE_PRIOR_RESPONSE');
   });
 
-  it('returns after launching the OpenCode message request instead of waiting for the provider turn to finish', async () => {
+  it.each([
+    {
+      label: 'missing',
+      messages: [],
+      inventoryError: undefined,
+    },
+    {
+      label: 'ambiguous',
+      messages: [
+        {
+          info: {
+            id: 'msg_00000000200100000000000000',
+            role: 'user',
+            sessionID: 'ses-1',
+            time: { created: 1_001 },
+          },
+          parts: [{ id: 'part-current-user-a', type: 'text', text: 'Current prompt' }],
+        },
+        {
+          info: {
+            id: 'msg_00000000200200000000000000',
+            role: 'user',
+            sessionID: 'ses-1',
+            time: { created: 1_002 },
+          },
+          parts: [{ id: 'part-current-user-b', type: 'text', text: 'Current prompt' }],
+        },
+      ],
+      inventoryError: undefined,
+    },
+    {
+      label: 'inventory read failure',
+      messages: [],
+      inventoryError: new Error('authoritative inventory unavailable'),
+    },
+  ])('reports unknown custody when an accepted prompt has no unique server-owned user identity: $label', async ({
+    inventoryError,
+    messages,
+  }) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const { ctx, harness } = createContextFixture();
+    const client = createClientFixture();
+    client.suppressNextNativePromptPersistence();
+    vi.mocked(client.sessionPromptImplementation).mockImplementationOnce(async () => {
+      client.setMessages(messages);
+      if (inventoryError) {
+        vi.mocked(client.sessionMessages).mockRejectedValueOnce(inventoryError);
+      }
+    });
+    const operations = await createStartedRuntime({ ctx, client, harness });
+    const runtime = createNativeSessionRuntimeForTest(operations);
+    const nativeEvents: Array<{
+      kind: string;
+      inputIds?: readonly string[];
+    }> = [];
+    runtime.watch((event) => nativeEvents.push(event));
+
+    await expect(runtime.send({
+      inputIds: ['input-identity-unresolved'],
+      input: { text: 'Current prompt' },
+      delivery: { kind: 'newTurn', turnId: 'turn-identity-unresolved' },
+    })).resolves.toMatchObject({
+      status: 'unavailable',
+      retryable: false,
+      diagnostic: { code: 'opencode_input_custody_unknown' },
+    });
+
+    expect(nativeEvents.filter((event) => event.kind === 'input-custody-unknown')).toEqual([
+      expect.objectContaining({
+        inputIds: ['input-identity-unresolved'],
+      }),
+    ]);
+    expect(nativeEvents).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'input-accepted' }),
+      expect.objectContaining({ kind: 'input-rejected' }),
+      expect.objectContaining({ kind: 'turn-rollback-boundary' }),
+    ]));
+    await runtime.dispose?.();
+  });
+
+  it('accepts only after the exact OpenCode message request succeeds without waiting for turn completion', async () => {
     const { ctx, harness } = createContextFixture();
     const client = createClientFixture();
     let settlePromptRequest: (() => void) | null = null;
-    vi.mocked(client.sessionPromptAsync).mockImplementationOnce(async () => {
+    vi.mocked(client.sessionPromptImplementation).mockImplementationOnce(async (input) => {
       await new Promise<void>((resolve) => {
         settlePromptRequest = resolve;
       });
     });
     const runtime = await createStartedRuntime({ ctx, client, harness });
 
+    beginTestHostTurn(runtime);
     const dispatch = runtime.sendTurnPrompt('Keep the provider request open.');
     const result = await Promise.race([
       dispatch.then(() => 'resolved' as const),
       new Promise<'pending'>((resolve) => setTimeout(() => resolve('pending'), 25)),
     ]);
 
-    expect(result).toBe('resolved');
+    expect(result).toBe('pending');
     expect(client.sessionPromptAsync).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: 'ses-1',
       text: 'Keep the provider request open.',
     }));
 
     settlePromptRequest?.();
-    await dispatch;
+    await expect(dispatch).resolves.toMatchObject({
+      providerUserMessageId: expect.any(String),
+    });
   });
 
   it('waits for the managed OpenCode server.connected startup event before dispatching the first prompt', async () => {
@@ -302,6 +694,7 @@ describe('createOpenCodeServerRuntime', () => {
       harness,
       readManagedServerSnapshot: () => ({
         id: 'opencode-server',
+        instanceId: 'host-instance-a',
         state: 'healthy',
         mode: 'managed-spawn',
         baseUrl: 'http://127.0.0.1:49196',
@@ -310,9 +703,10 @@ describe('createOpenCodeServerRuntime', () => {
         pid: 100,
         startedAt: 1000,
         lastHealthyAt: 1200,
-      } as ManagedServerSnapshotV1),
+      } as OpenCodeManagedServerSnapshot),
     });
 
+    beginTestHostTurn(runtime);
     const dispatch = runtime.sendTurnPrompt('first prompt before startup readiness');
     const pending = observePromisePending(dispatch);
     await flushMicrotasks();
@@ -323,14 +717,17 @@ describe('createOpenCodeServerRuntime', () => {
     await runtime.handleProviderEvent({ payload: { type: 'server.connected', properties: {} } });
     await expect.poll(() => vi.mocked(client.sessionPromptAsync).mock.calls.length).toBe(1);
 
-    await expect(dispatch).resolves.toBeUndefined();
+    await expect(dispatch).resolves.toMatchObject({
+      providerUserMessageId: expect.any(String),
+    });
   });
 
   it('does not let stale server.connected readiness satisfy a replacement managed-server generation', async () => {
     const { ctx, harness } = createContextFixture();
     const client = createClientFixture();
-    let snapshot: ManagedServerSnapshotV1 = {
+    let snapshot: OpenCodeManagedServerSnapshot = {
       id: 'opencode-server',
+      instanceId: 'host-instance-a',
       state: 'healthy',
       mode: 'managed-spawn',
       baseUrl: 'http://127.0.0.1:49196',
@@ -339,7 +736,7 @@ describe('createOpenCodeServerRuntime', () => {
       pid: 100,
       startedAt: 1000,
       lastHealthyAt: 1200,
-    } as ManagedServerSnapshotV1;
+    } as OpenCodeManagedServerSnapshot;
     const runtime = await createStartedRuntime({
       ctx,
       client,
@@ -350,12 +747,14 @@ describe('createOpenCodeServerRuntime', () => {
 
     snapshot = {
       ...snapshot,
+      instanceId: 'host-instance-b',
       baseUrl: 'http://127.0.0.1:49197',
       port: 49197,
       pid: 200,
       startedAt: 2000,
       lastHealthyAt: 2200,
-    } as ManagedServerSnapshotV1;
+    } as OpenCodeManagedServerSnapshot;
+    beginTestHostTurn(runtime);
     const dispatch = runtime.sendTurnPrompt('first prompt after managed-server replacement');
     const pending = observePromisePending(dispatch);
     await flushMicrotasks();
@@ -366,7 +765,9 @@ describe('createOpenCodeServerRuntime', () => {
     await runtime.handleProviderEvent({ payload: { type: 'server.connected', properties: {} } });
     await expect.poll(() => vi.mocked(client.sessionPromptAsync).mock.calls.length).toBe(1);
 
-    await expect(dispatch).resolves.toBeUndefined();
+    await expect(dispatch).resolves.toMatchObject({
+      providerUserMessageId: expect.any(String),
+    });
   });
 
   it('falls back to managed-server health readiness when the provider event subscription fails before server.connected', async () => {
@@ -379,6 +780,7 @@ describe('createOpenCodeServerRuntime', () => {
       harness,
       readManagedServerSnapshot: () => ({
         id: 'opencode-server',
+        instanceId: 'host-instance-a',
         state: 'healthy',
         mode: 'managed-spawn',
         baseUrl: 'http://127.0.0.1:49196',
@@ -387,13 +789,30 @@ describe('createOpenCodeServerRuntime', () => {
         pid: 100,
         startedAt: 1000,
         lastHealthyAt: 1200,
-      } as ManagedServerSnapshotV1),
+      } as OpenCodeManagedServerSnapshot),
     });
 
+    beginTestHostTurn(runtime);
     const dispatch = runtime.sendTurnPrompt('first prompt after event stream failure');
 
     await expect.poll(() => vi.mocked(client.sessionPromptAsync).mock.calls.length).toBe(1);
-    await expect(dispatch).resolves.toBeUndefined();
+    await expect(dispatch).resolves.toMatchObject({
+      providerUserMessageId: expect.any(String),
+    });
+  });
+
+  it('does not retry the provider event subscription after a permanent authentication failure', async () => {
+    vi.useFakeTimers();
+    const { ctx } = createContextFixture();
+    const client = createClientFixture();
+    vi.mocked(client.subscribeGlobalEvents).mockRejectedValue(
+      new OpenCodeSseHttpError(401, 'Unauthorized'),
+    );
+
+    await createStartedRuntime({ ctx, client });
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(client.subscribeGlobalEvents).toHaveBeenCalledTimes(1);
   });
 
   it('unblocks a prompt waiting for managed-server readiness when the turn is cancelled', async () => {
@@ -405,6 +824,7 @@ describe('createOpenCodeServerRuntime', () => {
       harness,
       readManagedServerSnapshot: () => ({
         id: 'opencode-server',
+        instanceId: 'host-instance-a',
         state: 'healthy',
         mode: 'managed-spawn',
         baseUrl: 'http://127.0.0.1:49196',
@@ -413,9 +833,10 @@ describe('createOpenCodeServerRuntime', () => {
         pid: 100,
         startedAt: 1000,
         lastHealthyAt: 1200,
-      } as ManagedServerSnapshotV1),
+      } as OpenCodeManagedServerSnapshot),
     });
 
+    beginTestHostTurn(runtime);
     const dispatch = runtime.sendTurnPrompt('prompt cancelled before startup readiness');
     const pending = observePromisePending(dispatch);
     await flushMicrotasks();
@@ -425,7 +846,7 @@ describe('createOpenCodeServerRuntime', () => {
 
     await runtime.cancelTurn();
 
-    await expect(dispatch).resolves.toBeUndefined();
+    await expect(dispatch).rejects.toThrow('OpenCode server became unavailable before prompt submission');
     expect(client.sessionPromptAsync).not.toHaveBeenCalled();
   });
 
@@ -449,6 +870,7 @@ describe('createOpenCodeServerRuntime', () => {
     await runtime.updateSessionRuntimeConfig({
       modelId: 'gpt-5.4-mini',
     });
+    beginTestHostTurn(runtime);
     await runtime.sendTurnPrompt('Use the selected model.');
 
     expect(client.sessionPromptAsync).toHaveBeenCalledWith(expect.objectContaining({
@@ -485,6 +907,7 @@ describe('createOpenCodeServerRuntime', () => {
     await runtime.updateSessionRuntimeConfig({
       modelId: 'openai/gpt-5.2',
     });
+    beginTestHostTurn(runtime);
     await runtime.sendTurnPrompt('Use the one-shot model.', { modelId: 'gpt-5.4-mini' });
     await runtime.sendTurnPrompt('Use the selected runtime model.');
 
@@ -538,6 +961,7 @@ describe('createOpenCodeServerRuntime', () => {
     await runtime.updateSessionRuntimeConfig({
       modelId: 'shared-mini',
     });
+    beginTestHostTurn(runtime);
     await runtime.sendTurnPrompt('Use the selected default-provider model.');
 
     expect(client.sessionPromptAsync).toHaveBeenCalledWith(expect.objectContaining({
@@ -559,23 +983,24 @@ describe('createOpenCodeServerRuntime', () => {
         temperature: 0.2,
       },
     });
+    beginTestHostTurn(runtime);
     await runtime.sendTurnPrompt('Use default reasoning.');
 
-    expect(client.sessionPromptAsync).toHaveBeenCalledWith({
+    expect(client.sessionPromptAsync).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: 'ses-1',
       text: 'Use default reasoning.',
-    });
+    }));
   });
 
   it('publishes a canonical failed turn when OpenCode rejects prompt submission', async () => {
     const { ctx, harness, runtimeEvents, transcriptAppends } = createContextFixture();
     const client = createClientFixture();
     const promptError = new Error('OpenCode server request failed: 401 Unauthorized Authorization: Bearer sk-live-secret');
-    vi.mocked(client.sessionPromptAsync).mockRejectedValueOnce(promptError);
+    vi.mocked(client.sessionPromptImplementation).mockRejectedValueOnce(promptError);
     const runtime = await createStartedRuntime({ ctx, client, harness });
 
-    runtime.beginTurnLifecycle();
-    await expect(runtime.sendTurnPrompt('Please answer briefly.')).resolves.toBeUndefined();
+    runtime.beginTurnLifecycle('test-turn');
+    await expect(runtime.sendTurnPrompt('Please answer briefly.')).rejects.toBe(promptError);
 
     await vi.waitFor(() => {
       expect(runtimeEvents).toEqual(expect.arrayContaining([
@@ -618,6 +1043,396 @@ describe('createOpenCodeServerRuntime', () => {
     expect(transcriptAppends).toHaveLength(0);
   });
 
+  it('dispatches exactly once without live SSE provenance while ambiguous replay stays observation-only', async () => {
+    const { ctx, harness, runtimeEvents } = createContextFixture();
+    const client = createClientFixture();
+    const runtime = await createStartedRuntime({ ctx, client, harness });
+    runtime.beginTurnLifecycle('test-turn');
+
+    await expect(runtime.sendTurnPrompt(
+      'reach OpenCode through the authenticated prompt endpoint',
+    )).resolves.toMatchObject({
+      providerUserMessageId: expect.any(String),
+    });
+
+    client.emitProviderEvent({
+      payload: {
+        type: 'session.idle',
+        properties: { sessionID: 'ses-1' },
+      },
+    }, { provenance: 'untrusted-observation', connectionGeneration: 1 });
+    client.emitProviderEvent({
+      payload: {
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            id: 'part-replayed-tool',
+            type: 'tool',
+            sessionID: 'ses-1',
+            messageID: 'msg-replayed-tool',
+            callID: 'call-replayed-tool',
+            tool: 'task',
+            state: { status: 'completed', input: {}, output: 'done' },
+          },
+        },
+      },
+    }, { provenance: 'untrusted-observation', connectionGeneration: 1 });
+    await flushMicrotasks();
+
+    expect(client.sessionPromptAsync).toHaveBeenCalledTimes(1);
+    expect(runtimeEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'turn-start' }),
+    ]));
+    expect(runtimeEvents).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'turn-complete' }),
+      expect.objectContaining({ kind: 'turn-failed' }),
+      expect.objectContaining({ kind: 'tool-call' }),
+      expect.objectContaining({ kind: 'tool-result' }),
+    ]));
+  });
+
+  it('reconciles one exact-parent terminal assistant from authoritative inventory when SSE is observation-only', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(100);
+    const { ctx, harness, runtimeEvents } = createContextFixture();
+    const client = createClientFixture();
+    let status: unknown = { type: 'busy' };
+    let providerUserMessageId = '';
+    vi.mocked(client.sessionStatus).mockImplementation(async () => status);
+    vi.mocked(client.sessionPromptImplementation).mockImplementationOnce(async (input) => {
+      providerUserMessageId = input.messageId ?? '';
+      const terminalAssistant = {
+        info: {
+          id: 'msg-exact-parent-terminal',
+          parentID: providerUserMessageId,
+          role: 'assistant',
+          sessionID: 'ses-1',
+          time: { created: 1_010, completed: 1_020 },
+          finish: 'stop',
+        },
+        parts: [{ id: 'part-exact-parent-terminal', type: 'text', text: 'EXACT_PARENT_FINAL' }],
+      };
+      client.setMessages([
+        {
+          info: {
+            id: providerUserMessageId,
+            role: 'user',
+            sessionID: 'ses-1',
+            time: { created: 1_005 },
+          },
+          parts: [{ id: 'part-current-user', type: 'text', text: 'hello' }],
+        },
+        terminalAssistant,
+        terminalAssistant,
+      ]);
+    });
+    const operations = await createStartedRuntime({ ctx, client, harness });
+    const runtime = createNativeSessionRuntimeForTest(operations);
+    const nativeEvents: Array<{ kind: string; inputIds?: readonly string[] }> = [];
+    runtime.watch((event) => nativeEvents.push(event));
+
+    await runtime.send({
+      inputIds: ['pending-exact-parent'],
+      input: { text: 'hello' },
+      delivery: { kind: 'newTurn', turnId: 'turn-exact-parent' },
+    });
+    expect(providerUserMessageId).not.toBe('');
+
+    client.emitProviderEvent({
+      payload: {
+        type: 'message.updated',
+        properties: {
+          info: {
+            id: 'msg-exact-parent-terminal',
+            parentID: providerUserMessageId,
+            role: 'assistant',
+            sessionID: 'ses-1',
+            time: { completed: 1_020 },
+            finish: 'stop',
+          },
+        },
+      },
+    }, { provenance: 'untrusted-observation', connectionGeneration: 1 });
+    client.emitProviderEvent({
+      payload: {
+        type: 'session.idle',
+        properties: { sessionID: 'ses-1' },
+      },
+    }, { provenance: 'untrusted-observation', connectionGeneration: 1 });
+    await flushMicrotasks();
+
+    expect(nativeEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'input-accepted',
+        inputIds: ['pending-exact-parent'],
+      }),
+    ]));
+    expect(runtimeEvents).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'transcript-agent-message-committed' }),
+      expect.objectContaining({ kind: 'turn-complete' }),
+    ]));
+
+    status = { type: 'idle' };
+    await operations.waitForTurnCompletion();
+
+    expect(nativeEvents.filter((event) => event.kind === 'input-accepted')).toHaveLength(1);
+    expect(runtimeEvents.filter((event) => (
+      event.kind === 'transcript-agent-message-committed'
+      && event.localId === 'opencode:ses-1:msg-exact-parent-terminal'
+    ))).toEqual([
+      expect.objectContaining({
+        body: { type: 'message', message: 'EXACT_PARENT_FINAL' },
+      }),
+    ]);
+    expect(runtimeEvents.filter((event) => event.kind === 'turn-complete')).toHaveLength(1);
+    expect(runtimeEvents.some((event) => event.kind === 'turn-failed')).toBe(false);
+    await runtime.dispose?.();
+  });
+
+  it.each([
+    {
+      label: 'a stale terminal assistant',
+      assistants: (providerUserMessageId: string) => [{
+        info: {
+          id: 'msg-stale-terminal',
+          parentID: 'msg-old-user',
+          role: 'assistant',
+          sessionID: 'ses-1',
+          time: { created: 10, completed: 20 },
+          finish: 'stop',
+        },
+        parts: [{ type: 'text', text: `STALE_${providerUserMessageId}` }],
+      }],
+    },
+    {
+      label: 'a wrong-parent terminal assistant',
+      assistants: () => [{
+        info: {
+          id: 'msg-wrong-parent-terminal',
+          parentID: 'msg-unrelated-user',
+          role: 'assistant',
+          sessionID: 'ses-1',
+          time: { created: 110, completed: 120 },
+          finish: 'stop',
+        },
+        parts: [{ type: 'text', text: 'WRONG_PARENT' }],
+      }],
+    },
+    {
+      label: 'ambiguous exact-parent terminal assistants',
+      assistants: (providerUserMessageId: string) => ['a', 'b'].map((suffix) => ({
+        info: {
+          id: `msg-ambiguous-${suffix}`,
+          parentID: providerUserMessageId,
+          role: 'assistant',
+          sessionID: 'ses-1',
+          time: { created: 110, completed: 120 },
+          finish: 'stop',
+        },
+        parts: [{ type: 'text', text: `AMBIGUOUS_${suffix}` }],
+      })),
+    },
+    {
+      label: 'a malformed terminal assistant without a parent',
+      assistants: () => [{
+        info: {
+          id: 'msg-missing-parent-terminal',
+          role: 'assistant',
+          sessionID: 'ses-1',
+          time: { created: 110, completed: 120 },
+          finish: 'stop',
+        },
+        parts: [{ type: 'text', text: 'MISSING_PARENT' }],
+      }],
+    },
+    {
+      label: 'a whitespace-wrapped parent that is not byte-exact',
+      assistants: (providerUserMessageId: string) => [{
+        info: {
+          id: 'msg-whitespace-parent-terminal',
+          parentID: ` ${providerUserMessageId} `,
+          role: 'assistant',
+          sessionID: 'ses-1',
+          time: { created: 110, completed: 120 },
+          finish: 'stop',
+        },
+        parts: [{ type: 'text', text: 'WHITESPACE_PARENT' }],
+      }],
+    },
+  ])('fails closed for $label in authoritative inventory', async ({ assistants }) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(100);
+    const { ctx, harness, runtimeEvents } = createContextFixture();
+    const client = createClientFixture();
+    let providerUserMessageId = '';
+    vi.mocked(client.sessionPromptImplementation).mockImplementationOnce(async (input) => {
+      providerUserMessageId = input.messageId ?? '';
+      client.setMessages([
+        {
+          info: {
+            id: providerUserMessageId,
+            role: 'user',
+            sessionID: 'ses-1',
+            time: { created: 100 },
+          },
+          parts: [{ type: 'text', text: 'hello' }],
+        },
+        ...assistants(providerUserMessageId),
+      ]);
+    });
+    const runtime = await createStartedRuntime({ ctx, client, harness });
+
+    beginTestHostTurn(runtime);
+    await runtime.sendTurnPrompt('hello');
+    await runtime.waitForTurnCompletion();
+
+    expect(providerUserMessageId).not.toBe('');
+    expect(runtimeEvents).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'transcript-agent-message-committed' }),
+      expect.objectContaining({ kind: 'turn-complete' }),
+    ]));
+  });
+
+  it('does not settle from an exact-parent assistant message id already projected by an older turn', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(100);
+    const { ctx, harness, runtimeEvents } = createContextFixture();
+    const client = createClientFixture();
+    client.setMessages([
+      {
+        info: { id: 'msg-older-external-user', role: 'user', sessionID: 'ses-1', time: { created: 10 } },
+        parts: [{ type: 'text', text: 'older external prompt' }],
+      },
+      {
+        info: {
+          id: 'msg-reused-assistant',
+          parentID: 'msg-older-external-user',
+          role: 'assistant',
+          sessionID: 'ses-1',
+          time: { created: 20, completed: 30 },
+          finish: 'stop',
+        },
+        parts: [{ type: 'text', text: 'OLDER_ALREADY_PROJECTED' }],
+      },
+    ]);
+    const runtime = await createStartedRuntime({ ctx, client, harness });
+    await runtime.handleProviderEvent({
+      payload: { type: 'session.idle', properties: { sessionID: 'ses-1' } },
+    });
+    expect(runtimeEvents.filter((event) => (
+      event.kind === 'transcript-agent-message-committed'
+      && event.localId === 'opencode:ses-1:msg-reused-assistant'
+    ))).toHaveLength(1);
+
+    vi.mocked(client.sessionPromptImplementation).mockImplementationOnce(async (input) => {
+      client.setMessages([
+        {
+          info: { id: input.messageId, role: 'user', sessionID: 'ses-1', time: { created: 100 } },
+          parts: [{ type: 'text', text: 'current prompt' }],
+        },
+        {
+          info: {
+            id: 'msg-reused-assistant',
+            parentID: input.messageId,
+            role: 'assistant',
+            sessionID: 'ses-1',
+            time: { created: 110, completed: 120 },
+            finish: 'stop',
+          },
+          parts: [{ type: 'text', text: 'MUST_NOT_SETTLE_AS_NEW' }],
+        },
+      ]);
+    });
+
+    beginTestHostTurn(runtime);
+    await runtime.sendTurnPrompt('current prompt');
+    await runtime.waitForTurnCompletion();
+
+    expect(runtimeEvents.filter((event) => event.kind === 'turn-complete')).toHaveLength(0);
+    expect(JSON.stringify(runtimeEvents)).not.toContain('MUST_NOT_SETTLE_AS_NEW');
+  });
+
+  it('does not let terminal evidence for an earlier steer satisfy the exact current input', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(100);
+    const { ctx, harness, runtimeEvents } = createContextFixture();
+    const client = createClientFixture();
+    let firstProviderUserMessageId = '';
+    let secondProviderUserMessageId = '';
+    vi.mocked(client.sessionPromptImplementation)
+      .mockImplementationOnce(async (input) => {
+        firstProviderUserMessageId = input.messageId ?? '';
+        return {
+          info: {
+            id: 'msg-first-steer-terminal',
+            parentID: firstProviderUserMessageId,
+            role: 'assistant',
+            sessionID: 'ses-1',
+            time: { created: 100, completed: 110 },
+            finish: 'stop',
+          },
+          parts: [{ type: 'text', text: 'FIRST_STEER_TERMINAL' }],
+        };
+      })
+      .mockImplementationOnce(async (input) => {
+        secondProviderUserMessageId = input.messageId ?? '';
+        client.setMessages([{
+          info: {
+            id: 'msg-first-steer-terminal',
+            parentID: firstProviderUserMessageId,
+            role: 'assistant',
+            sessionID: 'ses-1',
+            time: { created: 100, completed: 110 },
+            finish: 'stop',
+          },
+          parts: [{ type: 'text', text: 'FIRST_STEER_TERMINAL' }],
+        }]);
+      });
+    const runtime = await createStartedRuntime({ ctx, client, harness });
+    runtime.beginTurnLifecycle('test-turn');
+    await runtime.handleProviderEvent({
+      payload: {
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            id: 'part-running-between-steers',
+            type: 'tool',
+            sessionID: 'ses-1',
+            messageID: 'msg-first-steer-terminal',
+            callID: 'call-running-between-steers',
+            tool: 'bash',
+            state: { status: 'running', input: { command: 'pwd' } },
+          },
+        },
+      },
+    });
+    await runtime.sendTurnPrompt('first input');
+    await flushMicrotasks();
+    expect(runtimeEvents.some((event) => event.kind === 'turn-complete')).toBe(false);
+
+    await runtime.steerInFlightTurn('second input');
+    await runtime.handleProviderEvent({
+      payload: {
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            id: 'part-running-between-steers',
+            type: 'tool',
+            sessionID: 'ses-1',
+            messageID: 'msg-first-steer-terminal',
+            callID: 'call-running-between-steers',
+            tool: 'bash',
+            state: { status: 'completed', input: { command: 'pwd' }, output: '/repo' },
+          },
+        },
+      },
+    });
+    await runtime.waitForTurnCompletion();
+
+    expect(firstProviderUserMessageId).not.toBe(secondProviderUserMessageId);
+    expect(runtimeEvents.filter((event) => event.kind === 'turn-complete')).toHaveLength(0);
+  });
+
   it('does not publish execution-run status envelopes on the session runtime event stream', async () => {
     const client = createClientFixture();
     const runtime = await createStartedRuntime({ client });
@@ -626,7 +1441,7 @@ describe('createOpenCodeServerRuntime', () => {
       rawEvents.push(event);
     });
 
-    runtime.beginTurnLifecycle();
+    runtime.beginTurnLifecycle('test-turn');
     await runtime.waitForTurnCompletion();
 
     expect(rawEvents).not.toEqual(expect.arrayContaining([
@@ -698,13 +1513,14 @@ describe('createOpenCodeServerRuntime', () => {
 
     expect(permissionRequests).toEqual([
       expect.objectContaining({
-        provider: 'opencode',
-        requestId: 'per_123',
-        toolName: 'bash',
-        input: expect.objectContaining({
-          permission: 'bash',
-          patterns: ['echo "WAVE90_CLI_SURFACE_OK"'],
-          providerSessionId: 'ses-1',
+        subject: expect.objectContaining({
+          kind: 'tool',
+          name: 'bash',
+          input: expect.objectContaining({
+            permission: 'bash',
+            patterns: ['echo "WAVE90_CLI_SURFACE_OK"'],
+            providerSessionId: 'ses-1',
+          }),
         }),
       }),
     ]);
@@ -725,7 +1541,10 @@ describe('createOpenCodeServerRuntime', () => {
       },
     });
     const client = createClientFixture();
-    const subscriptionHandlers: Array<(event: unknown) => void> = [];
+    const subscriptionHandlers: Array<(
+      event: unknown,
+      delivery: Readonly<{ provenance: 'accepted-live'; connectionGeneration: number }>,
+    ) => void> = [];
     let rejectFirstSubscription!: (reason?: unknown) => void;
     vi.mocked(client.subscribeGlobalEvents).mockImplementation(({ onEvent }) => {
       subscriptionHandlers.push(onEvent);
@@ -753,13 +1572,15 @@ describe('createOpenCodeServerRuntime', () => {
           patterns: ['pwd'],
         },
       },
-    });
+    }, { provenance: 'accepted-live', connectionGeneration: 2 });
 
     await expect.poll(() => vi.mocked(client.permissionReply).mock.calls.length).toBe(1);
     expect(permissionRequests).toEqual([
       expect.objectContaining({
-        provider: 'opencode',
-        requestId: 'per_after_reconnect',
+        subject: expect.objectContaining({
+          kind: 'tool',
+          name: 'bash',
+        }),
       }),
     ]);
     expect(client.permissionReply).toHaveBeenCalledWith({
@@ -804,6 +1625,49 @@ describe('createOpenCodeServerRuntime', () => {
     ]));
   });
 
+  it('rejects malformed OpenCode permission asks without presenting an approvable generic tool', async () => {
+    const onPermissionDecision = vi.fn(async () => ({ decision: 'approved' as const }));
+    const { ctx } = createContextFixture({ onPermissionDecision });
+    const client = createClientFixture();
+    const runtime = await createStartedRuntime({ ctx, client });
+
+    await runtime.handleProviderEvent({
+      payload: {
+        type: 'permission.asked',
+        properties: {
+          sessionID: 'ses-1',
+          id: 'per_malformed',
+          patterns: ['pwd'],
+        },
+      },
+    });
+    await runtime.handleProviderEvent({
+      payload: {
+        type: 'permission.asked',
+        properties: {
+          sessionID: 'ses-1',
+          id: 'per_ambiguous',
+          permission: 'bash',
+          action: { permission: 'edit' },
+          patterns: ['pwd'],
+        },
+      },
+    });
+
+    expect(onPermissionDecision).not.toHaveBeenCalled();
+    expect(client.permissionReply).toHaveBeenCalledTimes(2);
+    expect(client.permissionReply).toHaveBeenNthCalledWith(1, {
+      requestId: 'per_malformed',
+      reply: 'reject',
+      message: 'OpenCode permission request was malformed or ambiguous.',
+    });
+    expect(client.permissionReply).toHaveBeenNthCalledWith(2, {
+      requestId: 'per_ambiguous',
+      reply: 'reject',
+      message: 'OpenCode permission request was malformed or ambiguous.',
+    });
+  });
+
   it('replies to turnless OpenCode permission asks even if a Happier turn starts before the decision', async () => {
     let resolvePermissionDecision: ((value: { decision: 'approved' }) => void) | null = null;
     const pendingPermissionDecision = new Promise<{ decision: 'approved' }>((resolve) => {
@@ -829,6 +1693,7 @@ describe('createOpenCodeServerRuntime', () => {
     void permissionAsk.catch(() => undefined);
     await Promise.resolve();
 
+    beginTestHostTurn(runtime);
     await runtime.sendTurnPrompt('hello');
     resolvePermissionDecision?.({ decision: 'approved' });
     await permissionAsk;
@@ -839,11 +1704,55 @@ describe('createOpenCodeServerRuntime', () => {
     });
   });
 
+  it('drops a turnless OpenCode permission decision when its runtime generation retires', async () => {
+    let resolvePermissionDecision: ((value: { decision: 'approved' }) => void) | null = null;
+    const pendingPermissionDecision = new Promise<{ decision: 'approved' }>((resolve) => {
+      resolvePermissionDecision = resolve;
+    });
+    const generationAbort = new AbortController();
+    const { ctx, harness } = createContextFixture({
+      onPermissionDecision: async () => await pendingPermissionDecision,
+    });
+    const generationScopedContext: OpenCodeRuntimeContext = {
+      ...ctx,
+      abort: {
+        signal: generationAbort.signal,
+        compose: (signals) => AbortSignal.any(signals),
+      },
+    };
+    const client = createClientFixture();
+    const runtime = await createStartedRuntime({
+      ctx: generationScopedContext,
+      client,
+      harness,
+    });
+
+    const permissionAsk = runtime.handleProviderEvent({
+      payload: {
+        type: 'permission.asked',
+        properties: {
+          sessionID: 'ses-1',
+          id: 'per_retired_turnless',
+          permission: 'bash',
+          patterns: ['pwd'],
+        },
+      },
+    });
+    void permissionAsk.catch(() => undefined);
+    await Promise.resolve();
+
+    generationAbort.abort(new Error('runtime generation retired'));
+    resolvePermissionDecision?.({ decision: 'approved' });
+    await permissionAsk;
+
+    expect(client.permissionReply).not.toHaveBeenCalled();
+  });
+
   it('keeps turns open for live provider tool work until reconnect history supplies terminal evidence', async () => {
     const { ctx, harness, runtimeEvents } = createContextFixture();
     const client = createClientFixture();
     const runtime = await createStartedRuntime({ ctx, client, harness });
-    runtime.beginTurnLifecycle();
+    runtime.beginTurnLifecycle('test-turn');
 
     await runtime.handleProviderEvent({
       payload: {
@@ -879,14 +1788,14 @@ describe('createOpenCodeServerRuntime', () => {
     await runtime.handleProviderEvent({ payload: { type: 'server.connected', properties: {} } });
     await runtime.waitForTurnCompletion();
 
-    expect(runtimeEvents.some((event) => event.kind === 'turn-complete')).toBe(true);
+    expect(runtimeEvents.some((event) => event.kind === 'turn-complete')).toBe(false);
   });
 
   it('publishes live OpenCode tool parts as canonical runtime tool events', async () => {
     const { ctx, harness, runtimeEvents } = createContextFixture();
     const client = createClientFixture();
     const runtime = await createStartedRuntime({ ctx, client, harness });
-    runtime.beginTurnLifecycle();
+    runtime.beginTurnLifecycle('test-turn');
 
     const turnStart = runtimeEvents.find((event) => event.kind === 'turn-start');
     const turnId = (turnStart as { turnId?: string } | undefined)?.turnId;
@@ -959,11 +1868,11 @@ describe('createOpenCodeServerRuntime', () => {
   it('backfills current-turn OpenCode tool events from completed history before assistant commit', async () => {
     const { ctx, harness, runtimeEvents } = createContextFixture();
     const client = createClientFixture();
-    vi.mocked(client.sessionPromptAsync).mockImplementationOnce(async () => {
+    vi.mocked(client.sessionPromptImplementation).mockImplementationOnce(async (input) => {
       client.setMessages([
         {
           info: {
-            id: 'msg-history-user',
+            id: input.messageId,
             role: 'user',
             sessionID: 'ses-1',
             time: { created: Date.now() + 1 },
@@ -977,7 +1886,8 @@ describe('createOpenCodeServerRuntime', () => {
             id: 'msg-history-assistant',
             role: 'assistant',
             sessionID: 'ses-1',
-            time: { completed: Date.now() + 2 },
+            parentID: input.messageId,
+            time: { created: Date.now() + 2, completed: Date.now() + 3 },
           },
           parts: [
             {
@@ -1000,6 +1910,7 @@ describe('createOpenCodeServerRuntime', () => {
     });
     const runtime = await createStartedRuntime({ ctx, client, harness });
 
+    beginTestHostTurn(runtime);
     await runtime.sendTurnPrompt('run pwd');
     await runtime.handleProviderEvent({
       payload: {
@@ -1050,7 +1961,7 @@ describe('createOpenCodeServerRuntime', () => {
     const { ctx, harness, runtimeEvents } = createContextFixture();
     const client = createClientFixture();
     const runtime = await createStartedRuntime({ ctx, client, harness });
-    runtime.beginTurnLifecycle();
+    runtime.beginTurnLifecycle('test-turn');
 
     await runtime.handleProviderEvent({
       payload: {
@@ -1127,9 +2038,7 @@ describe('createOpenCodeServerRuntime', () => {
 
     expect(runtimeEvents.filter((event) => event.kind === 'tool-call')).toHaveLength(1);
     expect(runtimeEvents.filter((event) => event.kind === 'tool-result')).toHaveLength(1);
-    expect(runtimeEvents).toEqual(expect.arrayContaining([
-      expect.objectContaining({ kind: 'turn-complete' }),
-    ]));
+    expect(runtimeEvents.some((event) => event.kind === 'turn-complete')).toBe(false);
   });
 
   it('keeps polling turns open while refreshed OpenCode history still has running provider work', async () => {
@@ -1152,7 +2061,7 @@ describe('createOpenCodeServerRuntime', () => {
       },
     ]);
     const runtime = await createStartedRuntime({ ctx, client, harness });
-    runtime.beginTurnLifecycle();
+    runtime.beginTurnLifecycle('test-turn');
 
     await runtime.handleProviderEvent({
       payload: {
@@ -1170,16 +2079,26 @@ describe('createOpenCodeServerRuntime', () => {
   it('commits observed assistant transcript text from OpenCode history before completing the turn', async () => {
     const { ctx, harness, runtimeEvents, transcriptAppends } = createContextFixture();
     const client = createClientFixture();
-    client.setMessages([
-      {
-        info: { id: 'msg-assistant-1', role: 'assistant', sessionID: 'ses-1' },
-        parts: [
-          { id: 'part-text-1', type: 'text', text: 'OPENCODE_LIVE_OK' },
-        ],
-      },
-    ]);
+    vi.mocked(client.sessionPromptImplementation).mockImplementationOnce(async (input) => {
+      client.setMessages([
+        {
+          info: {
+            id: 'msg-assistant-1',
+            parentID: input.messageId,
+            role: 'assistant',
+            sessionID: 'ses-1',
+            time: { created: 100, completed: 200 },
+            finish: 'stop',
+          },
+          parts: [
+            { id: 'part-text-1', type: 'text', text: 'OPENCODE_LIVE_OK' },
+          ],
+        },
+      ]);
+    });
     const runtime = await createStartedRuntime({ ctx, client, harness });
-    runtime.beginTurnLifecycle();
+    beginTestHostTurn(runtime);
+    await runtime.sendTurnPrompt('hello');
 
     await runtime.handleProviderEvent({
       payload: {
@@ -1231,11 +2150,11 @@ describe('createOpenCodeServerRuntime', () => {
   it('commits assistant transcript text that follows the current provider user message in history', async () => {
     const { ctx, harness, runtimeEvents } = createContextFixture();
     const client = createClientFixture();
-    vi.mocked(client.sessionPromptAsync).mockImplementationOnce(async () => {
+    vi.mocked(client.sessionPromptImplementation).mockImplementationOnce(async (input) => {
       client.setMessages([
         {
           info: {
-            id: 'msg-provider-generated-current-user',
+            id: input.messageId,
             role: 'user',
             sessionID: 'ses-1',
             time: { created: Date.now() },
@@ -1245,7 +2164,14 @@ describe('createOpenCodeServerRuntime', () => {
           ],
         },
         {
-          info: { id: 'msg-assistant-after-user', role: 'assistant', sessionID: 'ses-1' },
+          info: {
+            id: 'msg-assistant-after-user',
+            parentID: input.messageId,
+            role: 'assistant',
+            sessionID: 'ses-1',
+            time: { created: 100, completed: 200 },
+            finish: 'stop',
+          },
           parts: [
             { id: 'part-text-1', type: 'text', text: 'Assistant after user id' },
           ],
@@ -1254,7 +2180,7 @@ describe('createOpenCodeServerRuntime', () => {
     });
     const runtime = await createStartedRuntime({ ctx, client, harness });
 
-    runtime.beginTurnLifecycle();
+    runtime.beginTurnLifecycle('test-turn');
     await runtime.sendTurnPrompt('hello');
     await runtime.handleProviderEvent({
       payload: {
@@ -1283,11 +2209,11 @@ describe('createOpenCodeServerRuntime', () => {
   it('does not passively mirror provider user rows that came from a completed Happier turn', async () => {
     const { ctx, harness, runtimeEvents } = createContextFixture();
     const client = createClientFixture();
-    vi.mocked(client.sessionPromptAsync).mockImplementationOnce(async () => {
+    vi.mocked(client.sessionPromptImplementation).mockImplementationOnce(async (input) => {
       client.setMessages([
         {
           info: {
-            id: 'msg-happier-provider-user',
+            id: input.messageId,
             role: 'user',
             sessionID: 'ses-1',
             time: { created: Date.now() },
@@ -1301,6 +2227,7 @@ describe('createOpenCodeServerRuntime', () => {
             id: 'msg-happier-provider-assistant',
             role: 'assistant',
             sessionID: 'ses-1',
+            parentID: input.messageId,
             finish: 'stop',
             time: { completed: Date.now() + 1 },
           },
@@ -1312,7 +2239,7 @@ describe('createOpenCodeServerRuntime', () => {
     });
     const runtime = await createStartedRuntime({ ctx, client, harness });
 
-    runtime.beginTurnLifecycle();
+    runtime.beginTurnLifecycle('test-turn');
     await runtime.sendTurnPrompt('internal system guidance\n\nUSER_MARKER');
     await runtime.handleProviderEvent({
       payload: {
@@ -1345,11 +2272,11 @@ describe('createOpenCodeServerRuntime', () => {
     const client = createClientFixture();
     vi.useFakeTimers();
     vi.setSystemTime(1_782_215_218_000);
-    vi.mocked(client.sessionPromptAsync).mockImplementationOnce(async () => {
+    vi.mocked(client.sessionPromptImplementation).mockImplementationOnce(async (input) => {
       client.setMessages([
         {
           info: {
-            id: 'msg-happier-provider-user-seconds',
+            id: input.messageId,
             role: 'user',
             sessionID: 'ses-1',
             time: { created: 1_782_215_218 },
@@ -1363,6 +2290,7 @@ describe('createOpenCodeServerRuntime', () => {
             id: 'msg-happier-provider-assistant-seconds',
             role: 'assistant',
             sessionID: 'ses-1',
+            parentID: input.messageId,
             finish: 'stop',
             time: { completed: 1_782_215_219_000 },
           },
@@ -1374,6 +2302,7 @@ describe('createOpenCodeServerRuntime', () => {
     });
     const runtime = await createStartedRuntime({ ctx, client, harness });
 
+    beginTestHostTurn(runtime);
     await runtime.sendTurnPrompt('seconds timestamp guidance\n\nUSER_MARKER_SECONDS');
     await runtime.waitForTurnCompletion();
 
@@ -1399,11 +2328,11 @@ describe('createOpenCodeServerRuntime', () => {
   it('does not passively mirror completed Happier turn user rows after runtime recreation', async () => {
     const { ctx, harness, runtimeEvents } = createContextFixture();
     const client = createClientFixture();
-    vi.mocked(client.sessionPromptAsync).mockImplementationOnce(async () => {
+    vi.mocked(client.sessionPromptImplementation).mockImplementationOnce(async (input) => {
       client.setMessages([
         {
           info: {
-            id: 'msg-happier-provider-user-before-restart',
+            id: input.messageId,
             role: 'user',
             sessionID: 'ses-1',
             time: { created: Date.now() },
@@ -1417,6 +2346,7 @@ describe('createOpenCodeServerRuntime', () => {
             id: 'msg-happier-provider-assistant-before-restart',
             role: 'assistant',
             sessionID: 'ses-1',
+            parentID: input.messageId,
             finish: 'stop',
             time: { completed: Date.now() + 1 },
           },
@@ -1428,6 +2358,7 @@ describe('createOpenCodeServerRuntime', () => {
     });
     const runtime = await createStartedRuntime({ ctx, client, harness });
 
+    beginTestHostTurn(runtime);
     await runtime.sendTurnPrompt('internal restart guidance\n\nUSER_MARKER');
     await runtime.handleProviderEvent({
       payload: {
@@ -1459,11 +2390,11 @@ describe('createOpenCodeServerRuntime', () => {
   it('does not passively mirror provider user rows after an accepted Happier turn fails before history finality', async () => {
     const { ctx, harness, runtimeEvents } = createContextFixture();
     const client = createClientFixture();
-    vi.mocked(client.sessionPromptAsync).mockImplementationOnce(async () => {
+    vi.mocked(client.sessionPromptImplementation).mockImplementationOnce(async (input) => {
       client.setMessages([
         {
           info: {
-            id: 'msg-happier-provider-user-before-error',
+            id: input.messageId,
             role: 'user',
             sessionID: 'ses-1',
             time: { created: Date.now() },
@@ -1476,7 +2407,7 @@ describe('createOpenCodeServerRuntime', () => {
     });
     const runtime = await createStartedRuntime({ ctx, client, harness });
 
-    runtime.beginTurnLifecycle();
+    runtime.beginTurnLifecycle('test-turn');
     await runtime.sendTurnPrompt('internal error-path guidance\n\nUSER_MARKER');
     await runtime.handleProviderEvent({
       payload: {
@@ -1510,7 +2441,7 @@ describe('createOpenCodeServerRuntime', () => {
   it('does not passively mirror provider user rows after prompt submission rejects with provider history', async () => {
     const { ctx, harness, runtimeEvents } = createContextFixture();
     const client = createClientFixture();
-    vi.mocked(client.sessionPromptAsync).mockImplementationOnce(async () => {
+    vi.mocked(client.sessionPromptImplementation).mockImplementationOnce(async (input) => {
       client.setMessages([
         {
           info: {
@@ -1528,7 +2459,13 @@ describe('createOpenCodeServerRuntime', () => {
     });
     const runtime = await createStartedRuntime({ ctx, client, harness });
 
-    await runtime.sendTurnPrompt('internal submit-reject guidance\n\nUSER_MARKER');
+    beginTestHostTurn(runtime);
+    await expect(
+      runtime.sendTurnPrompt('internal submit-reject guidance\n\nUSER_MARKER'),
+    ).rejects.toThrow('provider rejected after writing the user row');
+    expect(runtime.isHappierAuthoredProviderUserMessageId(
+      'msg-happier-provider-user-before-submit-reject',
+    )).toBe(true);
     await vi.waitFor(() => {
       expect(runtimeEvents).toEqual(expect.arrayContaining([
         expect.objectContaining({ kind: 'turn-failed' }),
@@ -1550,14 +2487,14 @@ describe('createOpenCodeServerRuntime', () => {
     ]));
   });
 
-  it('commits assistant transcript text after OpenCode rewrites the provider user message id', async () => {
+  it('commits assistant transcript text after OpenCode preserves the exact provider user message id', async () => {
     const { ctx, harness, runtimeEvents } = createContextFixture();
     const client = createClientFixture();
-    vi.mocked(client.sessionPromptAsync).mockImplementationOnce(async () => {
+    vi.mocked(client.sessionPromptImplementation).mockImplementationOnce(async (input) => {
       client.setMessages([
         {
           info: {
-            id: 'msg-provider-generated-user',
+            id: input.messageId,
             role: 'user',
             sessionID: 'ses-1',
             time: { created: Date.now() },
@@ -1567,7 +2504,14 @@ describe('createOpenCodeServerRuntime', () => {
           ],
         },
         {
-          info: { id: 'msg-assistant-after-generated-user', role: 'assistant', sessionID: 'ses-1' },
+          info: {
+            id: 'msg-assistant-after-generated-user',
+            parentID: input.messageId,
+            role: 'assistant',
+            sessionID: 'ses-1',
+            time: { created: 100, completed: 200 },
+            finish: 'stop',
+          },
           parts: [
             { id: 'part-text-1', type: 'text', text: 'Assistant after generated user id' },
           ],
@@ -1576,6 +2520,7 @@ describe('createOpenCodeServerRuntime', () => {
     });
     const runtime = await createStartedRuntime({ ctx, client, harness });
 
+    beginTestHostTurn(runtime);
     await runtime.sendTurnPrompt('hello');
     await runtime.waitForTurnCompletion();
 
@@ -1597,11 +2542,11 @@ describe('createOpenCodeServerRuntime', () => {
     const { ctx, harness, runtimeEvents } = createContextFixture();
     const client = createClientFixture();
     vi.mocked(client.sessionStatus).mockResolvedValue({});
-    vi.mocked(client.sessionPromptAsync).mockImplementationOnce(async () => {
+    vi.mocked(client.sessionPromptImplementation).mockImplementationOnce(async (input) => {
       client.setMessages([
         {
           info: {
-            id: 'msg-provider-generated-user',
+            id: input.messageId,
             role: 'user',
             sessionID: 'ses-1',
             time: { created: Date.now() },
@@ -1613,6 +2558,7 @@ describe('createOpenCodeServerRuntime', () => {
         {
           info: {
             id: 'msg-assistant-before-idle',
+            parentID: input.messageId,
             role: 'assistant',
             sessionID: 'ses-1',
             time: { created: 100, completed: 200 },
@@ -1626,6 +2572,7 @@ describe('createOpenCodeServerRuntime', () => {
     });
     const runtime = await createStartedRuntime({ ctx, client, harness });
 
+    beginTestHostTurn(runtime);
     await runtime.sendTurnPrompt('hello');
     await runtime.waitForTurnCompletion();
 
@@ -1647,11 +2594,13 @@ describe('createOpenCodeServerRuntime', () => {
   it('keeps the turn open when OpenCode reports idle before producing assistant history', async () => {
     const { ctx, harness, runtimeEvents } = createContextFixture();
     const client = createClientFixture();
-    vi.mocked(client.sessionPromptAsync).mockImplementationOnce(async () => {
+    let providerUserMessageId = '';
+    vi.mocked(client.sessionPromptImplementation).mockImplementationOnce(async (input) => {
+      providerUserMessageId = input.messageId ?? '';
       client.setMessages([
         {
           info: {
-            id: 'msg-provider-generated-user',
+            id: providerUserMessageId,
             role: 'user',
             sessionID: 'ses-1',
             time: { created: Date.now() },
@@ -1672,6 +2621,7 @@ describe('createOpenCodeServerRuntime', () => {
     });
     const runtime = await createStartedRuntime({ ctx, client, harness });
 
+    beginTestHostTurn(runtime);
     await runtime.sendTurnPrompt('hello');
     await runtime.waitForTurnCompletion();
 
@@ -1681,7 +2631,7 @@ describe('createOpenCodeServerRuntime', () => {
     client.setMessages([
       {
         info: {
-          id: 'msg-provider-generated-user',
+          id: providerUserMessageId,
           role: 'user',
           sessionID: 'ses-1',
           time: { created: Date.now() },
@@ -1693,6 +2643,7 @@ describe('createOpenCodeServerRuntime', () => {
       {
         info: {
           id: 'msg-assistant-after-delayed-idle',
+          parentID: providerUserMessageId,
           role: 'assistant',
           sessionID: 'ses-1',
           modelID: 'big-pickle',
@@ -1707,7 +2658,9 @@ describe('createOpenCodeServerRuntime', () => {
         ],
       },
     ]);
-    await runtime.waitForTurnCompletion();
+    await runtime.handleProviderEvent({
+      payload: { type: 'session.idle', properties: { sessionID: 'ses-1' } },
+    });
 
     expect(runtimeEvents).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -1731,11 +2684,11 @@ describe('createOpenCodeServerRuntime', () => {
     vi.setSystemTime(1_000);
     const { ctx, harness, runtimeEvents } = createContextFixture();
     const client = createClientFixture();
-    vi.mocked(client.sessionPromptAsync).mockImplementationOnce(async () => {
+    vi.mocked(client.sessionPromptImplementation).mockImplementationOnce(async (input) => {
       client.setMessages([
         {
           info: {
-            id: 'msg-provider-generated-user',
+            id: input.messageId,
             role: 'user',
             sessionID: 'ses-1',
             time: { created: Date.now() },
@@ -1756,6 +2709,7 @@ describe('createOpenCodeServerRuntime', () => {
     });
     const runtime = await createStartedRuntime({ ctx, client, harness });
 
+    beginTestHostTurn(runtime);
     await runtime.sendTurnPrompt('hello');
     await runtime.waitForTurnCompletion();
 
@@ -1784,7 +2738,7 @@ describe('createOpenCodeServerRuntime', () => {
       }),
     ]));
     expect(runtimeEvents.some((event) => event.kind === 'turn-complete')).toBe(false);
-    expect(client.sessionMessages).toHaveBeenCalledTimes(2);
+    expect(client.sessionMessages).toHaveBeenCalledTimes(3);
   });
 
   it('keeps accepted prompts open when OpenCode remains busy without assistant, tool, or error evidence', async () => {
@@ -1799,11 +2753,11 @@ describe('createOpenCodeServerRuntime', () => {
     });
     const client = createClientFixture();
     vi.mocked(client.sessionStatus).mockResolvedValue({ type: 'busy' });
-    vi.mocked(client.sessionPromptAsync).mockImplementationOnce(async () => {
+    vi.mocked(client.sessionPromptImplementation).mockImplementationOnce(async (input) => {
       client.setMessages([
         {
           info: {
-            id: 'msg-provider-generated-user',
+            id: input.messageId,
             role: 'user',
             sessionID: 'ses-1',
             time: { created: Date.now() },
@@ -1824,19 +2778,20 @@ describe('createOpenCodeServerRuntime', () => {
     });
     const runtime = await createStartedRuntime({ ctx, client, harness });
 
+    beginTestHostTurn(runtime);
     await runtime.sendTurnPrompt('hello');
     await runtime.waitForTurnCompletion();
 
     expect(runtimeEvents.some((event) => event.kind === 'turn-failed')).toBe(false);
     expect(runtimeEvents.some((event) => event.kind === 'turn-complete')).toBe(false);
-    expect(client.sessionMessages).not.toHaveBeenCalled();
+    expect(client.sessionMessages).toHaveBeenCalledTimes(1);
 
     vi.setSystemTime(61_001);
     await runtime.waitForTurnCompletion();
 
     expect(runtimeEvents.some((event) => event.kind === 'turn-failed')).toBe(false);
     expect(runtimeEvents.some((event) => event.kind === 'turn-complete')).toBe(false);
-    expect(client.sessionMessages).not.toHaveBeenCalled();
+    expect(client.sessionMessages).toHaveBeenCalledTimes(1);
 
     await runtime.handleProviderEvent({
       payload: {
@@ -1852,9 +2807,10 @@ describe('createOpenCodeServerRuntime', () => {
 
     expect(permissionRequests).toEqual([
       expect.objectContaining({
-        provider: 'opencode',
-        requestId: 'per_late_busy',
-        toolName: 'bash',
+        subject: expect.objectContaining({
+          kind: 'tool',
+          name: 'bash',
+        }),
       }),
     ]);
     expect(client.permissionReply).toHaveBeenCalledWith({
@@ -1880,11 +2836,11 @@ describe('createOpenCodeServerRuntime', () => {
       },
     });
     const client = createClientFixture();
-    vi.mocked(client.sessionPromptAsync).mockImplementationOnce(async () => {
+    vi.mocked(client.sessionPromptImplementation).mockImplementationOnce(async (input) => {
       client.setMessages([
         {
           info: {
-            id: 'msg-provider-generated-user',
+            id: input.messageId,
             role: 'user',
             sessionID: 'ses-1',
             time: { created: Date.now() },
@@ -1905,6 +2861,7 @@ describe('createOpenCodeServerRuntime', () => {
     });
     const runtime = await createStartedRuntime({ ctx, client, harness });
 
+    beginTestHostTurn(runtime);
     await runtime.sendTurnPrompt('hello');
 
     const permissionAsk = runtime.handleProviderEvent({
@@ -1923,9 +2880,10 @@ describe('createOpenCodeServerRuntime', () => {
 
     expect(permissionRequests).toEqual([
       expect.objectContaining({
-        provider: 'opencode',
-        requestId: 'per_waiting',
-        toolName: 'bash',
+        subject: expect.objectContaining({
+          kind: 'tool',
+          name: 'bash',
+        }),
       }),
     ]);
 
@@ -1942,7 +2900,7 @@ describe('createOpenCodeServerRuntime', () => {
 
   it('cancels pending turn-scoped OpenCode permission decisions when provider errors fail the turn', async () => {
     type PermissionDecision = Awaited<
-      ReturnType<PluginContextV1['sessions']['current']['permissions']['requestDecision']>
+      ReturnType<OpenCodeRuntimeContext['sessions']['current']['permissions']['requestDecision']>
     >;
     const { ctx, harness, runtimeEvents } = createContextFixture();
     const client = createClientFixture();
@@ -1956,7 +2914,7 @@ describe('createOpenCodeServerRuntime', () => {
     }).finally(() => {
       permissionSettled = true;
     });
-    const ctxWithPermissionSignal: PluginContextV1 = {
+    const ctxWithPermissionSignal: OpenCodeRuntimeContext = {
       ...ctx,
       sessions: {
         ...ctx.sessions,
@@ -1981,6 +2939,7 @@ describe('createOpenCodeServerRuntime', () => {
     };
     const runtime = await createStartedRuntime({ ctx: ctxWithPermissionSignal, client, harness });
 
+    beginTestHostTurn(runtime);
     await runtime.sendTurnPrompt('hello');
     const permissionAsk = runtime.handleProviderEvent({
       payload: {
@@ -2031,10 +2990,11 @@ describe('createOpenCodeServerRuntime', () => {
       onPermissionDecision: async () => ({ decision: 'denied', rationale: 'QA denied shell access' }),
     });
     const client = createClientFixture();
-    vi.mocked(client.sessionPromptAsync).mockResolvedValueOnce(undefined);
+    vi.mocked(client.sessionPromptImplementation).mockResolvedValueOnce(undefined);
     const runtime = await createStartedRuntime({ ctx, client, harness });
 
-    await runtime.sendTurnPrompt('hello');
+    beginTestHostTurn(runtime);
+    const { providerUserMessageId } = await runtime.sendTurnPrompt('hello');
     await runtime.handleProviderEvent({
       payload: {
         type: 'permission.asked',
@@ -2050,7 +3010,7 @@ describe('createOpenCodeServerRuntime', () => {
     client.setMessages([
       {
         info: {
-          id: 'msg-provider-generated-user',
+          id: providerUserMessageId,
           role: 'user',
           sessionID: 'ses-1',
           time: { created: 1_000 },
@@ -2062,6 +3022,7 @@ describe('createOpenCodeServerRuntime', () => {
       {
         info: {
           id: 'msg-denied-assistant',
+          parentID: providerUserMessageId,
           role: 'assistant',
           sessionID: 'ses-1',
           time: { created: 1_010, completed: 1_020 },
@@ -2125,10 +3086,11 @@ describe('createOpenCodeServerRuntime', () => {
       onPermissionDecision: async () => ({ decision: 'denied', rationale: 'QA denied shell access' }),
     });
     const client = createClientFixture();
-    vi.mocked(client.sessionPromptAsync).mockResolvedValueOnce(undefined);
+    vi.mocked(client.sessionPromptImplementation).mockResolvedValueOnce(undefined);
     const runtime = await createStartedRuntime({ ctx, client, harness });
 
-    await runtime.sendTurnPrompt('hello');
+    beginTestHostTurn(runtime);
+    const { providerUserMessageId } = await runtime.sendTurnPrompt('hello');
     await runtime.handleProviderEvent({
       payload: {
         type: 'permission.asked',
@@ -2144,7 +3106,7 @@ describe('createOpenCodeServerRuntime', () => {
     client.setMessages([
       {
         info: {
-          id: 'msg-provider-generated-user',
+          id: providerUserMessageId,
           role: 'user',
           sessionID: 'ses-1',
           time: { created: 1_000 },
@@ -2200,11 +3162,11 @@ describe('createOpenCodeServerRuntime', () => {
       onPermissionDecision: async () => await pendingPermissionDecision,
     });
     const client = createClientFixture();
-    vi.mocked(client.sessionPromptAsync).mockImplementationOnce(async () => {
+    vi.mocked(client.sessionPromptImplementation).mockImplementationOnce(async (input) => {
       client.setMessages([
         {
           info: {
-            id: 'msg-provider-generated-user',
+            id: input.messageId,
             role: 'user',
             sessionID: 'ses-1',
             time: { created: Date.now() },
@@ -2225,6 +3187,7 @@ describe('createOpenCodeServerRuntime', () => {
     });
     const runtime = await createStartedRuntime({ ctx, client, harness });
 
+    beginTestHostTurn(runtime);
     await runtime.sendTurnPrompt('hello');
     const permissionAsk = runtime.handleProviderEvent({
       payload: {
@@ -2266,11 +3229,11 @@ describe('createOpenCodeServerRuntime', () => {
     vi.setSystemTime(1_000);
     const { ctx, harness, runtimeEvents } = createContextFixture();
     const client = createClientFixture();
-    vi.mocked(client.sessionPromptAsync).mockImplementation(async (input) => {
+    vi.mocked(client.sessionPromptImplementation).mockImplementation(async (input) => {
       if (input.text === 'first') {
         client.setMessages([
           {
-            info: { id: 'msg-user-first', role: 'user', sessionID: 'ses-1', time: { created: Date.now() } },
+            info: { id: input.messageId, role: 'user', sessionID: 'ses-1', time: { created: Date.now() } },
             parts: [
               { id: 'part-user-first', type: 'text', text: '[opencode prompt stack]\nfirst' },
             ],
@@ -2278,9 +3241,10 @@ describe('createOpenCodeServerRuntime', () => {
           {
             info: {
               id: 'msg-assistant-first',
+              parentID: input.messageId,
               role: 'assistant',
               sessionID: 'ses-1',
-              time: { created: 100, completed: 200 },
+              time: { created: Date.now() + 1, completed: Date.now() + 2 },
             },
             parts: [
               { id: 'part-text-first', type: 'text', text: 'first done' },
@@ -2291,7 +3255,7 @@ describe('createOpenCodeServerRuntime', () => {
       }
       client.setMessages([
         {
-          info: { id: 'msg-user-second', role: 'user', sessionID: 'ses-1', time: { created: Date.now() } },
+          info: { id: input.messageId, role: 'user', sessionID: 'ses-1', time: { created: Date.now() } },
           parts: [
             { id: 'part-user-second', type: 'text', text: '[opencode prompt stack]\nsecond' },
           ],
@@ -2300,6 +3264,7 @@ describe('createOpenCodeServerRuntime', () => {
     });
     const runtime = await createStartedRuntime({ ctx, client, harness });
 
+    beginTestHostTurn(runtime);
     await runtime.sendTurnPrompt('first');
     await runtime.waitForTurnCompletion();
     expect(runtimeEvents).toEqual(expect.arrayContaining([
@@ -2312,6 +3277,7 @@ describe('createOpenCodeServerRuntime', () => {
     ]));
 
     vi.setSystemTime(2_000);
+    beginTestHostTurn(runtime);
     await runtime.sendTurnPrompt('second');
 
     expect(runtimeEvents.filter((event) => event.kind === 'turn-start')).toHaveLength(2);
@@ -2340,11 +3306,11 @@ describe('createOpenCodeServerRuntime', () => {
   it('fails active user turns when OpenCode completes with an empty assistant message', async () => {
     const { ctx, harness, runtimeEvents, transcriptAppends } = createContextFixture();
     const client = createClientFixture();
-    vi.mocked(client.sessionPromptAsync).mockImplementationOnce(async (input) => {
+    vi.mocked(client.sessionPromptImplementation).mockImplementationOnce(async (input) => {
       client.setMessages([
         {
           info: {
-            id: 'msg-provider-generated-user',
+            id: input.messageId,
             role: 'user',
             sessionID: 'ses-1',
             time: { created: Date.now() },
@@ -2356,9 +3322,10 @@ describe('createOpenCodeServerRuntime', () => {
         {
           info: {
             id: 'msg-empty-assistant',
+            parentID: input.messageId,
             role: 'assistant',
             sessionID: 'ses-1',
-            time: { created: 100, completed: 200 },
+            time: { created: Date.now() + 1, completed: Date.now() + 2 },
           },
           parts: [],
         },
@@ -2366,6 +3333,7 @@ describe('createOpenCodeServerRuntime', () => {
     });
     const runtime = await createStartedRuntime({ ctx, client, harness });
 
+    beginTestHostTurn(runtime);
     await runtime.sendTurnPrompt('hello');
     await runtime.waitForTurnCompletion();
 
@@ -2388,7 +3356,7 @@ describe('createOpenCodeServerRuntime', () => {
     ]));
     expect(runtimeEvents.some((event) => event.kind === 'turn-complete')).toBe(false);
     expect(transcriptAppends).toHaveLength(0);
-    expect(client.sessionMessages).toHaveBeenCalledTimes(1);
+    expect(client.sessionMessages).toHaveBeenCalledTimes(2);
   });
 
   it('backs off full history refreshes while waiting for idle assistant history', async () => {
@@ -2397,9 +3365,13 @@ describe('createOpenCodeServerRuntime', () => {
     const { ctx, harness } = createContextFixture();
     const client = createClientFixture();
     const operations = await createStartedRuntime({ ctx, client, harness });
-    const runtime = createOpenCodePublicSessionRuntime(operations);
+    const runtime = createNativeSessionRuntimeForTest(operations);
 
-    await runtime.send({ v: 1, text: 'hello' });
+    await runtime.send({
+      inputIds: ['input-history-backoff'],
+      input: { text: 'hello' },
+      delivery: { kind: 'newTurn', turnId: 'turn-history-backoff' },
+    });
     await flushMicrotasks();
 
     for (let i = 0; i < 20; i += 1) {
@@ -2408,18 +3380,18 @@ describe('createOpenCodeServerRuntime', () => {
     }
 
     expect(client.sessionStatus).toHaveBeenCalledTimes(21);
-    expect(client.sessionMessages.mock.calls.length).toBeLessThanOrEqual(6);
+    expect(client.sessionMessages.mock.calls.length).toBeLessThanOrEqual(7);
     expect(runtime.isTurnInFlight()).toBe(true);
   });
 
   it('fails active user turns with the provider error recorded on the terminal assistant history message', async () => {
     const { ctx, harness, runtimeEvents, transcriptAppends } = createContextFixture();
     const client = createClientFixture();
-    vi.mocked(client.sessionPromptAsync).mockImplementationOnce(async () => {
+    vi.mocked(client.sessionPromptImplementation).mockImplementationOnce(async (input) => {
       client.setMessages([
         {
           info: {
-            id: 'msg-provider-generated-user',
+            id: input.messageId,
             role: 'user',
             sessionID: 'ses-1',
             time: { created: Date.now() },
@@ -2431,7 +3403,7 @@ describe('createOpenCodeServerRuntime', () => {
         {
           info: {
             id: 'msg-error-assistant',
-            parentID: 'msg-provider-generated-user',
+            parentID: input.messageId,
             role: 'assistant',
             sessionID: 'ses-1',
             time: { created: 100, completed: 200 },
@@ -2448,6 +3420,7 @@ describe('createOpenCodeServerRuntime', () => {
     });
     const runtime = await createStartedRuntime({ ctx, client, harness });
 
+    beginTestHostTurn(runtime);
     await runtime.sendTurnPrompt('hello');
     await runtime.waitForTurnCompletion();
 
@@ -2472,7 +3445,7 @@ describe('createOpenCodeServerRuntime', () => {
     expect(runtimeEvents.some((event) => event.kind === 'turn-complete')).toBe(false);
     expect(JSON.stringify(runtimeEvents)).not.toContain('sk-live-secret');
     expect(transcriptAppends).toHaveLength(0);
-    expect(client.sessionMessages).toHaveBeenCalledTimes(1);
+    expect(client.sessionMessages).toHaveBeenCalledTimes(2);
   });
 
   it('fails and confirms provider acceptance from an immediate assistant error prompt response', async () => {
@@ -2493,21 +3466,23 @@ describe('createOpenCodeServerRuntime', () => {
       },
       parts: [],
     };
-    vi.mocked(client.sessionPromptAsync).mockResolvedValueOnce(immediateAssistantError);
+    vi.mocked(client.sessionPromptImplementation).mockImplementationOnce(async (input) => ({
+      ...immediateAssistantError,
+      info: {
+        ...immediateAssistantError.info,
+        parentID: input.messageId,
+      },
+    }));
     const operations = await createStartedRuntime({ ctx, client, harness });
-    const runtime = createOpenCodePublicSessionRuntime(operations);
-    const accepted: Array<Readonly<{
-      userMessageSeq: number | null;
-      userMessageSeqs?: readonly number[];
-    }>> = [];
-    runtime.setOnPromptAcceptedByProvider?.((info) => {
-      accepted.push(info);
-    });
+    const runtime = createNativeSessionRuntimeForTest(operations);
+    const nativeEvents: Array<{ kind: string }> = [];
+    runtime.watch((event) => nativeEvents.push(event));
 
-    await expect(runtime.send(
-      { v: 1, text: 'hello' },
-      { userMessageSeq: 58 },
-    )).resolves.toMatchObject({ status: 'accepted' });
+    await expect(runtime.send({
+      inputIds: ['input-immediate-error'],
+      input: { text: 'hello' },
+      delivery: { kind: 'newTurn', turnId: 'turn-immediate-error' },
+    })).resolves.toMatchObject({ status: 'admitted' });
 
     await vi.waitFor(() => {
       expect(runtimeEvents).toEqual(expect.arrayContaining([
@@ -2523,7 +3498,7 @@ describe('createOpenCodeServerRuntime', () => {
       ]));
     });
 
-    expect(accepted).toEqual([{ userMessageSeq: 58, userMessageSeqs: [58] }]);
+    expect(nativeEvents.filter((event) => event.kind === 'input-accepted')).toHaveLength(1);
     expect(runtimeEvents.some((event) => event.kind === 'turn-complete')).toBe(false);
     expect(JSON.stringify(runtimeEvents)).not.toContain('sk-live-secret');
     expect(transcriptAppends).toHaveLength(0);
@@ -2533,7 +3508,7 @@ describe('createOpenCodeServerRuntime', () => {
   it('does not attribute stale assistant errors from an older identical prompt to the active turn', async () => {
     const { ctx, harness, runtimeEvents } = createContextFixture();
     const client = createClientFixture();
-    vi.mocked(client.sessionPromptAsync).mockImplementationOnce(async () => {
+    vi.mocked(client.sessionPromptImplementation).mockImplementationOnce(async (input) => {
       client.setMessages([
         {
           info: { id: 'msg-older-user', role: 'user', sessionID: 'ses-1' },
@@ -2566,6 +3541,7 @@ describe('createOpenCodeServerRuntime', () => {
     });
     const runtime = await createStartedRuntime({ ctx, client, harness });
 
+    beginTestHostTurn(runtime);
     await runtime.sendTurnPrompt('repeat me');
     await runtime.waitForTurnCompletion();
 
@@ -2574,14 +3550,14 @@ describe('createOpenCodeServerRuntime', () => {
       expect.objectContaining({ kind: 'turn-complete' }),
     ]));
     expect(JSON.stringify(runtimeEvents)).not.toContain('stale provider error from earlier repeated prompt');
-    expect(client.sessionMessages).toHaveBeenCalledTimes(1);
+    expect(client.sessionMessages).toHaveBeenCalledTimes(2);
   });
 
   it('does not complete from an older identical prompt when current provider user history is missing', async () => {
     const { ctx, harness, runtimeEvents } = createContextFixture();
     const client = createClientFixture();
     vi.mocked(client.sessionStatus).mockResolvedValue({});
-    vi.mocked(client.sessionPromptAsync).mockImplementationOnce(async () => {
+    vi.mocked(client.sessionPromptImplementation).mockImplementationOnce(async () => {
       client.setMessages([
         {
           info: { id: 'msg-older-user', role: 'user', sessionID: 'ses-1' },
@@ -2605,6 +3581,7 @@ describe('createOpenCodeServerRuntime', () => {
     });
     const runtime = await createStartedRuntime({ ctx, client, harness });
 
+    beginTestHostTurn(runtime);
     await runtime.sendTurnPrompt('repeat me');
     await runtime.waitForTurnCompletion();
 
@@ -2616,17 +3593,17 @@ describe('createOpenCodeServerRuntime', () => {
       expect.objectContaining({ kind: 'turn-complete' }),
     ]));
     expect(JSON.stringify(runtimeEvents)).not.toContain('stale assistant from earlier repeated prompt');
-    expect(client.sessionMessages).toHaveBeenCalledTimes(1);
+    expect(client.sessionMessages).toHaveBeenCalledTimes(2);
   });
 
   it('fails active user turns when OpenCode completes provider tool work without assistant text', async () => {
     const { ctx, harness, runtimeEvents, transcriptAppends } = createContextFixture();
     const client = createClientFixture();
-    vi.mocked(client.sessionPromptAsync).mockImplementationOnce(async () => {
+    vi.mocked(client.sessionPromptImplementation).mockImplementationOnce(async (input) => {
       client.setMessages([
         {
           info: {
-            id: 'msg-provider-generated-user',
+            id: input.messageId,
             role: 'user',
             sessionID: 'ses-1',
             time: { created: Date.now() },
@@ -2638,9 +3615,10 @@ describe('createOpenCodeServerRuntime', () => {
         {
           info: {
             id: 'msg-tool-only-assistant',
+            parentID: input.messageId,
             role: 'assistant',
             sessionID: 'ses-1',
-            time: { created: 100, completed: 200 },
+            time: { created: Date.now() + 1, completed: Date.now() + 2 },
           },
           parts: [
             {
@@ -2662,6 +3640,7 @@ describe('createOpenCodeServerRuntime', () => {
     });
     const runtime = await createStartedRuntime({ ctx, client, harness });
 
+    beginTestHostTurn(runtime);
     await runtime.sendTurnPrompt('hello');
     await runtime.waitForTurnCompletion();
 
@@ -2694,7 +3673,8 @@ describe('createOpenCodeServerRuntime', () => {
       .mockRejectedValueOnce(pollError)
       .mockResolvedValueOnce({ type: 'idle' });
     const runtime = await createStartedRuntime({ ctx, client, harness });
-    runtime.beginTurnLifecycle();
+    beginTestHostTurn(runtime);
+    const { providerUserMessageId } = await runtime.sendTurnPrompt('hello');
 
     await expect(runtime.waitForTurnCompletion()).resolves.toBeUndefined();
     expect(runtimeEvents.some((event) => event.kind === 'turn-complete')).toBe(false);
@@ -2706,6 +3686,27 @@ describe('createOpenCodeServerRuntime', () => {
       }),
     ]));
 
+    client.setMessages([
+      {
+        info: {
+          id: providerUserMessageId,
+          role: 'user',
+          sessionID: 'ses-1',
+          time: { created: Date.now() },
+        },
+        parts: [{ id: 'part-user', type: 'text', text: 'hello' }],
+      },
+      {
+        info: {
+          id: 'assistant-after-status-recovery',
+          parentID: providerUserMessageId,
+          role: 'assistant',
+          sessionID: 'ses-1',
+          time: { created: Date.now() + 1, completed: Date.now() + 2 },
+        },
+        parts: [{ id: 'part-assistant', type: 'text', text: 'done' }],
+      },
+    ]);
     await runtime.waitForTurnCompletion();
 
     expect(runtimeEvents.some((event) => event.kind === 'turn-complete')).toBe(true);
@@ -2721,6 +3722,7 @@ describe('createOpenCodeServerRuntime', () => {
       harness,
       readManagedServerSnapshot: () => ({
         id: 'opencode-server',
+        instanceId: 'host-instance-a',
         state: 'unhealthy',
         mode: 'managed-spawn',
         baseUrl: 'http://127.0.0.1:49196',
@@ -2737,7 +3739,7 @@ describe('createOpenCodeServerRuntime', () => {
         },
       }),
     });
-    runtime.beginTurnLifecycle();
+    runtime.beginTurnLifecycle('test-turn');
 
     await runtime.waitForTurnCompletion();
 
@@ -2766,7 +3768,7 @@ describe('createOpenCodeServerRuntime', () => {
     expect(client.sessionStatus).toHaveBeenCalledTimes(1);
   });
 
-  it('ignores broad history running tools that are not tied to the active OpenCode turn', async () => {
+  it('keeps an active lifecycle without an exact submitted prompt open', async () => {
     const { ctx, harness, runtimeEvents } = createContextFixture();
     const client = createClientFixture();
     client.setMessages([
@@ -2786,18 +3788,32 @@ describe('createOpenCodeServerRuntime', () => {
       },
     ]);
     const runtime = await createStartedRuntime({ ctx, client, harness });
-    runtime.beginTurnLifecycle();
+    runtime.beginTurnLifecycle('test-turn');
 
     await runtime.waitForTurnCompletion();
 
-    expect(runtimeEvents.some((event) => event.kind === 'turn-complete')).toBe(true);
+    expect(runtimeEvents.some((event) => event.kind === 'turn-complete')).toBe(false);
   });
 
   it('completes active turns when OpenCode reports idle after provider work has drained', async () => {
     const { ctx, harness, runtimeEvents } = createContextFixture();
     const client = createClientFixture();
+    vi.mocked(client.sessionPromptImplementation).mockImplementationOnce(async (input) => {
+      client.setMessages([{
+        info: {
+          id: 'msg-drained-terminal',
+          parentID: input.messageId,
+          role: 'assistant',
+          sessionID: 'ses-1',
+          time: { created: 100, completed: 200 },
+          finish: 'stop',
+        },
+        parts: [{ type: 'text', text: 'Provider work drained' }],
+      }]);
+    });
     const runtime = await createStartedRuntime({ ctx, client, harness });
-    runtime.beginTurnLifecycle();
+    beginTestHostTurn(runtime);
+    await runtime.sendTurnPrompt('hello');
 
     await runtime.handleProviderEvent({
       payload: {
@@ -2810,10 +3826,10 @@ describe('createOpenCodeServerRuntime', () => {
     });
 
     expect(runtimeEvents.some((event) => event.kind === 'turn-complete')).toBe(true);
-    expect(client.sessionMessages).toHaveBeenCalledTimes(1);
+    expect(client.sessionMessages).toHaveBeenCalledTimes(2);
   });
 
-  it('starts a provider-autonomous turn for native background task parent output', async () => {
+  it('does not infer an autonomous turn from native background-task prose', async () => {
     const { ctx, harness, runtimeEvents } = createContextFixture();
     const client = createClientFixture();
     const runtime = await createStartedRuntime({ ctx, client, harness });
@@ -2852,16 +3868,13 @@ describe('createOpenCodeServerRuntime', () => {
       },
     });
 
-    expect(runtimeEvents).toEqual(expect.arrayContaining([
+    expect(runtimeEvents).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: 'turn-start' }),
       expect.objectContaining({ kind: 'turn-complete' }),
     ]));
-    expect(runtimeEvents).not.toEqual(expect.arrayContaining([
-      expect.objectContaining({ agentTurnId: 'ses-1' }),
-    ]));
   });
 
-  it('wires provider events from the OpenCode server subscription into turn lifecycle handling', async () => {
+  it('keeps replay-shaped global frames observation-only before turn and tool effects', async () => {
     const { ctx, harness, runtimeEvents } = createContextFixture();
     const client = createClientFixture();
     const runtime = await createStartedRuntime({ ctx, client, harness });
@@ -2872,15 +3885,24 @@ describe('createOpenCodeServerRuntime', () => {
       payload: {
         type: 'message.part.updated',
         properties: {
+          time: Date.now(),
           part: {
-            type: 'text',
+            id: 'part-replayed-tool',
+            type: 'tool',
             sessionID: 'ses-1',
-            messageID: 'msg-native-background-wake',
-            text: '<task state="completed" id="ses-background-child"><task_result>Done</task_result></task>',
+            messageID: 'msg-replayed-tool',
+            callID: 'call-replayed-tool',
+            tool: 'task',
+            state: {
+              status: 'completed',
+              input: { background: true },
+              output: '<task state="running" id="ses-replayed-child"></task>',
+              metadata: { sessionId: 'ses-replayed-child', background: true },
+            },
           },
         },
       },
-    });
+    }, { provenance: 'untrusted-observation', connectionGeneration: 1 });
     client.emitProviderEvent({
       payload: {
         type: 'session.status',
@@ -2889,30 +3911,26 @@ describe('createOpenCodeServerRuntime', () => {
           status: { type: 'busy' },
         },
       },
-    });
+    }, { provenance: 'untrusted-observation', connectionGeneration: 1 });
     client.emitProviderEvent({
       payload: {
-        type: 'session.status',
+        type: 'message.part.delta',
         properties: {
           sessionID: 'ses-1',
-          status: { type: 'idle' },
+          messageID: 'msg-replayed-wake',
+          partID: 'part-replayed-wake',
+          delta: '<task state="completed" id="ses-replayed-child"><task_result>Done</task_result></task>',
         },
       },
-    });
+    }, { provenance: 'untrusted-observation', connectionGeneration: 1 });
 
-    await expect.poll(() => runtimeEvents.some((event) => event.kind === 'turn-complete')).toBe(true);
-    expect(runtimeEvents).toEqual(expect.arrayContaining([
-      expect.objectContaining({ kind: 'turn-start' }),
-      expect.objectContaining({ kind: 'turn-complete' }),
-    ]));
-    expect(runtimeEvents).not.toEqual(expect.arrayContaining([
-      expect.objectContaining({ agentTurnId: 'ses-1' }),
-    ]));
+    await flushMicrotasks();
+    expect(runtimeEvents).toEqual([]);
 
     await runtime.resetOrDisposeRuntime();
   });
 
-  it('starts a provider-autonomous turn for oh-my-openagent background output', async () => {
+  it('does not infer an autonomous turn from third-party background-task prose', async () => {
     const { ctx, harness, runtimeEvents } = createContextFixture();
     const client = createClientFixture();
     const runtime = await createStartedRuntime({ ctx, client, harness });
@@ -2964,20 +3982,23 @@ describe('createOpenCodeServerRuntime', () => {
       },
     });
 
-    expect(runtimeEvents).toEqual(expect.arrayContaining([
+    expect(runtimeEvents).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: 'turn-start' }),
       expect.objectContaining({ kind: 'turn-complete' }),
     ]));
-    expect(runtimeEvents).not.toEqual(expect.arrayContaining([
-      expect.objectContaining({ agentTurnId: 'ses-1' }),
-    ]));
   });
 
-  it('publishes detached runtime activity for an OpenCode background task launch and clears it from a matching wake', async () => {
+  it('does not expose a canonical Runtime Activity producer subscription', async () => {
+    const runtime = await createStartedRuntime({ client: createClientFixture() });
+
+    expect(runtime).not.toHaveProperty('subscribeCanonicalAgentSessionEvents');
+  });
+
+  it('keeps OpenCode background-task launch and wake signals out of Runtime Activity truth', async () => {
     const { ctx, harness, stateFieldWrites } = createContextFixture();
     const client = createClientFixture();
     const runtime = await createStartedRuntime({ ctx, client, harness });
-    runtime.beginTurnLifecycle();
+    runtime.beginTurnLifecycle('test-turn');
     stateFieldWrites.length = 0;
 
     await runtime.handleProviderEvent({
@@ -3002,16 +4023,8 @@ describe('createOpenCodeServerRuntime', () => {
       },
     });
 
-    await expect.poll(() => stateFieldWrites.some((write) => (
-      write.fieldId === 'runtime.activity' &&
-      (write.value as { activeCount?: unknown; sourceClass?: unknown }).activeCount === 1 &&
-      (write.value as { activeCount?: unknown; sourceClass?: unknown }).sourceClass === 'provider_detached_task'
-    ))).toBe(true);
     expect(stateFieldWrites).not.toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        fieldId: 'runtime.activity',
-        value: expect.objectContaining({ sourceClass: 'provider_autonomous_output' }),
-      }),
+      expect.objectContaining({ fieldId: 'runtime.activity' }),
     ]));
 
     await runtime.handleProviderEvent({
@@ -3032,111 +4045,16 @@ describe('createOpenCodeServerRuntime', () => {
       },
     });
 
-    await expect.poll(() => stateFieldWrites.filter((write) => write.fieldId === 'runtime.activity').at(-1)).toMatchObject({
-      fieldId: 'runtime.activity',
-      value: {
-        v: 1,
-        activeCount: 0,
-        observedAtMs: null,
-        expiresAtMs: null,
-        sourceClass: null,
-      },
-    });
-  });
-
-  it('does not clear all OpenCode detached runtime activity for an unattributed single-task wake', async () => {
-    const { ctx, harness, stateFieldWrites } = createContextFixture();
-    const client = createClientFixture();
-    const runtime = await createStartedRuntime({ ctx, client, harness });
-    runtime.beginTurnLifecycle();
-
-    await runtime.handleProviderEvent({
-      payload: {
-        type: 'message.part.updated',
-        properties: {
-          part: {
-            id: 'part-background-task-unattributed',
-            type: 'tool',
-            sessionID: 'ses-1',
-            messageID: 'msg-background-task-unattributed',
-            callID: 'call-background-task-unattributed',
-            tool: 'task',
-            state: {
-              status: 'completed',
-              input: { background: true },
-              output: '<task state="running" id="ses-background-child-unattributed"></task>',
-              metadata: { sessionId: 'ses-background-child-unattributed', background: true },
-            },
-          },
-        },
-      },
-    });
-    await expect.poll(() => stateFieldWrites.some((write) => (
-      write.fieldId === 'runtime.activity' &&
-      (write.value as { activeCount?: unknown; sourceClass?: unknown }).activeCount === 1 &&
-      (write.value as { activeCount?: unknown; sourceClass?: unknown }).sourceClass === 'provider_detached_task'
-    ))).toBe(true);
-
-    await runtime.handleProviderEvent({
-      payload: {
-        type: 'session.idle',
-        properties: { sessionID: 'ses-1' },
-      },
-    });
-    const writesBeforeWake = stateFieldWrites.length;
-    await runtime.handleProviderEvent({
-      payload: {
-        type: 'message.part.delta',
-        properties: {
-          sessionID: 'ses-1',
-          messageID: 'msg-background-task-unattributed-wake',
-          partID: 'part-background-task-unattributed-wake',
-          delta: [
-            '<system-reminder>',
-            '[BACKGROUND TASK COMPLETED]',
-            '<!-- OMO_INTERNAL_INITIATOR -->',
-            '</system-reminder>',
-          ].join('\n'),
-        },
-      },
-    });
-
-    expect(stateFieldWrites).toHaveLength(writesBeforeWake);
-
-    await runtime.handleProviderEvent({
-      payload: {
-        type: 'message.part.delta',
-        properties: {
-          sessionID: 'ses-1',
-          messageID: 'msg-background-task-all-complete',
-          partID: 'part-background-task-all-complete',
-          delta: [
-            '<system-reminder>',
-            '[ALL BACKGROUND TASKS COMPLETE]',
-            '<!-- OMO_INTERNAL_INITIATOR -->',
-            '</system-reminder>',
-          ].join('\n'),
-        },
-      },
-    });
-
-    await expect.poll(() => stateFieldWrites.filter((write) => write.fieldId === 'runtime.activity').at(-1)).toMatchObject({
-      fieldId: 'runtime.activity',
-      value: {
-        v: 1,
-        activeCount: 0,
-        observedAtMs: null,
-        expiresAtMs: null,
-        sourceClass: null,
-      },
-    });
+    expect(stateFieldWrites).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ fieldId: 'runtime.activity' }),
+    ]));
   });
 
   it('does not publish detached runtime activity for foreground-only OpenCode tool work', async () => {
     const { ctx, harness, stateFieldWrites } = createContextFixture();
     const client = createClientFixture();
     const runtime = await createStartedRuntime({ ctx, client, harness });
-    runtime.beginTurnLifecycle();
+    runtime.beginTurnLifecycle('test-turn');
     stateFieldWrites.length = 0;
 
     await runtime.handleProviderEvent({
@@ -3231,7 +4149,7 @@ describe('createOpenCodeServerRuntime', () => {
     const { ctx, harness, runtimeEvents, transcriptAppends } = createContextFixture();
     const client = createClientFixture();
     const runtime = await createStartedRuntime({ ctx, client, harness });
-    runtime.beginTurnLifecycle();
+    runtime.beginTurnLifecycle('test-turn');
 
     await expect(runtime.handleProviderEvent({
       payload: {
@@ -3274,13 +4192,15 @@ describe('createOpenCodeServerRuntime', () => {
         }),
       }),
     ]));
+    expect(client.sessionAbort).toHaveBeenCalledOnce();
+    expect(client.sessionAbort).toHaveBeenCalledWith({ sessionId: 'ses-1' });
   });
 
   it('fails active turns when OpenCode reports a provider session error event', async () => {
     const { ctx, harness, runtimeEvents, transcriptAppends } = createContextFixture();
     const client = createClientFixture();
     const runtime = await createStartedRuntime({ ctx, client, harness });
-    runtime.beginTurnLifecycle();
+    runtime.beginTurnLifecycle('test-turn');
 
     await runtime.handleProviderEvent({
       payload: {
@@ -3326,77 +4246,6 @@ describe('createOpenCodeServerRuntime', () => {
     expect(transcriptAppends).toHaveLength(0);
   });
 
-  it('reports connected-service runtime-auth recovery for provider session auth errors', async () => {
-    const refreshRuntimeAuth = vi.fn(async () => ({
-      status: 'unavailable' as const,
-      reason: 'runtime_auth_selection_unavailable',
-    }));
-    const fixture = createContextFixture();
-    const ctx = {
-      ...fixture.ctx,
-      sessions: {
-        ...fixture.ctx.sessions,
-        current: {
-          ...fixture.ctx.sessions.current,
-          auth: {
-            services: {
-              refreshRuntimeAuth,
-            },
-          },
-        },
-      },
-    } as PluginContextV1;
-    const client = createClientFixture();
-    const runtime = await createStartedRuntime({
-      ctx,
-      client,
-      harness: fixture.harness,
-      env: {
-        [OPEN_CODE_BROKER_SELECTIONS_ENV]: serializeOpenCodeBrokerSelections({
-          openai: {
-            serviceId: 'openai-codex',
-            profileId: 'codex-profile',
-            accountId: null,
-            planType: 'plus',
-          },
-        }),
-      },
-    });
-    runtime.beginTurnLifecycle();
-
-    await runtime.handleProviderEvent({
-      payload: {
-        type: 'session.error',
-        properties: {
-          sessionID: 'ses-1',
-          error: {
-            name: 'ProviderAuthError',
-            data: {
-              message: 'Token refresh failed: 401 Authorization: Bearer sk-live-secret',
-            },
-          },
-        },
-      },
-    });
-    await flushMicrotasks();
-
-    expect(refreshRuntimeAuth).toHaveBeenCalledWith(expect.objectContaining({
-      agentId: 'opencode',
-      serviceId: 'openai-codex',
-      targetId: 'happy-session-1',
-      classification: expect.objectContaining({
-        kind: 'auth_expired',
-        limitCategory: 'auth_invalid',
-        serviceId: 'openai-codex',
-        profileId: 'codex-profile',
-        connectedServiceRecovery: 'available',
-      }),
-      reason: 'provider_session_auth_failure',
-    }));
-    expect(refreshRuntimeAuth.mock.calls[0]?.[0]).not.toHaveProperty('selection');
-    expect(JSON.stringify(refreshRuntimeAuth.mock.calls)).not.toContain('sk-live-secret');
-  });
-
   it('publishes a provider session failure once when provider event and status polling race', async () => {
     const { ctx, harness, runtimeEvents, transcriptAppends } = createContextFixture();
     const client = createClientFixture();
@@ -3410,7 +4259,7 @@ describe('createOpenCodeServerRuntime', () => {
       },
     });
     const runtime = await createStartedRuntime({ ctx, client, harness });
-    runtime.beginTurnLifecycle();
+    runtime.beginTurnLifecycle('test-turn');
 
     await Promise.all([
       runtime.handleProviderEvent({
@@ -3454,7 +4303,7 @@ describe('createOpenCodeServerRuntime', () => {
       },
     });
     const runtime = await createStartedRuntime({ ctx, client, harness });
-    runtime.beginTurnLifecycle();
+    runtime.beginTurnLifecycle('test-turn');
 
     await runtime.waitForTurnCompletion();
 
@@ -3491,7 +4340,7 @@ describe('createOpenCodeServerRuntime', () => {
       next: Date.now() + 60_000,
     });
     const runtime = await createStartedRuntime({ ctx, client, harness });
-    runtime.beginTurnLifecycle();
+    runtime.beginTurnLifecycle('test-turn');
 
     await expect(runtime.waitForTurnCompletion()).rejects.toThrow('Quota limit reached for this account');
 
@@ -3518,12 +4367,17 @@ describe('createOpenCodeServerRuntime', () => {
         }),
       }),
     ]));
+    expect(client.sessionAbort).toHaveBeenCalledOnce();
+    expect(client.sessionAbort).toHaveBeenCalledWith({ sessionId: 'ses-1' });
   });
 
   describe('managed-server generation recovery (Lane E)', () => {
-    function generationSnapshot(overrides: Partial<ManagedServerSnapshotV1>): ManagedServerSnapshotV1 {
+    function generationSnapshot(
+      overrides: Partial<OpenCodeManagedServerSnapshot>,
+    ): OpenCodeManagedServerSnapshot {
       return {
         id: 'opencode-server',
+        instanceId: 'host-instance-a',
         state: 'healthy',
         mode: 'managed-spawn',
         baseUrl: 'http://127.0.0.1:49196',
@@ -3533,7 +4387,7 @@ describe('createOpenCodeServerRuntime', () => {
         startedAt: 1000,
         lastHealthyAt: 1200,
         ...overrides,
-      } as ManagedServerSnapshotV1;
+      } as OpenCodeManagedServerSnapshot;
     }
 
     function runningToolPart(callId: string) {
@@ -3562,14 +4416,14 @@ describe('createOpenCodeServerRuntime', () => {
         harness,
         readManagedServerSnapshot: () => snapshot,
       });
-      runtime.beginTurnLifecycle();
+      runtime.beginTurnLifecycle('test-turn');
       // Observe the live running tool under generation A.
       await runtime.handleProviderEvent({
         payload: { type: 'message.part.updated', properties: { part: runningToolPart('call-live-1') } },
       });
 
-      // Managed server replaced mid-turn (new pid/startedAt/baseUrl) → generation B.
-      snapshot = generationSnapshot({ pid: 200, startedAt: 2000, baseUrl: 'http://127.0.0.1:49197', port: 49197 });
+      // Managed server replaced mid-turn (new host-issued instanceId) → generation B.
+      snapshot = generationSnapshot({ instanceId: 'host-instance-b', pid: 200, startedAt: 2000, baseUrl: 'http://127.0.0.1:49197', port: 49197 });
       await runtime.waitForTurnCompletion();
       await runtime.waitForTurnCompletion();
 
@@ -3600,7 +4454,7 @@ describe('createOpenCodeServerRuntime', () => {
         harness,
         readManagedServerSnapshot: () => snapshot,
       });
-      runtime.beginTurnLifecycle();
+      runtime.beginTurnLifecycle('test-turn');
       await runtime.handleProviderEvent({
         payload: { type: 'message.part.updated', properties: { part: runningToolPart('call-live-2') } },
       });
@@ -3612,7 +4466,7 @@ describe('createOpenCodeServerRuntime', () => {
           parts: [{ ...runningToolPart('call-live-2'), state: { status: 'completed' } }],
         },
       ]);
-      snapshot = generationSnapshot({ pid: 200, startedAt: 2000, baseUrl: 'http://127.0.0.1:49197', port: 49197 });
+      snapshot = generationSnapshot({ instanceId: 'host-instance-b', pid: 200, startedAt: 2000, baseUrl: 'http://127.0.0.1:49197', port: 49197 });
       await runtime.waitForTurnCompletion();
 
       expect(runtimeEvents.some(
@@ -3631,7 +4485,7 @@ describe('createOpenCodeServerRuntime', () => {
         harness,
         readManagedServerSnapshot: () => snapshot,
       });
-      runtime.beginTurnLifecycle();
+      runtime.beginTurnLifecycle('test-turn');
       // Live running tool tracked under generation A.
       await runtime.handleProviderEvent({
         payload: { type: 'message.part.updated', properties: { part: runningToolPart('call-orphan') } },
@@ -3640,7 +4494,7 @@ describe('createOpenCodeServerRuntime', () => {
       // terminal and remains as unreconciled live-known work → the supervisor fails the turn once
       // rather than letting orphaned old-generation work wedge completion forever.
       client.setMessages([]);
-      snapshot = generationSnapshot({ pid: 200, startedAt: 2000, baseUrl: 'http://127.0.0.1:49197', port: 49197 });
+      snapshot = generationSnapshot({ instanceId: 'host-instance-b', pid: 200, startedAt: 2000, baseUrl: 'http://127.0.0.1:49197', port: 49197 });
 
       await runtime.waitForTurnCompletion();
       await runtime.waitForTurnCompletion();
@@ -3677,6 +4531,7 @@ describe('createOpenCodeServerRuntime', () => {
       });
       await runtime.handleProviderEvent({ payload: { type: 'server.connected', properties: {} } });
 
+      beginTestHostTurn(runtime);
       await runtime.sendTurnPrompt('hello');
       const permissionAsk = runtime.handleProviderEvent({
         payload: {
@@ -3693,7 +4548,7 @@ describe('createOpenCodeServerRuntime', () => {
       await Promise.resolve();
 
       try {
-        snapshot = generationSnapshot({ pid: 200, startedAt: 2000, baseUrl: 'http://127.0.0.1:49197', port: 49197 });
+        snapshot = generationSnapshot({ instanceId: 'host-instance-b', pid: 200, startedAt: 2000, baseUrl: 'http://127.0.0.1:49197', port: 49197 });
 
         await runtime.waitForTurnCompletion();
 
@@ -3734,6 +4589,7 @@ describe('createOpenCodeServerRuntime', () => {
       });
       await runtime.handleProviderEvent({ payload: { type: 'server.connected', properties: {} } });
 
+      beginTestHostTurn(runtime);
       await runtime.sendTurnPrompt('hello');
       const stalePermissionAsk = runtime.handleProviderEvent({
         payload: {
@@ -3749,9 +4605,10 @@ describe('createOpenCodeServerRuntime', () => {
       void stalePermissionAsk.catch(() => undefined);
       await Promise.resolve();
 
-      snapshot = generationSnapshot({ pid: 200, startedAt: 2000, baseUrl: 'http://127.0.0.1:49197', port: 49197 });
+      snapshot = generationSnapshot({ instanceId: 'host-instance-b', pid: 200, startedAt: 2000, baseUrl: 'http://127.0.0.1:49197', port: 49197 });
       await runtime.waitForTurnCompletion();
       await runtime.handleProviderEvent({ payload: { type: 'server.connected', properties: {} } });
+      beginTestHostTurn(runtime);
       await runtime.sendTurnPrompt('next turn');
 
       resolvePermissionDecision?.({ decision: 'approved' });
@@ -3787,6 +4644,7 @@ describe('createOpenCodeServerRuntime', () => {
       });
       await runtime.handleProviderEvent({ payload: { type: 'server.connected', properties: {} } });
 
+      beginTestHostTurn(runtime);
       await runtime.sendTurnPrompt('hello');
       const stalePermissionAsk = runtime.handleProviderEvent({
         payload: {
@@ -3802,7 +4660,7 @@ describe('createOpenCodeServerRuntime', () => {
       void stalePermissionAsk.catch(() => undefined);
       await Promise.resolve();
 
-      snapshot = generationSnapshot({ pid: 200, startedAt: 2000, baseUrl: 'http://127.0.0.1:49197', port: 49197 });
+      snapshot = generationSnapshot({ instanceId: 'host-instance-b', pid: 200, startedAt: 2000, baseUrl: 'http://127.0.0.1:49197', port: 49197 });
       resolvePermissionDecision?.({ decision: 'approved' });
       await stalePermissionAsk;
 
@@ -3849,11 +4707,11 @@ describe('createOpenCodeServerRuntime', () => {
       };
     }
 
-    function userTextEvents(events: readonly RuntimeEventV1[]): RuntimeEventV1[] {
+    function userTextEvents(events: readonly OpenCodeRuntimeEvent[]): OpenCodeRuntimeEvent[] {
       return events.filter((event) => event.kind === 'transcript-user-text');
     }
 
-    function committedAssistantEvents(events: readonly RuntimeEventV1[]): RuntimeEventV1[] {
+    function committedAssistantEvents(events: readonly OpenCodeRuntimeEvent[]): OpenCodeRuntimeEvent[] {
       return events.filter((event) => event.kind === 'transcript-agent-message-committed'
         && (event as { body?: { type?: string } }).body?.type === 'message');
     }
@@ -3868,7 +4726,8 @@ describe('createOpenCodeServerRuntime', () => {
       const client = createClientFixture();
       const runtime = await createStartedRuntime({ ctx, client, harness });
 
-      await runtime.sendTurnPrompt(prompt);
+      beginTestHostTurn(runtime);
+      const { providerUserMessageId } = await runtime.sendTurnPrompt(prompt);
       await runtime.handleProviderEvent({
         payload: {
           type: 'message.part.updated',
@@ -3883,7 +4742,13 @@ describe('createOpenCodeServerRuntime', () => {
         },
       });
       client.setMessages([
-        externalTerminalAssistantMessage('msg-authored-assistant', 'AUTHORED_ASSISTANT_OK', 11_000),
+        {
+          ...externalTerminalAssistantMessage('msg-authored-assistant', 'AUTHORED_ASSISTANT_OK', 11_000),
+          info: {
+            ...externalTerminalAssistantMessage('msg-authored-assistant', 'AUTHORED_ASSISTANT_OK', 11_000).info,
+            parentID: providerUserMessageId,
+          },
+        },
       ]);
       vi.setSystemTime(11_000);
       await runtime.handleProviderEvent({ payload: { type: 'session.idle', properties: {} } });
@@ -3894,7 +4759,13 @@ describe('createOpenCodeServerRuntime', () => {
 
       client.setMessages([
         providerUserMessageWithCreatedAtMs('msg-delayed-authored-user', prompt, 10_001),
-        externalTerminalAssistantMessage('msg-authored-assistant', 'AUTHORED_ASSISTANT_OK', 11_000),
+        {
+          ...externalTerminalAssistantMessage('msg-authored-assistant', 'AUTHORED_ASSISTANT_OK', 11_000),
+          info: {
+            ...externalTerminalAssistantMessage('msg-authored-assistant', 'AUTHORED_ASSISTANT_OK', 11_000).info,
+            parentID: providerUserMessageId,
+          },
+        },
       ]);
       await runtime.handleProviderEvent({ payload: { type: 'server.connected', properties: {} } });
 
@@ -3910,7 +4781,8 @@ describe('createOpenCodeServerRuntime', () => {
       const runtime = await createStartedRuntime({ ctx, client, harness });
       const prompt = 'Reply exactly: RUQA_PROMPT_STACK_WRAPPED';
 
-      await runtime.sendTurnPrompt(prompt);
+      beginTestHostTurn(runtime);
+      const { providerUserMessageId } = await runtime.sendTurnPrompt(prompt);
       await runtime.handleProviderEvent({
         payload: {
           type: 'message.part.updated',
@@ -3925,7 +4797,13 @@ describe('createOpenCodeServerRuntime', () => {
         },
       });
       client.setMessages([
-        externalTerminalAssistantMessage('msg-wrapped-assistant', 'RUQA_PROMPT_STACK_WRAPPED', 21_000),
+        {
+          ...externalTerminalAssistantMessage('msg-wrapped-assistant', 'RUQA_PROMPT_STACK_WRAPPED', 21_000),
+          info: {
+            ...externalTerminalAssistantMessage('msg-wrapped-assistant', 'RUQA_PROMPT_STACK_WRAPPED', 21_000).info,
+            parentID: providerUserMessageId,
+          },
+        },
       ]);
       vi.setSystemTime(21_000);
       await runtime.handleProviderEvent({ payload: { type: 'session.idle', properties: {} } });
@@ -3957,7 +4835,13 @@ describe('createOpenCodeServerRuntime', () => {
           ].join('\n'),
           20_002,
         ),
-        externalTerminalAssistantMessage('msg-wrapped-assistant', 'RUQA_PROMPT_STACK_WRAPPED', 21_000),
+        {
+          ...externalTerminalAssistantMessage('msg-wrapped-assistant', 'RUQA_PROMPT_STACK_WRAPPED', 21_000),
+          info: {
+            ...externalTerminalAssistantMessage('msg-wrapped-assistant', 'RUQA_PROMPT_STACK_WRAPPED', 21_000).info,
+            parentID: providerUserMessageId,
+          },
+        },
       ]);
       await runtime.handleProviderEvent({ payload: { type: 'server.connected', properties: {} } });
 
@@ -3998,6 +4882,7 @@ describe('createOpenCodeServerRuntime', () => {
       const prompt = 'RUQA late assistant should stay quarantined';
       const authoredProviderUser = externalUserMessage('msg-late-authored-user', prompt, 1_000);
 
+      beginTestHostTurn(runtime);
       await runtime.sendTurnPrompt(prompt);
       client.setMessages([authoredProviderUser]);
       await runtime.waitForTurnCompletion();
@@ -4062,7 +4947,7 @@ describe('createOpenCodeServerRuntime', () => {
       client.setMessages([
         externalUserMessage('msg-colliding-user', 'second provider-session TUI question', 4_000),
       ]);
-      await runtime.startOrLoadSession();
+      await runtime.openSession({ kind: 'create' });
       await runtime.handleProviderEvent({ payload: { type: 'server.connected', properties: {} } });
 
       const mirroredUserEvents = userTextEvents(runtimeEvents);
@@ -4103,7 +4988,7 @@ describe('createOpenCodeServerRuntime', () => {
         externalUserMessage('msg-live-user', 'unrelated history user row', 6_000),
       ]);
       const runtime = await createStartedRuntime({ ctx, client, harness });
-      runtime.beginTurnLifecycle();
+      runtime.beginTurnLifecycle('test-turn');
 
       // server.connected during an active turn must NOT passively mirror unrelated history rows.
       await runtime.handleProviderEvent({ payload: { type: 'server.connected', properties: {} } });
@@ -4129,6 +5014,8 @@ describe('createOpenCodeServerRuntime', () => {
         authoredMessages.push(message);
         vi.setSystemTime(submittedAtMs);
         client.setMessages([message]);
+        client.suppressNextNativePromptPersistence();
+        beginTestHostTurn(runtime);
         await runtime.sendTurnPrompt(prompt);
         vi.setSystemTime(submittedAtMs + 61_001);
         await runtime.waitForTurnCompletion();

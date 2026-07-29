@@ -250,7 +250,6 @@ export const FeatureGatesSchema = z.object({
         .object({
           enabled: z.boolean(),
           hostedWeb: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
-          embeddedWebBundles: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
           structuredMessages: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
           reactNativeBundles: z
             .object({
@@ -264,7 +263,6 @@ export const FeatureGatesSchema = z.object({
         .default({
           enabled: false,
           hostedWeb: DEFAULT_GATE_DISABLED,
-          embeddedWebBundles: DEFAULT_GATE_DISABLED,
           structuredMessages: DEFAULT_GATE_DISABLED,
           reactNativeBundles: { enabled: false, devHotReload: DEFAULT_GATE_DISABLED },
         }),
@@ -275,7 +273,6 @@ export const FeatureGatesSchema = z.object({
       ui: {
         enabled: false,
         hostedWeb: DEFAULT_GATE_DISABLED,
-        embeddedWebBundles: DEFAULT_GATE_DISABLED,
         structuredMessages: DEFAULT_GATE_DISABLED,
         reactNativeBundles: { enabled: false, devHotReload: DEFAULT_GATE_DISABLED },
       },

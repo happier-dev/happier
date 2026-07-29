@@ -8,15 +8,15 @@ import {
 describe('daemonSpawnHookCatalog', () => {
   it('exposes the daemon spawn hook family ids', () => {
     expect(DAEMON_SPAWN_HOOK_EVENT_IDS_V1).toEqual([
-      'backend.resolveRuntimePrerequisites',
-      'spawn.augmentEnv',
+      'agent.resolvePrerequisites',
+      'agent.spawnEnv.augment',
     ]);
   });
 
   it('exposes the daemon spawn hook event ids grouped by phase', () => {
     expect(DAEMON_SPAWN_HOOK_EVENT_IDS_BY_PHASE_V1).toEqual({
-      preflight: ['backend.resolveRuntimePrerequisites'],
-      environment: ['spawn.augmentEnv'],
+      preflight: ['agent.resolvePrerequisites'],
+      environment: ['agent.spawnEnv.augment'],
     });
   });
 });

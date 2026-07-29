@@ -2,6 +2,8 @@ import { existsSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
+import { PLUGIN_MANIFEST } from '../manifest.js';
+
 function requireRecord(value: unknown, label: string): Readonly<Record<string, unknown>> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error(`Expected ${label} to be an object`);
@@ -10,7 +12,7 @@ function requireRecord(value: unknown, label: string): Readonly<Record<string, u
 }
 
 describe('Kiro agent definition', () => {
-  it('owns Kiro runtime, auth, model, and profile facts as plugin data', async () => {
+  it('owns Kiro runtime, model, and profile facts as plugin data', async () => {
     const definitionUrl = new URL('./definition.ts', import.meta.url);
 
     expect(existsSync(definitionUrl)).toBe(true);
@@ -45,35 +47,14 @@ describe('Kiro agent definition', () => {
         defaultMode: 'default',
         allowedModes: ['default'],
       },
-      authProbeConfig: {
-        agentId: 'kiro',
-        binaryNames: ['kiro-cli'],
-        statusCommand: ['whoami', '--format', 'json'],
-        parser: 'kiroWhoamiJson',
-        backgroundChecks: 'manual_only',
+    });
+    expect(definition).not.toHaveProperty('agentCliRuntime');
+    expect(PLUGIN_MANIFEST.contributes.agents[0]?.cli).toMatchObject({
+      executable: { binaryName: 'kiro-cli' },
+      auth: {
+        support: 'login_terminal',
+        probe: { parser: 'kiroWhoamiJson' },
       },
-      localCli: {
-        agentId: 'kiro',
-        detectKey: 'kiro-cli',
-        machineLoginKey: 'kiro-cli',
-        supportKind: 'login_terminal',
-        loginLaunch: {
-          command: 'kiro-cli',
-          args: ['login'],
-        },
-      },
-      agentCliRuntime: {
-        id: 'kiro',
-        title: 'Kiro CLI',
-        binaryName: 'kiro-cli',
-        sourcePreferenceDefault: 'system-first',
-        managedInstall: null,
-        manualInstallKind: 'command',
-        manualInstallRecipes: null,
-        acceptsJavaScriptFileOverride: false,
-        docsUrl: 'https://kiro.dev/docs/cli/acp/',
-      },
-      agentSettings: null,
     });
   });
 });

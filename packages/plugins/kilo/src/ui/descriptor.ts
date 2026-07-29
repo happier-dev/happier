@@ -23,7 +23,7 @@ export const KILO_UI_DESCRIPTOR = Object.freeze({
     },
     picker: {
       iconName: 'code-slash-outline',
-      cliGlyphTokenId: 'agentGlyph.kilo',
+      cliGlyph: 'KL',
       cliGlyphScale: 1.0,
       profileCompatibilityGlyphScale: 1.0,
     },
@@ -37,9 +37,6 @@ export const KILO_UI_DESCRIPTOR = Object.freeze({
     mcpDelivery: 'experimental',
     modelSelection: 'experimental',
     resume: 'experimental',
-  },
-  settings: {
-    descriptorId: 'kilo.agentSettings.v1',
   },
   behavior: {},
   session: {},

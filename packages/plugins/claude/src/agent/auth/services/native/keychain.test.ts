@@ -1,4 +1,4 @@
-import type { ExecRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
+import type { PluginExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/runtime';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -7,34 +7,40 @@ import {
     sweepStaleClaudeCodeMacOsKeychainCredentials,
 } from './keychain.js';
 
+function createProcessResult(params: Readonly<{
+    stdout?: string;
+    stderr?: string;
+    exitCode?: number | null;
+}> = {}): PluginProcessResult {
+    const exitCode = params.exitCode ?? 0;
+    return {
+        termination: {
+            observed: exitCode === null
+                ? { kind: 'signal', signal: 'SIGTERM' }
+                : { kind: 'exit', exitCode },
+            requestedBy: { kind: 'none' },
+        },
+        stdout: new TextEncoder().encode(params.stdout ?? ''),
+        stderr: new TextEncoder().encode(params.stderr ?? ''),
+        stdoutTruncated: false,
+        stderrTruncated: false,
+    };
+}
+
 function createExecFixture(params: Readonly<{
     stdout?: string;
     stderr?: string;
     exitCode?: number | null;
-}> = {}): ExecRuntimeServiceV1 {
+}> = {}): PluginExecService {
     return {
         systemTools: {
             resolve: vi.fn(async () => ({
-                grantId: 'grant-security',
-                toolId: 'claude.macos.security',
-                displayName: 'macOS Keychain security',
-                source: 'system',
+                executable: { kind: 'systemTool', id: 'macos-security' },
                 executablePath: '/usr/bin/security',
-                launch: {
-                    kind: 'binary',
-                    executablePath: '/usr/bin/security',
-                    env: { PATH: '' },
-                },
-                expiresAt: null,
             })),
         },
-        run: vi.fn(async () => ({
-            exitCode: params.exitCode ?? 0,
-            signal: null,
-            stdout: params.stdout ?? '',
-            stderr: params.stderr ?? '',
-        })),
-    } as unknown as ExecRuntimeServiceV1;
+        run: vi.fn(async () => createProcessResult(params)),
+    } as unknown as PluginExecService;
 }
 
 describe('keychain', () => {
@@ -75,9 +81,14 @@ describe('keychain', () => {
             homeDir: '/Users/tester',
         });
 
+        expect(exec.systemTools.resolve).toHaveBeenCalledWith({
+            toolId: 'macos-security',
+            purpose: 'read Claude Code OAuth credentials from the macOS keychain',
+        });
         expect(exec.run).toHaveBeenLastCalledWith(expect.objectContaining({
             args: ['find-generic-password', '-s', 'Claude Code-credentials', '-w'],
-        }), { timeoutMs: 10_000 });
+            timeoutMs: 10_000,
+        }));
     });
 
     it('does not consult the keychain for a managed (suffixed) config dir — managed homes are file-only', async () => {
@@ -119,9 +130,7 @@ describe('keychain', () => {
         });
         const run = vi.fn(async (launch: { args?: readonly string[] }) => {
             if (launch.args?.includes('dump-keychain')) {
-                return {
-                    exitCode: 0,
-                    signal: null,
+                return createProcessResult({
                     stdout: [
                         'keychain: "/Users/tester/Library/Keychains/login.keychain-db"',
                         '    "acct"<blob>="tester"',
@@ -139,15 +148,14 @@ describe('keychain', () => {
                         '    "acct"<blob>="tester"',
                         '    "svce"<blob>="Claude Code Profile"',
                     ].join('\n'),
-                    stderr: '',
-                };
+                });
             }
-            return { exitCode: 0, signal: null, stdout: '', stderr: '' };
+            return createProcessResult();
         });
         const exec = {
             ...createExecFixture(),
             run,
-        } as unknown as ExecRuntimeServiceV1;
+        } as unknown as PluginExecService;
 
         await expect(sweepStaleClaudeCodeMacOsKeychainCredentials({
             exec,
@@ -167,13 +175,16 @@ describe('keychain', () => {
         });
         expect(run).toHaveBeenCalledWith(expect.objectContaining({
             args: ['dump-keychain'],
-        }), { timeoutMs: 10_000 });
+            timeoutMs: 10_000,
+        }));
         expect(run).toHaveBeenCalledWith(expect.objectContaining({
             args: ['delete-generic-password', '-a', 'tester', '-s', liveService],
-        }), { timeoutMs: 10_000 });
+            timeoutMs: 10_000,
+        }));
         expect(run).toHaveBeenCalledWith(expect.objectContaining({
             args: ['delete-generic-password', '-a', 'tester', '-s', staleService],
-        }), { timeoutMs: 10_000 });
+            timeoutMs: 10_000,
+        }));
         // The global login must never be deleted.
         expect(JSON.stringify(run.mock.calls)).not.toContain('"Claude Code-credentials","-s"');
         expect(JSON.stringify(run.mock.calls)).not.toContain('delete-generic-password","-a","other"');
@@ -207,16 +218,14 @@ describe('keychain', () => {
         });
 
         expect(exec.systemTools.resolve).toHaveBeenCalledWith({
-            toolId: 'claude.macos.security',
+            toolId: 'macos-security',
             purpose: 'read Claude Code OAuth credentials from the macOS keychain',
-            preferredCommand: 'security',
         });
         expect(exec.run).toHaveBeenCalledWith({
-            kind: 'binary',
-            executablePath: '/usr/bin/security',
-            env: { PATH: '' },
+            executable: { kind: 'systemTool', id: 'macos-security' },
             args: ['find-generic-password', '-s', 'Claude Code-credentials', '-w'],
-        }, { timeoutMs: 10_000 });
+            timeoutMs: 10_000,
+        });
     });
 
     it('treats invalid macOS keychain credential payloads as missing', async () => {

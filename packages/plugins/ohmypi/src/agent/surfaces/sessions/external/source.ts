@@ -2,7 +2,7 @@ import {
   resolveSessionFileStoreDirsSync,
 } from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
 
-import type { ExternalSessionsSource } from '@happier-dev/plugin-sdk/sessions';
+import type { ExternalSessionsSource } from '@happier-dev/plugin-sdk/experimental/sessions';
 
 import { OH_MY_PI_SESSION_FILE_STORE_DESCRIPTOR_V1 } from '../../../sessionFileStoreDescriptor.js';
 

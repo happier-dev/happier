@@ -1,35 +1,44 @@
 import {
   buildElevenLabsConversationAuthAudience,
   DEFAULT_ELEVENLABS_VOICE_ID,
+  ElevenLabsAgentIdSchema,
+  ElevenLabsModelIdSchema,
   ElevenLabsProvisionRequestSchema,
   ElevenLabsProvisionResponseSchema,
+  ElevenLabsVoiceIdSchema,
   ElevenLabsVoiceProviderSettingsLegacySchema,
   ElevenLabsVoiceProviderSettingsSchema,
   type ElevenLabsVoiceUiEntry,
 } from '../../protocol/voice/index.js';
-import { createElevenLabsVoiceUiClient } from './client.js';
+import type {
+  BundledVoiceConversationUiEntry,
+  BundledVoiceUiEntry,
+} from '@happier-dev/bundled-voice-runtime-contract';
+import {
+  PluginVoiceProviderContributionV1Schema,
+  type PluginVoiceProviderContributionV1,
+} from '@happier-dev/protocol';
+import { PLUGIN_MANIFEST } from '../../manifest.js';
 import { createElevenLabsSettingsSection } from './settings.js';
-import { createElevenLabsAutoprovision } from './autoprovision.js';
-import { createElevenLabsRuntimeContribution } from './runtime/createRuntimeContribution.js';
+import {
+  activate,
+  createElevenLabsVoiceProviderRuntimeRegistration,
+} from './runtime/createRuntimeContribution.js';
+import { createElevenLabsEventMapper } from './runtime/elevenLabsEventMapper.js';
 
-type ElevenLabsVoiceUiRuntimeEntry = ElevenLabsVoiceUiEntry & Readonly<{
-  projectSettings: (envelope: Readonly<{ schemaVersion: number; config: unknown }> | null) => Readonly<{
-    status: 'ready' | 'needs_migration' | 'invalid' | 'unsupported_version';
-    modeId: 'happier' | 'byo' | null;
-  }>;
+export { createElevenLabsProviderDiagnosticEvent } from './runtime/elevenLabsDiagnostics.js';
+
+type ElevenLabsVoiceUiRuntimeEntry = ElevenLabsVoiceUiEntry
+  & Omit<BundledVoiceConversationUiEntry, 'internal'>
+  & Readonly<{
   internal: Readonly<{
-    settingsSchema: typeof ElevenLabsVoiceProviderSettingsSchema;
     legacySettingsSchema: typeof ElevenLabsVoiceProviderSettingsLegacySchema;
-    defaultVoiceId: typeof DEFAULT_ELEVENLABS_VOICE_ID;
     buildConversationAuthAudience: typeof buildElevenLabsConversationAuthAudience;
     provisionRequestSchema: typeof ElevenLabsProvisionRequestSchema;
     provisionResponseSchema: typeof ElevenLabsProvisionResponseSchema;
-    providerSettings: Readonly<{
-      schemaVersion: 2;
-      defaultConfig: ReturnType<typeof ElevenLabsVoiceProviderSettingsSchema.parse>;
+    legacySettingsMigration: Readonly<{
       defaultLegacyConfig: ReturnType<typeof ElevenLabsVoiceProviderSettingsLegacySchema.parse>;
       legacyDefaultSelection: true;
-      parseConfig: (value: unknown) => ReturnType<typeof ElevenLabsVoiceProviderSettingsSchema.parse> | null;
       readLegacySecret: (value: unknown) => unknown | null;
       preserveLegacyEnvelope: (value: unknown) => Readonly<{ schemaVersion: 1; config: unknown }> | null;
       migrateLegacy: (value: unknown) => Readonly<{
@@ -39,42 +48,35 @@ type ElevenLabsVoiceUiRuntimeEntry = ElevenLabsVoiceUiEntry & Readonly<{
           welcome: ReturnType<typeof ElevenLabsVoiceProviderSettingsLegacySchema.parse>['welcome'];
         }>;
       }> | null;
-      projectAnalytics: (value: unknown) => Readonly<Record<string, boolean | string>>;
+      projectLegacy: (
+        value: unknown,
+        context: Readonly<{
+          root: Readonly<{
+            assistantLanguage?: string | null;
+            welcome?: ReturnType<typeof ElevenLabsVoiceProviderSettingsLegacySchema.parse>['welcome'];
+          }>;
+          resolveCredential: (providerId: string, slotId: string) => unknown | null;
+        }>,
+      ) => ReturnType<typeof ElevenLabsVoiceProviderSettingsLegacySchema.parse> | null;
+      mergeLegacy: (
+        currentValue: unknown,
+        migratedValue: unknown,
+      ) => ReturnType<typeof ElevenLabsVoiceProviderSettingsSchema.parse> | null;
     }>;
+    projectSettingsAnalytics: (value: unknown) => Readonly<Record<string, boolean | string>>;
     createSettingsSection: typeof createElevenLabsSettingsSection;
-    createDaemonClient: typeof createElevenLabsVoiceUiClient;
-    createAutoprovision: typeof createElevenLabsAutoprovision;
-    createAdapter: typeof createElevenLabsRuntimeContribution;
+    createTranscriptEventMapper: typeof createElevenLabsEventMapper;
+    projectCredentialReadiness: typeof projectElevenLabsCredentialReadiness;
+    resolveSurfaceCapabilities: NonNullable<
+      BundledVoiceConversationUiEntry['internal']['resolveSurfaceCapabilities']
+    >;
   }>;
-}>;
+  }>;
 
-function projectSettings(
-  envelope: Readonly<{ schemaVersion: number; config: unknown }> | null,
-): ReturnType<ElevenLabsVoiceUiRuntimeEntry['projectSettings']> {
-  if (!envelope || envelope.schemaVersion < 2) return { status: 'needs_migration', modeId: null };
-  if (envelope.schemaVersion > 2) return { status: 'unsupported_version', modeId: null };
-  const parsed = ElevenLabsVoiceProviderSettingsSchema.safeParse(envelope.config);
-  return parsed.success
-    ? { status: 'ready', modeId: parsed.data.billingMode }
-    : { status: 'invalid', modeId: null };
-}
-
-const defaultProviderConfig = ElevenLabsVoiceProviderSettingsSchema.parse({});
 const defaultLegacyConfig = ElevenLabsVoiceProviderSettingsLegacySchema.parse({});
-const providerSettings = Object.freeze({
-  schemaVersion: 2 as const,
-  defaultConfig: defaultProviderConfig,
+const legacySettingsMigration = Object.freeze({
   defaultLegacyConfig,
   legacyDefaultSelection: true as const,
-  parseConfig(value: unknown) {
-    if (value && typeof value === 'object' && !Array.isArray(value)) {
-      const record = value as Record<string, unknown>;
-      if (Object.prototype.hasOwnProperty.call(record, 'assistantLanguage')
-        || Object.prototype.hasOwnProperty.call(record, 'welcome')) return null;
-    }
-    const parsed = ElevenLabsVoiceProviderSettingsSchema.safeParse(value);
-    return parsed.success ? parsed.data : null;
-  },
   readLegacySecret(value: unknown) {
     const parsed = ElevenLabsVoiceProviderSettingsLegacySchema.safeParse(value);
     return parsed.success ? parsed.data.byo.apiKey : null;
@@ -91,52 +93,133 @@ const providerSettings = Object.freeze({
     const parsed = ElevenLabsVoiceProviderSettingsLegacySchema.safeParse(value);
     if (!parsed.success) return null;
     const { assistantLanguage, welcome, byo, ...rest } = parsed.data;
-    const config = {
+    const legacySpeed = rest.tts.voiceSettings.speed;
+    const legacyAgentId = byo.agentId === null ? null : ElevenLabsAgentIdSchema.safeParse(byo.agentId);
+    const legacyVoiceId = ElevenLabsVoiceIdSchema.safeParse(rest.tts.voiceId);
+    const legacyModelId = rest.tts.modelId === null ? null : ElevenLabsModelIdSchema.safeParse(rest.tts.modelId);
+    const config = ElevenLabsVoiceProviderSettingsSchema.safeParse({
+      mode: 'default',
       ...rest,
-      byo: { agentId: byo.agentId },
-    };
+      tts: {
+        ...rest.tts,
+        voiceId: legacyVoiceId.success ? legacyVoiceId.data : DEFAULT_ELEVENLABS_VOICE_ID,
+        modelId: legacyModelId === null ? null : legacyModelId.success ? legacyModelId.data : null,
+        voiceSettings: {
+          ...rest.tts.voiceSettings,
+          speed: legacySpeed !== null && (legacySpeed < 0.7 || legacySpeed > 1.2)
+            ? null
+            : legacySpeed,
+        },
+      },
+      byo: { agentId: legacyAgentId === null ? null : legacyAgentId.success ? legacyAgentId.data : null },
+    });
+    if (!config.success) return null;
     return Object.freeze({
-      config,
+      config: config.data,
       root: Object.freeze({ assistantLanguage, welcome }),
     });
   },
-  projectAnalytics(value: unknown) {
+  projectLegacy(value: unknown, context: Readonly<{
+    root: Readonly<{
+      assistantLanguage?: string | null;
+      welcome?: ReturnType<typeof ElevenLabsVoiceProviderSettingsLegacySchema.parse>['welcome'];
+    }>;
+    resolveCredential: (providerId: string, slotId: string) => unknown | null;
+  }>) {
     const parsed = ElevenLabsVoiceProviderSettingsSchema.safeParse(value);
-    if (!parsed.success) return Object.freeze({});
-    const config = parsed.data;
-    const bucketUnitInterval = (candidate: number | null) => candidate == null
-      ? 'default'
-      : candidate < 0.33 ? 'low' : candidate < 0.67 ? 'medium' : 'high';
-    const speed = config.tts.voiceSettings.speed;
-    return Object.freeze({
-      realtimeElevenLabsBillingMode: config.billingMode,
-      realtimeElevenLabsTtsVoiceIdKind: config.tts.voiceId === DEFAULT_ELEVENLABS_VOICE_ID ? 'default' : 'custom',
-      realtimeElevenLabsTtsModelIdKind: config.tts.modelId ? 'custom' : 'default',
-      realtimeElevenLabsTtsStabilityBucket: bucketUnitInterval(config.tts.voiceSettings.stability),
-      realtimeElevenLabsTtsSimilarityBoostBucket: bucketUnitInterval(config.tts.voiceSettings.similarityBoost),
-      realtimeElevenLabsTtsStyleBucket: bucketUnitInterval(config.tts.voiceSettings.style),
-      realtimeElevenLabsTtsUseSpeakerBoostState: config.tts.voiceSettings.useSpeakerBoost == null
-        ? 'default'
-        : config.tts.voiceSettings.useSpeakerBoost ? 'enabled' : 'disabled',
-      realtimeElevenLabsTtsSpeedBucket: speed == null ? 'default' : speed < 0.9 ? 'slow' : speed <= 1.2 ? 'normal' : 'fast',
-      realtimeElevenLabsByoAgentConfigured: Boolean(config.byo.agentId),
+    if (!parsed.success) return null;
+    const credential = context.resolveCredential('realtime_elevenlabs', 'api_key');
+    const legacy = ElevenLabsVoiceProviderSettingsLegacySchema.safeParse({
+      ...parsed.data,
+      assistantLanguage: context.root.assistantLanguage ?? null,
+      welcome: context.root.welcome ?? {
+        enabled: false,
+        mode: 'immediate',
+        templateId: null,
+      },
+      byo: {
+        ...parsed.data.byo,
+        apiKey: credential,
+      },
     });
+    return legacy.success ? legacy.data : null;
+  },
+  mergeLegacy(_currentValue: unknown, migratedValue: unknown) {
+    const parsed = ElevenLabsVoiceProviderSettingsSchema.safeParse(migratedValue);
+    return parsed.success ? parsed.data : null;
   },
 });
+
+function projectElevenLabsCredentialReadiness(
+  providerConfig: unknown,
+  context: Readonly<{
+    accountProfile: unknown;
+    savedSecret: Readonly<{ status: 'ready' | 'missing' }>;
+  }>,
+) {
+  const parsed = ElevenLabsVoiceProviderSettingsSchema.safeParse(providerConfig);
+  if (!parsed.success || parsed.data.billingMode !== 'byo') {
+    return Object.freeze({
+      status: 'unknown' as const,
+      detailKey: 'settingsVoice.mode.happierSubtitle',
+    });
+  }
+  return Object.freeze({
+    status: context.savedSecret.status,
+    detailKey: context.savedSecret.status === 'ready'
+      ? 'settingsVoice.externalCredentials.ready'
+      : 'settingsVoice.externalCredentials.missing',
+  });
+}
+
+function projectSettingsAnalytics(value: unknown): Readonly<Record<string, boolean | string>> {
+  const parsed = ElevenLabsVoiceProviderSettingsSchema.safeParse(value);
+  if (!parsed.success) return Object.freeze({});
+  const config = parsed.data;
+  const bucketUnitInterval = (candidate: number | null) => candidate == null
+    ? 'default'
+    : candidate < 0.33 ? 'low' : candidate < 0.67 ? 'medium' : 'high';
+  const speed = config.tts.voiceSettings.speed;
+  return Object.freeze({
+    realtimeElevenLabsBillingMode: config.billingMode,
+    realtimeElevenLabsTtsVoiceIdKind: config.tts.voiceId === DEFAULT_ELEVENLABS_VOICE_ID ? 'default' : 'custom',
+    realtimeElevenLabsTtsModelIdKind: config.tts.modelId ? 'custom' : 'default',
+    realtimeElevenLabsTtsStabilityBucket: bucketUnitInterval(config.tts.voiceSettings.stability),
+    realtimeElevenLabsTtsSimilarityBoostBucket: bucketUnitInterval(config.tts.voiceSettings.similarityBoost),
+    realtimeElevenLabsTtsStyleBucket: bucketUnitInterval(config.tts.voiceSettings.style),
+    realtimeElevenLabsTtsUseSpeakerBoostState: config.tts.voiceSettings.useSpeakerBoost == null
+      ? 'default'
+      : config.tts.voiceSettings.useSpeakerBoost ? 'enabled' : 'disabled',
+    realtimeElevenLabsTtsSpeedBucket: speed == null ? 'default' : speed < 0.9 ? 'slow' : speed <= 1.2 ? 'normal' : 'fast',
+    realtimeElevenLabsByoAgentConfigured: Boolean(config.byo.agentId),
+  });
+}
+
+const parsedElevenLabsVoiceProviderDeclaration = PluginVoiceProviderContributionV1Schema.parse(
+  PLUGIN_MANIFEST.contributes.voiceProviders[0],
+);
+if (parsedElevenLabsVoiceProviderDeclaration.kind !== 'conversation') {
+  throw new Error('elevenlabs_voice_provider_must_be_conversation');
+}
+const elevenLabsVoiceProviderDeclaration: Extract<
+  PluginVoiceProviderContributionV1,
+  Readonly<{ kind: 'conversation' }>
+> = parsedElevenLabsVoiceProviderDeclaration;
 
 export const BUNDLED_VOICE_UI_ENTRIES: readonly ElevenLabsVoiceUiRuntimeEntry[] = Object.freeze([
   Object.freeze({
     kind: 'voice.conversation-provider.v1',
     pluginId: 'happier.voice.elevenlabs',
     providerId: 'realtime_elevenlabs',
+    declaration: elevenLabsVoiceProviderDeclaration,
     settingsSectionId: 'voice.provider.realtime_elevenlabs',
     roles: ['conversation_stt', 'conversation_tts', 'realtime_conversation', 'turn_control'],
     requirements: [],
     requirementsByMode: {
       happier: ['server_feature'],
-      byo: ['execution_machine', 'credential'],
+      byo: ['credential'],
     },
-    supportedPlatforms: ['web', 'ios', 'android'],
+    supportedPlatforms: PLUGIN_MANIFEST.contributes.voiceProviders[0].platforms,
     selectionOptions: [
       {
         id: 'happier',
@@ -155,19 +238,32 @@ export const BUNDLED_VOICE_UI_ENTRIES: readonly ElevenLabsVoiceUiRuntimeEntry[] 
         configPatch: { billingMode: 'byo' },
       },
     ],
-    projectSettings,
     internal: Object.freeze({
-      settingsSchema: ElevenLabsVoiceProviderSettingsSchema,
       legacySettingsSchema: ElevenLabsVoiceProviderSettingsLegacySchema,
-      defaultVoiceId: DEFAULT_ELEVENLABS_VOICE_ID,
       buildConversationAuthAudience: buildElevenLabsConversationAuthAudience,
       provisionRequestSchema: ElevenLabsProvisionRequestSchema,
       provisionResponseSchema: ElevenLabsProvisionResponseSchema,
-      providerSettings,
+      legacySettingsMigration,
+      projectSettingsAnalytics,
       createSettingsSection: createElevenLabsSettingsSection,
-      createDaemonClient: createElevenLabsVoiceUiClient,
-      createAutoprovision: createElevenLabsAutoprovision,
-      createAdapter: createElevenLabsRuntimeContribution,
+      createTranscriptEventMapper: createElevenLabsEventMapper,
+      projectCredentialReadiness: projectElevenLabsCredentialReadiness,
+      resolveSurfaceCapabilities(providerConfig: unknown) {
+        if (!ElevenLabsVoiceProviderSettingsSchema.safeParse(providerConfig).success) return null;
+        return Object.freeze({
+          allowsGlobalStart: true,
+          controlSessionScope: 'global' as const,
+          requiresVoiceAgentFeature: false,
+          bargeInEnabled: false,
+          cancelResponse: 'unsupported' as const,
+          interruptionPolicy: 'disabled' as const,
+        });
+      },
     }),
   } satisfies ElevenLabsVoiceUiRuntimeEntry),
-]);
+]) satisfies readonly BundledVoiceUiEntry[];
+
+export {
+  activate,
+  createElevenLabsVoiceProviderRuntimeRegistration,
+};

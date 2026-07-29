@@ -10,7 +10,7 @@ import {
   bindClaudeUnifiedTerminalSession,
   resolveUnifiedTerminalResumeChoice,
   resolveUnifiedTerminalPermissionMode,
-} from './bindSession.js';
+} from './bindSession.testkit.js';
 import { getClaudeProjectPath } from '../../../surfaces/sessions/handoff/path.js';
 
 type SessionParamsWithCredentials =
@@ -134,7 +134,7 @@ describe('bindClaudeUnifiedTerminalSession', () => {
     });
 
     const envelope = expectRuntimeEnvelope(runtime);
-    await envelope.operations.startOrLoadSession();
+    await envelope.operations.startProviderSession();
 
     expect(terminalHost.service.resolve).toHaveBeenCalledWith({ preference: 'tmux' });
 
@@ -169,7 +169,7 @@ describe('bindClaudeUnifiedTerminalSession', () => {
     });
 
     const envelope = expectRuntimeEnvelope(runtime);
-    await envelope.operations.startOrLoadSession();
+    await envelope.operations.startProviderSession();
 
     expect(terminalHost.service.resolve).toHaveBeenCalledWith({ preference: 'zellij' });
 
@@ -226,7 +226,7 @@ describe('bindClaudeUnifiedTerminalSession', () => {
     const envelope = expectRuntimeEnvelope(runtime);
 
     try {
-      await envelope.operations.startOrLoadSession();
+      await envelope.operations.startProviderSession();
 
       expect(ctx.agentRuntime.transcripts.fileFollow.follow).toHaveBeenCalledWith(expect.objectContaining({
         path: transcriptPath,
@@ -234,14 +234,16 @@ describe('bindClaudeUnifiedTerminalSession', () => {
         strategy: 'poll',
       }));
       expect(envelope.operations.readSessionIdentity()).toEqual({ sessionId: 'claude-known-resume' });
+      const launchRequest = vi.mocked(terminalHost.service.createOrAttachHost).mock.calls[0]?.[0];
+      expect(launchRequest?.launch.args).not.toContain('--resume');
     } finally {
       await envelope.operations.resetOrDisposeRuntime().catch(() => undefined);
       await rm(tempDir, { recursive: true, force: true });
     }
   });
 
-  it('starts a live-only transcript follow from an explicit runtime resume id before SessionStart', async () => {
-    const { mkdir, mkdtemp, rm, writeFile } = await import('node:fs/promises');
+  it('defers explicit resume transcript adoption until an exact authenticated SessionStart', async () => {
+    const { mkdtemp, rm } = await import('node:fs/promises');
     const { tmpdir } = await import('node:os');
     const { join } = await import('node:path');
     const tempDir = await mkdtemp(join(tmpdir(), 'claude-explicit-resume-bind-'));
@@ -253,24 +255,20 @@ describe('bindClaudeUnifiedTerminalSession', () => {
 
     const terminalHost = createTerminalHostFixture();
     const events = createEventsFixture();
-    const sessionHooks = {
-      startServer: async () => ({
-        port: 43123,
-        stop: async () => undefined,
-        dispose: async () => undefined,
-      }),
-      resolveForwarderAssets: async () => ({
-        nodeExecutable: '/managed/bin/node',
-        sessionForwarderScript: '/app/scripts/session_hook_forwarder.cjs',
-        permissionForwarderScript: '/app/scripts/permission_hook_forwarder.cjs',
-      }),
-      createPluginDir: async () => '/tmp/happier-claude-hook-plugin',
-      disposePluginDir: async () => undefined,
-      publishProviderTranscript: async () => undefined,
-    };
+    const transcriptFollow = vi.fn(async () => Object.freeze({
+      id: 'explicit-resume-transcript-follow',
+      drainNow: vi.fn(async () => undefined),
+      close: vi.fn(async () => undefined),
+    }));
     const ctx = createPluginContextFixture(terminalHost.service, events.service, {
-      sessionHooks,
-      transcriptFileFollowAllowedPathRoots: [tempDir],
+      transcripts: {
+        append: vi.fn(async () => undefined),
+        defineSource: vi.fn(async (definition: Readonly<{ id: string }>) => ({
+          id: definition.id,
+          dispose: vi.fn(async () => undefined),
+        })),
+        fileFollow: { follow: transcriptFollow },
+      },
     });
     const credentials = {
       token: 'host-token',
@@ -286,18 +284,34 @@ describe('bindClaudeUnifiedTerminalSession', () => {
     };
 
     try {
-      await mkdir(transcriptDir, { recursive: true });
-      await writeFile(transcriptPath, '', 'utf8');
-
       const runtime = await bindClaudeUnifiedTerminalSession({
         ctx,
         sessionParams,
       });
       const envelope = expectRuntimeEnvelope(runtime);
 
-      await envelope.operations.startOrLoadSession();
+      await envelope.operations.startProviderSession();
 
-      expect(ctx.agentRuntime.transcripts.fileFollow.follow).toHaveBeenCalledWith(expect.objectContaining({
+      expect(transcriptFollow).not.toHaveBeenCalled();
+      expect(envelope.operations.readSessionIdentity()).not.toEqual({ sessionId: providerSessionId });
+      const launchRequest = vi.mocked(terminalHost.service.createOrAttachHost).mock.calls[0]?.[0];
+      const launchArgs = launchRequest?.launch.args ?? [];
+      expect(launchArgs.filter((arg) => arg === '--resume')).toHaveLength(1);
+      expect(launchArgs.slice(launchArgs.indexOf('--resume'), launchArgs.indexOf('--resume') + 2)).toEqual([
+        '--resume',
+        providerSessionId,
+      ]);
+
+      const hookRequest = vi.mocked(ctx.agentRuntime.sessionHooks.startServer).mock.calls[0]?.[0];
+      if (!hookRequest?.onSessionHook) throw new Error('session hook server was not started');
+      await hookRequest.onSessionHook(providerSessionId, {
+        hook_event_name: 'SessionStart',
+        session_id: providerSessionId,
+        source: 'resume',
+        transcript_path: transcriptPath,
+      });
+
+      expect(transcriptFollow).toHaveBeenCalledWith(expect.objectContaining({
         path: transcriptPath,
         startAt: 'end',
         strategy: 'poll',

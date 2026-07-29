@@ -1,66 +1,119 @@
-import type {
-    AgentProviderBindingMaterializationV1,
-    ProviderConnectionId,
-    ProviderCredentialTransportV1,
-    ProviderWireProtocol,
-} from '@happier-dev/protocol';
+import type { JsonValue } from '../identity.js';
 
-export type AgentProviderBindingPrepareInputV1 = Readonly<{
+type AgentProviderWireProtocol =
+    | 'anthropic'
+    | 'openai-chat'
+    | 'openai-responses'
+    | 'ollama-native';
+
+type AgentProviderBindingModel = Readonly<{
+    id: string;
+    name: string;
+    capabilities?: Readonly<{
+        reasoningControls?: 'supported' | 'unsupported' | 'unknown';
+    }>;
+}>;
+
+export type AgentProviderCredentialTransport = Readonly<{
+    id: string;
+    protocols: readonly AgentProviderWireProtocol[];
+    uses: readonly ('probe' | 'runtime' | 'management')[];
+    destination:
+        | Readonly<{
+            kind: 'httpHeader';
+            name: string;
+            format: 'raw' | 'bearer' | Readonly<{ template: string }>;
+        }>
+        | Readonly<{
+            kind: 'queryParam';
+            name: string;
+            format: 'raw' | 'bearer' | Readonly<{ template: string }>;
+        }>;
+}>;
+
+type AgentProviderBindingEnvironmentEntry = Readonly<{
+    name: string;
+    value: string | null;
+    source: 'provider';
+}>;
+
+type AgentProviderBindingMaterializationBase = Readonly<{
+    v: 1;
+    env: readonly AgentProviderBindingEnvironmentEntry[];
+    additionalRedactionValues?: readonly string[];
+}>;
+
+export type AgentProviderBindingMaterialization =
+    | (AgentProviderBindingMaterializationBase & Readonly<{ kind: 'spawnEnv' }>)
+    | (AgentProviderBindingMaterializationBase & Readonly<{
+        kind: 'engineConfig';
+        engineConfig: Readonly<Record<string, JsonValue>>;
+    }>)
+    | (AgentProviderBindingMaterializationBase & Readonly<{
+        kind: 'configFile';
+        files: readonly Readonly<{ relativePath: string; utf8: string }>[];
+    }>);
+
+export type AgentProviderBindingPrepareInput = Readonly<{
     v: 1;
     agentTargetKey: string;
-    connectionId: ProviderConnectionId;
+    connectionId: string;
     reservedBindingCandidate?: Readonly<{
         contributionKey: string;
         endpointTemplateId: string;
-        protocol: ProviderWireProtocol;
+        protocol: AgentProviderWireProtocol;
         normalizedUrl: string;
     }>;
 }>;
 
-export type AgentProviderBindingPreparedV1 = Readonly<{
+export type AgentProviderBindingPrepared = Readonly<{
     v: 1;
     materialization: 'spawnEnv' | 'engineConfig' | 'configFile';
     adapterBindingKey?: string;
 }>;
 
-export type AgentProviderBindingCredentialV1 =
+export type AgentProviderBindingCredential =
     | Readonly<{ kind: 'none' }>
     | Readonly<{
         kind: 'apiKey';
-        transport: ProviderCredentialTransportV1;
+        transport: AgentProviderCredentialTransport;
         value: string;
     }>;
 
-export type AgentProviderBindingResolvedFactsV1 = Readonly<{
+export type AgentProviderBindingResolvedFacts = Readonly<{
     v: 1;
     agentTargetKey: string;
     selection: Readonly<{
-        connectionId: ProviderConnectionId;
-        modelId: string;
+        connectionId: string;
+        model: AgentProviderBindingModel;
     }>;
     contributionKey: string | null;
     endpoint: Readonly<{
         endpointTemplateId: string;
         normalizedUrl: string;
-        protocol: ProviderWireProtocol;
+        protocol: AgentProviderWireProtocol;
         publicHeaders: Readonly<Record<string, string>>;
     }>;
-    runtimeCredentialTransport: ProviderCredentialTransportV1 | null;
+    runtimeCredentialTransport: AgentProviderCredentialTransport | null;
     compatibilityFingerprint: string;
 }>;
 
-export type AgentProviderBindingMaterializeInputV1 = Readonly<{
+export type AgentProviderBindingMaterializeInput = Readonly<{
     v: 1;
-    binding: AgentProviderBindingResolvedFactsV1;
-    prepared: AgentProviderBindingPreparedV1;
-    credential: AgentProviderBindingCredentialV1;
+    binding: AgentProviderBindingResolvedFacts;
+    prepared: AgentProviderBindingPrepared;
+    credential: AgentProviderBindingCredential;
 }>;
 
-export type AgentProviderBindingAdapterV1 = Readonly<{
+export type AgentProviderBindingAdapter = Readonly<{
     v: 1;
     adapterVersion: number;
-    prepare(input: AgentProviderBindingPrepareInputV1): AgentProviderBindingPreparedV1;
+    prepare(input: AgentProviderBindingPrepareInput): AgentProviderBindingPrepared;
     materialize(
-        input: AgentProviderBindingMaterializeInputV1,
-    ): AgentProviderBindingMaterializationV1 | Promise<AgentProviderBindingMaterializationV1>;
+        input: AgentProviderBindingMaterializeInput,
+    ): AgentProviderBindingMaterialization | Promise<AgentProviderBindingMaterialization>;
+}>;
+
+export type AgentRuntimeRegistrationOptions = Readonly<{
+    providerBinding?: AgentProviderBindingAdapter;
 }>;

@@ -7,9 +7,7 @@ import {
 import { verifyResumeReachableOhMyPi } from '../connectedServices/reachability.js';
 import { createOhMyPiConnectedServiceRuntimeAuthAdapter } from '../connectedServices/runtimeAuthAdapter.js';
 import { ohMyPiConnectedServiceStateSharingDescriptor } from '../connectedServices/stateSharing.js';
-import { resolveOhMyPiConnectedServiceSwitchContinuity } from '../connectedServices/switchContinuity.js';
 import { OH_MY_PI_PREFLIGHT_SESSION_CONTROLS } from '../preflight/models.js';
-import { createOhMyPiExternalSessionTranscriptStoreAdapter } from '../surfaces/sessions/external/transcriptStoreAdapter.js';
 
 export const OH_MY_PI_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
   agentId: 'ohMyPi',
@@ -22,14 +20,14 @@ export const OH_MY_PI_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
     materializeAuthEnvironment: materializeOhMyPiAuthEnvironment,
     stateSharingDescriptor: ohMyPiConnectedServiceStateSharingDescriptor,
     runtimeAuthAdapter: createOhMyPiConnectedServiceRuntimeAuthAdapter(),
-  },
-  runtimeControl: {
-    connectedServices: {
-      resolveSwitchContinuity: resolveOhMyPiConnectedServiceSwitchContinuity,
-      verifyResumeReachable: verifyResumeReachableOhMyPi,
+    shouldRestartForServiceSwitch: (selection: unknown) =>
+      readOhMyPiConnectedServiceId(selection) !== null,
+    restartRematerializeRequiredReason: 'ohmypi_restart_rematerialize_required',
+    sameAuthGroupRequiresResumeReachability: true,
+    verifyResumeReachable: verifyResumeReachableOhMyPi,
+    recoveryCapabilities: {
+      predictiveSoftSwitch: { mode: 'unsupported' },
+      generationApplicationScope: 'per_session_runtime',
     },
-  },
-  externalSessions: {
-    createTranscriptStoreAdapter: createOhMyPiExternalSessionTranscriptStoreAdapter,
   },
 } as const);

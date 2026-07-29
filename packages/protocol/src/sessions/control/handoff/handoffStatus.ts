@@ -13,6 +13,23 @@ const MAX_DIGEST_LENGTH = 256;
 const MAX_PHASE_DETAIL_LENGTH = 1024;
 const MAX_PROGRESS_WARNINGS = 50;
 const MAX_RECOVERY_ACTIONS = 50;
+export const SESSION_HANDOFF_PREPARE_TARGET_FAILURE_MESSAGE_MAX_LENGTH = 2_000;
+
+export const SessionHandoffPrepareTargetFailureCodeSchema = z.enum([
+  'target_identity_conflict',
+  'agent_version_unsupported',
+]);
+export type SessionHandoffPrepareTargetFailureCode = z.infer<
+  typeof SessionHandoffPrepareTargetFailureCodeSchema
+>;
+
+export const SessionHandoffPrepareTargetFailureSchema = z.object({
+  code: SessionHandoffPrepareTargetFailureCodeSchema,
+  message: z.string().min(1).max(SESSION_HANDOFF_PREPARE_TARGET_FAILURE_MESSAGE_MAX_LENGTH).optional(),
+}).strict();
+export type SessionHandoffPrepareTargetFailure = z.infer<
+  typeof SessionHandoffPrepareTargetFailureSchema
+>;
 
 export const SessionHandoffPhaseSchema = z.enum([
   'preparing',
@@ -30,6 +47,8 @@ export const SessionHandoffStatusCodeSchema = z.enum([
   'pending',
   'ready_for_cutover',
   'in_progress',
+  'awaiting_user_resume',
+  'reconciliation_required',
   'awaiting_recovery',
   'completed',
   'aborted',
@@ -170,6 +189,7 @@ export const SessionHandoffStatusSchema = z
       .max(MAX_RECOVERY_ACTIONS)
       .readonly()
       .default(() => []),
+    failure: SessionHandoffPrepareTargetFailureSchema.optional(),
   })
   .passthrough();
 export type SessionHandoffStatus = z.infer<typeof SessionHandoffStatusSchema>;

@@ -23,10 +23,11 @@ describe('RuntimeEventV1 A.14 contract', () => {
       'tool-result',
       'tool-progress',
       'turn-start',
+      'turn-progress',
       'turn-complete',
       'turn-failed',
       'turn-cancelled',
-      'turn-provider-id-observed',
+      'turn-agent-id-observed',
       'turn-input-appended',
       'transcript-user-text',
       'transcript-agent-message-committed',
@@ -64,6 +65,7 @@ describe('RuntimeEventV1 A.14 contract', () => {
       'tool-result': { ...base, kind: 'tool-result', turnId: 'turn-1', toolCallId: 'tool-1', output: {} },
       'tool-progress': { ...base, kind: 'tool-progress', turnId: 'turn-1', toolCallId: 'tool-1', progress: {} },
       'turn-start': { ...base, kind: 'turn-start', turnId: 'turn-1' },
+      'turn-progress': { ...base, kind: 'turn-progress', turnId: 'turn-1', agentTurnId: 'provider-turn-1' },
       'turn-complete': { ...base, kind: 'turn-complete', turnId: 'turn-1' },
       'turn-failed': {
         ...base,
@@ -74,18 +76,18 @@ describe('RuntimeEventV1 A.14 contract', () => {
           scope: 'primary_session',
           status: 'failed',
           code: 'provider_error',
-          source: 'provider_status_error',
+          source: 'agent_status_error',
           occurredAt: 1,
           sanitizedPreview: 'provider failed',
-          providerTurnId: 'provider-turn-1',
+          agentTurnId: 'provider-turn-1',
         },
       },
       'turn-cancelled': { ...base, kind: 'turn-cancelled', turnId: 'turn-1', reason: 'user_request' },
-      'turn-provider-id-observed': {
+      'turn-agent-id-observed': {
         ...base,
-        kind: 'turn-provider-id-observed',
+        kind: 'turn-agent-id-observed',
         turnId: 'turn-1',
-        providerTurnId: 'provider-turn-1',
+        agentTurnId: 'provider-turn-1',
       },
       'turn-input-appended': { ...base, kind: 'turn-input-appended', turnId: 'turn-1', userMessageSeq: 2 },
       'transcript-user-text': {
@@ -98,7 +100,7 @@ describe('RuntimeEventV1 A.14 contract', () => {
       'transcript-agent-message-committed': {
         ...base,
         kind: 'transcript-agent-message-committed',
-        provider: 'opencode',
+        agentId: 'opencode',
         localId: 'turn-1:turn_failed',
         body: { type: 'turn_failed', id: 'turn-1' },
         meta: { source: 'runtime' },
@@ -107,7 +109,7 @@ describe('RuntimeEventV1 A.14 contract', () => {
         ...base,
         kind: 'turn-rollback-boundary-observed',
         turnId: 'turn-1',
-        providerRollbackOrdinal: 3,
+        agentRollbackOrdinal: 3,
       },
       'turn-rollback-applied': {
         ...base,
@@ -123,7 +125,7 @@ describe('RuntimeEventV1 A.14 contract', () => {
         detail: { kind: 'runtime-mode-change', from: 'terminal', to: 'remote', reason: 'user_request' },
       },
       'session-id-publish': { ...base, kind: 'session-id-publish', publishedSessionId: 'session-1', source: 'runtime' },
-      'descriptor-update': { ...base, kind: 'descriptor-update', descriptor: { v: 1, providerId: 'codex', provider: {} } },
+      'descriptor-update': { ...base, kind: 'descriptor-update', descriptor: { v: 1, agentId: 'codex', provider: {} } },
       'diff-emit': { ...base, kind: 'diff-emit', diff: { files: [] } },
       'backend-error': { ...base, kind: 'backend-error', error: { message: 'failed' } },
       'token-count': { ...base, kind: 'token-count', source: 'provider', scope: 'cumulative', totals: { total: 1 } },
@@ -131,7 +133,7 @@ describe('RuntimeEventV1 A.14 contract', () => {
         ...base,
         kind: 'context-compaction',
         phase: 'started',
-        source: 'provider-event',
+        source: 'agent-event',
         trigger: 'manual',
         lifecycleId: 'compact-1',
         backendId: 'pi',
@@ -142,7 +144,7 @@ describe('RuntimeEventV1 A.14 contract', () => {
         subagent: {
           id: 'subagent-1',
           parentSessionId: 'session-1',
-          origin: 'provider',
+          origin: 'agent',
           kind: 'native',
           status: 'running',
           createdAt: 1,
@@ -160,6 +162,103 @@ describe('RuntimeEventV1 A.14 contract', () => {
     }
   });
 
+  it('rejects an observed rollback checkpoint larger than the canonical turn checkpoint limit', () => {
+    expect(() => runtimeEventSchema().parse({
+      sessionId: 'session-1',
+      emittedAtMs: 1,
+      kind: 'turn-rollback-boundary-observed',
+      turnId: 'turn-1',
+      providerCheckpoint: 'x'.repeat(4_097),
+    })).toThrow();
+  });
+
+  it('rejects transcript user text events without a stable local id', () => {
+    const eventSchema = runtimeEventSchema();
+    const parsed = (eventSchema as typeof eventSchema & {
+      safeParse(input: unknown): { success: boolean };
+    }).safeParse({
+      kind: 'transcript-user-text',
+      sessionId: 'session-1',
+      emittedAtMs: 1,
+      text: 'terminal-origin prompt',
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  it('preserves exact opaque tool call ids and validates bounded operational local ids', () => {
+    const eventSchema = runtimeEventSchema();
+    const exactToolCallId = ' vendor-call \nnext\0byte ';
+    const callLocalId = `acp-call-v1:${'a'.repeat(43)}`;
+    const resultLocalId = `acp-result-v1:${'b'.repeat(43)}`;
+
+    expect(eventSchema.parse({
+      kind: 'tool-progress',
+      sessionId: 'session-1',
+      emittedAtMs: 1,
+      turnId: 'turn-1',
+      toolCallId: exactToolCallId,
+      localId: callLocalId,
+      progress: { status: 'running' },
+    })).toMatchObject({ toolCallId: exactToolCallId, localId: callLocalId });
+    expect(eventSchema.parse({
+      kind: 'tool-call',
+      sessionId: 'session-1',
+      emittedAtMs: 2,
+      turnId: 'turn-1',
+      toolCallId: exactToolCallId,
+      localId: callLocalId,
+      toolName: 'read',
+      toolInput: {},
+    })).toMatchObject({ toolCallId: exactToolCallId, localId: callLocalId });
+    expect(eventSchema.parse({
+      kind: 'tool-result',
+      sessionId: 'session-1',
+      emittedAtMs: 3,
+      turnId: 'turn-1',
+      toolCallId: exactToolCallId,
+      localId: resultLocalId,
+      output: {},
+    })).toMatchObject({ toolCallId: exactToolCallId, localId: resultLocalId });
+    const longExactToolCallId = ` ${'x'.repeat(100_000)}\n `;
+    expect(eventSchema.parse({
+      kind: 'tool-progress',
+      sessionId: 'session-1',
+      emittedAtMs: 4,
+      turnId: 'turn-1',
+      toolCallId: longExactToolCallId,
+      localId: callLocalId,
+      progress: {},
+    })).toMatchObject({ toolCallId: longExactToolCallId, localId: callLocalId });
+
+    for (const kind of ['tool-progress', 'tool-call', 'tool-result'] as const) {
+      const common = {
+        kind,
+        sessionId: 'session-1',
+        emittedAtMs: 1,
+        turnId: 'turn-1',
+        toolCallId: '   ',
+        localId: callLocalId,
+      };
+      const event = kind === 'tool-progress'
+        ? { ...common, progress: {} }
+        : kind === 'tool-call'
+          ? { ...common, toolName: 'read', toolInput: {} }
+          : { ...common, output: {} };
+      expect(() => eventSchema.parse(event)).toThrow();
+    }
+
+    expect(() => eventSchema.parse({
+      kind: 'tool-progress',
+      sessionId: 'session-1',
+      emittedAtMs: 1,
+      turnId: 'turn-1',
+      toolCallId: 'tool-1',
+      localId: `acp-call-v1:${'x'.repeat(500)}`,
+      progress: {},
+    })).toThrow();
+  });
+
   it('keeps turnId session-owned and provider native ids separate', () => {
     const eventSchema = runtimeEventSchema();
     const base = {
@@ -169,25 +268,25 @@ describe('RuntimeEventV1 A.14 contract', () => {
 
     expect(eventSchema.parse({
       ...base,
-      kind: 'turn-provider-id-observed',
+      kind: 'turn-agent-id-observed',
       turnId: 'happier-turn-1',
-      providerTurnId: 'provider-turn-1',
+      agentTurnId: 'provider-turn-1',
     })).toMatchObject({
       turnId: 'happier-turn-1',
-      providerTurnId: 'provider-turn-1',
+      agentTurnId: 'provider-turn-1',
     });
 
     expect(() => eventSchema.parse({
       ...base,
-      kind: 'turn-provider-id-observed',
+      kind: 'turn-agent-id-observed',
       turnId: 'happier-turn-1',
-      providerTurnId: null,
+      agentTurnId: null,
     })).toThrow();
 
     expect(() => eventSchema.parse({
       ...base,
-      kind: 'turn-provider-id-observed',
-      providerTurnId: 'provider-turn-1',
+      kind: 'turn-agent-id-observed',
+      agentTurnId: 'provider-turn-1',
     })).toThrow();
   });
 
@@ -198,7 +297,7 @@ describe('RuntimeEventV1 A.14 contract', () => {
       emittedAtMs: 1,
       kind: 'context-compaction',
       phase: 'completed',
-      source: 'provider-event',
+      source: 'agent-event',
       lifecycleId: 'compact-1',
     };
 

@@ -1,4 +1,4 @@
-import type { TerminalInputInjectionResult } from '@happier-dev/plugin-sdk/experimental/runtime/session';
+import type { TerminalInputInjectionResult } from '@happier-dev/agents';
 import { describe, expect, it } from 'vitest';
 
 import { classifyClaudeUnifiedInjectionFailure } from './injectionFailurePolicy.js';
@@ -21,7 +21,6 @@ const policyOptions = {
   retryAttempt: 1,
   retryLimit: 3,
   retryBaseDelayMs: 250,
-  providerAcceptanceTimeoutMs: 5_000,
 };
 
 describe('classifyClaudeUnifiedInjectionFailure', () => {
@@ -39,7 +38,6 @@ describe('classifyClaudeUnifiedInjectionFailure', () => {
       reason: 'timeout',
     }), policyOptions)).toEqual({
       kind: 'await_provider_confirmation',
-      timeoutMs: 5_000,
     });
   });
 
@@ -62,7 +60,7 @@ describe('classifyClaudeUnifiedInjectionFailure', () => {
     });
   });
 
-  it('normalizes negative timing inputs without allowing negative deadlines', () => {
+  it('keeps possible-effect failures in custody without manufacturing a deadline', () => {
     expect(classifyClaudeUnifiedInjectionFailure(failedInjection({
       phase: 'after_write_before_enter',
       duplicateRisk: 'possible',
@@ -70,10 +68,8 @@ describe('classifyClaudeUnifiedInjectionFailure', () => {
       retryAttempt: 0,
       retryLimit: 3,
       retryBaseDelayMs: -1,
-      providerAcceptanceTimeoutMs: -10,
     })).toEqual({
       kind: 'await_provider_confirmation',
-      timeoutMs: 0,
     });
   });
 });

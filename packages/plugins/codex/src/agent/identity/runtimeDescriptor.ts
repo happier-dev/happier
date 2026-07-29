@@ -3,6 +3,7 @@ import {
   type CanonicalCodexAgentRuntimeDescriptorV1,
   readCanonicalCodexAgentRuntimeDescriptorV1,
 } from '../../protocol/runtimeDescriptorV1.js';
+import { readLinkedExternalSessionV1FromMetadata } from '@happier-dev/protocol';
 
 type RuntimeDescriptorEnvelopeV1<TAgentId extends string = string> = Readonly<{
   v: 1;
@@ -249,13 +250,6 @@ function readCodexRuntimeDescriptorV1BackendMode(value: unknown): PersistedCodex
   return normalizeCodexRuntimeControlMode(descriptor.backendMode);
 }
 
-function readCodexSessionLinkBackendMode(value: unknown): PersistedCodexRuntimeIdentity['backendMode'] | null {
-  const link = asRecord(value);
-  // legacy `providerId` external-link read-compat (pre-rename persisted metadata)
-  if (!link || link.v !== 1 || (link.agentId ?? link.providerId) !== 'codex') return null;
-  return normalizeCodexRuntimeControlMode(link.codexBackendMode);
-}
-
 function readCodexRuntimeDescriptorAgentControlMode(
   value: unknown,
 ): PersistedCodexRuntimeIdentity['backendMode'] | null {
@@ -303,15 +297,12 @@ export function resolvePersistedCodexRuntimeIdentity(metadata: unknown): Persist
     return { backendMode: persistedMode };
   }
 
-  const directSession = asRecord(metadataRecord.directSessionV1);
-  const nestedMode = normalizeCodexRuntimeControlMode(directSession?.codexBackendMode);
-  if (nestedMode) {
-    return { backendMode: nestedMode };
-  }
-
-  const externalSessionMode = readCodexSessionLinkBackendMode(metadataRecord.externalSessionV1);
-  if (externalSessionMode) {
-    return { backendMode: externalSessionMode };
+  const linkedSession = readLinkedExternalSessionV1FromMetadata(metadataRecord);
+  if (linkedSession?.agentId === 'codex' && linkedSession.source.kind === 'codexHome') {
+    const linkedMode = normalizeCodexRuntimeControlMode(linkedSession.codexBackendMode);
+    if (linkedMode) {
+      return { backendMode: linkedMode };
+    }
   }
 
   const codexSessionId = typeof metadataRecord.codexSessionId === 'string' ? metadataRecord.codexSessionId.trim() : '';

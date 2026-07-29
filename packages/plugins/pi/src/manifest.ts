@@ -1,107 +1,127 @@
-import {
-  definePluginManifest,
-  type PluginAgentContributionV2,
-  type PluginManifestV2,
-  type PluginAgentSettingsContributionV1,
-} from '@happier-dev/plugin-sdk/manifest';
+import type { PluginManifest } from '@happier-dev/plugin-sdk/manifest';
 
-import { AGENT_DEFINITION } from './agent/definition.js';
+import { PI_DIRECT_AUTH_ENV_KEYS, PI_LAUNCH_ENV_KEYS } from './agent/launchEnvironment.js';
+import {
+  PI_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
+  PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
+} from './agent/auth/services/requestAuth/purposes.js';
 import { PI_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
 
-const PI_BACKEND_ID = 'pi';
-type PiAgentCliRuntime = NonNullable<PluginAgentContributionV2['agentCliRuntime']>;
+export {
+  PI_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
+  PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
+};
 
-function toPiAgentCliRuntime(): PiAgentCliRuntime {
-  const runtime = AGENT_DEFINITION.agentCliRuntime;
-  return {
-    ...runtime,
-    kindVersion: 1,
-  };
-}
-
-const PI_AGENT_CLI_RUNTIME = Object.freeze(toPiAgentCliRuntime());
-const PI_CONNECTED_SERVICE_IDS = [
-  ...(AGENT_DEFINITION.core.connectedServices?.supportedServiceIds ?? []),
-];
-
-type PiPluginManifestV2 = Omit<PluginManifestV2, 'contributes'> & Readonly<{
-  contributes: Readonly<{
-    agents: ReadonlyArray<PluginAgentContributionV2>;
-    agentSettings: ReadonlyArray<PluginAgentSettingsContributionV1>;
-  }>;
-}>;
-
-// Thin composition file that declares this plugin's canonical manifest.
-// Keep this mostly declarative; executable behavior lives in plugin-owned agent folders.
-export const PLUGIN_MANIFEST = definePluginManifest({
+export const PLUGIN_MANIFEST = {
   schemaVersion: 2,
   id: 'happier.agent.pi',
   version: '0.0.0',
-  displayName: 'pi',
-  description: undefined,
-  engines: { happier: '^0.0.0' },
-  activationEvents: ['onAgent:pi'],
-  uses: ['agents'],
-  entrypoints: { main: './dist/index.js' },
-  permissions: { required: [], optional: [] },
+  displayName: 'Pi',
+  engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
+  entrypoints: { daemon: './dist/index.js' },
+  hostAccess: {
+    required: [{
+      id: 'pi-workspace',
+      capability: 'filesystem',
+      reason: 'Use the admitted Agent workspace as the Pi process working directory.',
+      scope: {
+        locations: [{ root: 'workspace' }],
+        access: ['read'],
+      },
+    }, {
+      id: 'pi-process',
+      capability: 'process',
+      reason: 'Launch the Pi coding-agent CLI through the host execution service.',
+      scope: {
+        executables: [{ kind: 'systemTool', id: 'pi-cli' }],
+        envKeys: [...PI_LAUNCH_ENV_KEYS],
+      },
+    }],
+    optional: [],
+  },
   contributes: {
-    agents: [
-      {
-        kindVersion: 1,
-        id: PI_BACKEND_ID,
-        catalogAgentId: PI_BACKEND_ID,
-        iconAgentId: PI_BACKEND_ID,
-        settingsBackendId: PI_BACKEND_ID,
-        display: {
-          name: 'Pi',
-          subtitle: 'Pi Coding Agent',
-          tags: [],
+    agents: [{
+      id: 'pi',
+      title: 'Pi',
+      runtime: { kind: 'custom' },
+      cli: {
+        displayName: 'Pi Coding Agent CLI',
+        executable: {
+          binaryName: 'pi',
+          knownUserBinDirSuffixes: null,
+          sourcePreference: 'system-first',
         },
-        agentCliRuntime: PI_AGENT_CLI_RUNTIME,
         install: {
-          docsUrl: AGENT_DEFINITION.agentCliRuntime.installGuideUrl ?? undefined,
+          managed: {
+            kind: 'managed_package',
+            packageName: '@earendil-works/pi-coding-agent',
+            binaryName: 'pi',
+          },
+          manual: { kind: 'command' },
+          guideUrl: 'https://github.com/badlogic/pi-mono',
+          docsUrl: null,
         },
         auth: {
-          machineLoginSupport: AGENT_DEFINITION.localCli.supportKind,
-          connectedServiceCompatibility: PI_CONNECTED_SERVICE_IDS,
-        },
-        session: {
-          storage: AGENT_DEFINITION.core.sessionStorage.direct ? 'direct' : 'host',
-          resume: {
-            supportLevel: AGENT_DEFINITION.core.resume.vendorResume,
-            vendorResumeIdField: AGENT_DEFINITION.core.resume.vendorResumeIdField ?? undefined,
+          support: 'status_only',
+          probe: {
+            parser: 'piEnvOnly',
+            backgroundChecks: 'safe',
+            statusArgs: null,
+            envVars: [...PI_DIRECT_AUTH_ENV_KEYS],
           },
-          handoff: {
-            supportLevel: AGENT_DEFINITION.core.handoff.vendorStateTransfer,
-          },
-          sessionCapabilities: AGENT_DEFINITION.core.sessionCapabilities,
-        },
-        ui: {
-          modeSelection: AGENT_DEFINITION.sessionModesKind,
-          modelSelection: AGENT_DEFINITION.modelConfig.supportsSelection ? 'supported' : 'unsupported',
-        },
-        ownedBackendIds: [PI_BACKEND_ID],
-        runtime: { kind: 'custom' },
-        capabilities: {
-          executionRun: {
-            supported: true,
-            structuredOutputRecovery: {
-              plan: 'loose-sections',
-              delegate: 'loose-deliverables',
-            },
-          },
-          mcp: { policy: 'unsupported' },
-          session: {
-            media: {
-              emitsSessionMedia: {
-                supported: false,
-              },
-              nativeImageGeneration: { supported: false },
-            },
-          },
+          loginLaunches: [],
         },
       },
-    ],
-    agentSettings: [PI_AGENT_SETTINGS_CONTRIBUTION],
+      primary: 'sessions',
+      connectedAccounts: [{
+        purpose: PI_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
+        service: {
+          pluginId: 'happier.agent.claude',
+          localId: 'claude-subscription',
+        },
+      }, {
+        purpose: PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
+        service: {
+          pluginId: 'happier.agent.codex',
+          localId: 'openai-codex',
+        },
+      }],
+      capabilities: {
+        surfaces: ['externalSessions'],
+        sessions: {
+          open: ['create', 'resume'],
+          delivery: ['newTurn', 'steer', 'followUp'],
+          cancel: true,
+          configuration: true,
+          compaction: { events: true, manual: true },
+          usageLimitRecovery: { active: ['checkNow'], inactive: ['checkNow'] },
+        },
+        executionRuns: { open: ['create'], checkpoint: false, stop: true },
+      },
+      surfaces: {
+        externalSession: {
+          externalLinkedTakeover: { writerSafety: 'unsupported' },
+          sources: [{
+            sourceKind: 'piAgentDir',
+            schema: {
+              fields: [
+                { kind: 'literal', name: 'kind', value: 'piAgentDir' },
+                { kind: 'string', name: 'agentDir', min: 1, max: 10_000, nullish: true },
+              ],
+              passthrough: true,
+            },
+            key: {
+              segments: [
+                { kind: 'literal', value: 'piAgentDir' },
+                { kind: 'field', field: 'agentDir' },
+              ],
+            },
+            instances: [{ kind: 'default', constants: {} }],
+          }],
+        },
+      },
+    }],
+    systemTools: [{ id: 'pi-cli', title: 'Pi coding-agent CLI', executableNames: ['pi'] }],
+    settings: [PI_AGENT_SETTINGS_CONTRIBUTION],
   },
-} satisfies PiPluginManifestV2);
+} satisfies PluginManifest;

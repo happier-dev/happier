@@ -23,32 +23,23 @@ import {
   type ScmRemoteManagementResponse,
   type ScmRemotePublishResponse,
   type ScmWorkingSnapshot,
-} from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm';
 import {
     readCurrentScmHostingProviderRuntimeServices,
     type ScmHostingProviderRuntimeServices,
-} from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/experimental/scm/hostingProvider';
 import type { ScmBackendContext } from '../types.js';
 import { runScmCommand } from '../runtime.js';
 import { buildScmNonInteractiveEnv } from '../providers/shared/nonInteractiveEnv.js';
 import { invalidatePrStatusCacheAfterSuccessfulScmMutation } from '../hostingProviders/prStatusCacheInvalidation.js';
 import type { ResolvedScmHostingProviderRegistry } from '../hostingProviders/types.js';
+import { readScmHostingProviderRuntimeDescriptor } from '../hostingProviders/runtimeDescriptor.js';
 import { gitRemoteAdd, gitRemoteSetUrl } from './remoteManagementOperations.js';
 import { gitRemotePublish } from './publishOperations.js';
 import { readGitSnapshotForChecks } from './snapshotChecks.js';
 
 type HostingRepositoryRegistry = Pick<ResolvedScmHostingProviderRegistry, 'getAdapter'> & Readonly<{
-    providers?: readonly Readonly<{
-        id: string;
-        kind: string;
-        displayName: string;
-        baseUrl: string;
-        urlSafety?: Readonly<{
-            allowedSchemes: readonly string[];
-            allowedBaseUrls?: readonly string[];
-            allowedOrigins?: readonly string[];
-        }>;
-    }>[];
+    providers?: readonly unknown[];
 }>;
 
 type ScmHostingProviderRepositoryGetInput = Readonly<{
@@ -255,9 +246,12 @@ function providerRefFromDescriptor(input: Readonly<{
     providerId?: string;
     providerKind?: ScmHostingProviderKind;
 }>): ScmHostingProviderRef | null {
-    const provider = input.providerId
-        ? input.registry.providers?.find((entry) => entry.id === input.providerId && (!input.providerKind || entry.kind === input.providerKind))
-        : input.registry.providers?.find((entry) => !input.providerKind || entry.kind === input.providerKind);
+    const provider = input.registry.providers
+        ?.map(readScmHostingProviderRuntimeDescriptor)
+        .filter((entry) => entry !== null)
+        .find((entry) => input.providerId
+            ? entry.id === input.providerId && (!input.providerKind || entry.kind === input.providerKind)
+            : !input.providerKind || entry.kind === input.providerKind);
     if (!provider) return null;
     const providerKind = ScmHostingProviderKindSchema.safeParse(provider.kind);
     if (!providerKind.success) return null;

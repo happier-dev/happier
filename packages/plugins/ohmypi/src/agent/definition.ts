@@ -1,10 +1,5 @@
 const OH_MY_PI_AGENT_ID = 'ohMyPi';
 
-const BUN_INSTALL_RECIPE = Object.freeze([{
-  cmd: 'bun',
-  args: ['install', '-g', '@oh-my-pi/pi-coding-agent'],
-}]);
-
 // IMPORTANT: this must stay JSON-serializable (data-only).
 export const AGENT_DEFINITION = Object.freeze({
   id: OH_MY_PI_AGENT_ID,
@@ -46,48 +41,6 @@ export const AGENT_DEFINITION = Object.freeze({
     defaultMode: 'default',
     allowedModes: ['default'],
   },
-  authProbeConfig: {
-    agentId: OH_MY_PI_AGENT_ID,
-    binaryNames: ['omp'],
-    statusCommand: null,
-    parser: 'piEnvOnly',
-    backgroundChecks: 'safe',
-    envVars: [
-      'OPENAI_CODEX_OAUTH_TOKEN',
-      'OPENAI_API_KEY',
-      'ANTHROPIC_OAUTH_TOKEN',
-      'ANTHROPIC_API_KEY',
-      'GEMINI_API_KEY',
-    ],
-  },
-  localCli: {
-    agentId: OH_MY_PI_AGENT_ID,
-    detectKey: 'omp',
-    machineLoginKey: 'oh-my-pi',
-    supportKind: 'manual_only',
-    loginLaunch: null,
-  },
-  agentCliRuntime: {
-    id: OH_MY_PI_AGENT_ID,
-    title: 'oh-my-pi CLI',
-    binaryName: 'omp',
-    knownUserBinDirSuffixes: ['.bun/bin'],
-    sourcePreferenceDefault: 'system-first',
-    managedInstall: {
-      kind: 'github_release_binary',
-      githubRepo: 'can1357/oh-my-pi',
-      binaryName: 'omp',
-    },
-    manualInstallKind: 'vendor_recipe',
-    manualInstallRecipes: {
-      darwin: BUN_INSTALL_RECIPE,
-      linux: BUN_INSTALL_RECIPE,
-      win32: BUN_INSTALL_RECIPE,
-    },
-    acceptsJavaScriptFileOverride: true,
-    installGuideUrl: 'https://github.com/can1357/oh-my-pi#via-bun-recommended',
-    docsUrl: 'https://github.com/can1357/oh-my-pi',
-  },
   builtInAcpConfig: {
     agentId: OH_MY_PI_AGENT_ID,
     launcher: {
@@ -106,5 +59,4 @@ export const AGENT_DEFINITION = Object.freeze({
       source: './agent/contributions/runtime',
     },
   },
-  agentSettings: null,
 });

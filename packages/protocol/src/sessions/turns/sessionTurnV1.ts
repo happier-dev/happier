@@ -5,6 +5,7 @@ import { SessionIndexedIdentifierMaxLengthV1 } from '../idsV1.js';
 import {
   SessionTurnLifecycleStatusV1Schema,
   SessionTurnRollbackStateV1Schema,
+  SessionTurnProviderCheckpointV1Schema,
   SessionTurnTranscriptAnchorsV1Schema,
 } from './sessionTurnMutationV1.js';
 import { normalizeLegacySessionTurnAgentIdentity } from './compat/agentIdentity.js';
@@ -18,6 +19,7 @@ export const SessionTurnRollbackV1Schema = z
     state: SessionTurnRollbackStateV1Schema,
     reason: z.string().trim().min(1).optional(),
     agentRollbackOrdinal: z.number().int().nonnegative().optional(),
+    providerCheckpoint: SessionTurnProviderCheckpointV1Schema.optional(),
     updatedAt: SessionTurnTimestampV1Schema,
   })
   .passthrough()

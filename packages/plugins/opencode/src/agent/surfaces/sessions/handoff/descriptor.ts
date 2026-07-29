@@ -1,16 +1,14 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
 import {
   type ExternalSessionsSource,
-} from '@happier-dev/plugin-sdk/sessions';
-import type { ExecRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/experimental/sessions';
+import type {
+  PluginExecService,
+  PluginProcessResult,
+} from '@happier-dev/plugin-sdk/runtime';
 import {
   type HandoffSurfaceV1,
   type SessionStateUpdateV1,
-} from '@happier-dev/plugin-sdk';
-import type { PluginContextV1 } from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/experimental/sessions';
 
 import {
   readOpenCodeProviderSessionIdFromMetadata,
@@ -21,6 +19,8 @@ import {
   type OpenCodeSessionAffinity,
 } from '../../../identity/affinity.js';
 import { buildOpenCodeAgentRuntimeDescriptorV1 } from '../../../identity/runtimeDescriptor.js';
+import { OPEN_CODE_SYSTEM_TOOL_ID } from '../../../systemTool.js';
+import { normalizeOpenCodeSessionExportForHandoffComparison } from './exportRecords.js';
 
 const OPEN_CODE_IMPORT_EXPORT_JSON_MAX_BYTES = 8 * 1024 * 1024;
 const OPEN_CODE_EXPORT_MAX_BUFFER_BYTES = 16 * 1024 * 1024;
@@ -52,11 +52,13 @@ function decodeOpenCodeImportExportJson(exportJsonBase64: string): string {
   return decoded;
 }
 
-function resolveOpenCodeImportFileName(providerSessionId: string): string {
-  if (!providerSessionId || providerSessionId.includes('/') || providerSessionId.includes('\\')) {
-    throw new Error(`Invalid providerSessionId for OpenCode handoff: ${providerSessionId}`);
-  }
-  return `${providerSessionId}.json`;
+function isOpenCodeMissingSessionExport(
+  stderr: string,
+  providerSessionId: string,
+): boolean {
+  // OpenCode v1.14.41 at 8ba2a9171597262df9d19516c82a5e14f18f5c63 emits this
+  // exact marker from its export command when the native session is absent.
+  return stderr.includes(`Session not found: ${providerSessionId}`);
 }
 
 function sessionStateUpdatesForImportedSession(params: Readonly<{
@@ -84,11 +86,67 @@ function sessionStateUpdatesForImportedSession(params: Readonly<{
   ];
 }
 
-export function createOpenCodeHandoffSurface(ctx: PluginContextV1): HandoffSurfaceV1 {
-  return createOpenCodeHandoffSurfaceForExec(ctx.agentRuntime.exec);
+function importedSessionResult(params: Readonly<{
+  providerSessionId: string;
+  targetDirectory: string;
+  affinity: OpenCodeSessionAffinity;
+}>) {
+  const backendMode = 'server';
+  const serverBaseUrl = params.affinity.serverBaseUrlExplicit ? params.affinity.serverBaseUrl : null;
+  const source: ExternalSessionsSource = {
+    kind: 'opencodeServer',
+    ...(serverBaseUrl ? { baseUrl: serverBaseUrl } : {}),
+    directory: params.targetDirectory,
+  };
+
+  return {
+    ok: true,
+    value: {
+      providerSessionId: params.providerSessionId,
+      source,
+      launch: {
+        directory: params.targetDirectory,
+        environmentVariables: buildOpenCodeSessionEnvironmentVariables({
+          backendMode,
+          serverBaseUrl,
+          serverBaseUrlExplicit: params.affinity.serverBaseUrlExplicit,
+        }),
+        sessionStateUpdates: sessionStateUpdatesForImportedSession({
+          providerSessionId: params.providerSessionId,
+          backendMode,
+          ...(serverBaseUrl ? { serverBaseUrl } : {}),
+          serverBaseUrlExplicit: params.affinity.serverBaseUrlExplicit,
+        }),
+      },
+    },
+  } as const;
 }
 
-export function createOpenCodeHandoffSurfaceForExec(exec: Pick<ExecRuntimeServiceV1, 'run'>): HandoffSurfaceV1 {
+function readProcessResult(result: PluginProcessResult): Readonly<{
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+}> {
+  return {
+    exitCode: result.termination.observed.kind === 'exit'
+      ? result.termination.observed.exitCode
+      : null,
+    stdout: Buffer.from(result.stdout).toString('utf8'),
+    stderr: Buffer.from(result.stderr).toString('utf8'),
+  };
+}
+
+async function resolveOpenCodeExecutable(
+  exec: PluginExecService,
+  purpose: string,
+) {
+  return (await exec.systemTools.resolve({
+    toolId: OPEN_CODE_SYSTEM_TOOL_ID,
+    purpose,
+  })).executable;
+}
+
+export function createOpenCodeHandoffSurfaceForExec(exec: PluginExecService): HandoffSurfaceV1 {
   return {
     exportBundle: async (params) => {
       const providerSessionId = readOpenCodeProviderSessionIdFromMetadata(params.metadata);
@@ -101,10 +159,12 @@ export function createOpenCodeHandoffSurfaceForExec(exec: Pick<ExecRuntimeServic
       }
 
       try {
-        const result = await exec.run(
-          { kind: 'agent-cli', agentId: 'opencode', args: ['export', providerSessionId] },
-          { maxStdoutBytes: OPEN_CODE_EXPORT_MAX_BUFFER_BYTES },
-        );
+        const executable = await resolveOpenCodeExecutable(exec, 'Export an OpenCode session for handoff');
+        const result = readProcessResult(await exec.run({
+          executable,
+          args: ['export', providerSessionId],
+          maxStdoutBytes: OPEN_CODE_EXPORT_MAX_BUFFER_BYTES,
+        }));
         if (result.exitCode !== 0) {
           return {
             ok: false,
@@ -153,51 +213,72 @@ export function createOpenCodeHandoffSurfaceForExec(exec: Pick<ExecRuntimeServic
         serverBaseUrl: null,
         serverBaseUrlExplicit: false,
       };
-      const tempDir = await mkdtemp(join(tmpdir(), 'handoff-opencode-'));
-      const importPath = join(tempDir, resolveOpenCodeImportFileName(bundle.remoteSessionId));
       try {
-        await writeFile(importPath, decodeOpenCodeImportExportJson(bundle.exportJsonBase64), 'utf8');
-        const result = await exec.run({
-          kind: 'agent-cli',
-          agentId: 'opencode',
-          args: ['import', importPath],
-        });
-        if (result.exitCode !== 0) {
+        const executable = await resolveOpenCodeExecutable(exec, 'Import or compare an OpenCode handoff session');
+        const sourceExport = decodeOpenCodeImportExportJson(bundle.exportJsonBase64);
+        const normalizedSource = normalizeOpenCodeSessionExportForHandoffComparison(
+          sourceExport,
+          bundle.remoteSessionId,
+        );
+        if (!normalizedSource) {
           return {
             ok: false,
-            code: 'target_import_failed',
-            message: result.stderr.trim() || 'OpenCode handoff import failed',
+            code: 'bundle_invalid',
+            message: 'OpenCode handoff export payload has an invalid vendor session shape',
           };
         }
 
-        const backendMode = 'server';
-        const serverBaseUrl = affinity.serverBaseUrlExplicit ? affinity.serverBaseUrl : null;
-        const source: ExternalSessionsSource = {
-          kind: 'opencodeServer',
-          ...(serverBaseUrl ? { baseUrl: serverBaseUrl } : {}),
-          directory: params.targetDirectory,
-        };
+        const existingExport = readProcessResult(await exec.run({
+          executable,
+          args: ['export', bundle.remoteSessionId],
+          cwd: { root: 'workspace', relativePath: '' },
+          maxStdoutBytes: OPEN_CODE_EXPORT_MAX_BUFFER_BYTES,
+        }));
 
+        if (existingExport.exitCode === 0) {
+          const normalizedExisting = Buffer.byteLength(existingExport.stdout, 'utf8') <= OPEN_CODE_IMPORT_EXPORT_JSON_MAX_BYTES
+            ? normalizeOpenCodeSessionExportForHandoffComparison(
+              existingExport.stdout,
+              bundle.remoteSessionId,
+            )
+            : null;
+          if (normalizedExisting === normalizedSource) {
+            return importedSessionResult({
+              providerSessionId: bundle.remoteSessionId,
+              targetDirectory: params.targetDirectory,
+              affinity,
+            });
+          }
+          return {
+            ok: false,
+            code: 'target_identity_conflict',
+            message: `OpenCode target session ${bundle.remoteSessionId} already exists with divergent data`,
+          };
+        }
+        if (!isOpenCodeMissingSessionExport(existingExport.stderr, bundle.remoteSessionId)) {
+          return {
+            ok: false,
+            code: 'target_identity_conflict',
+            message: `OpenCode target session ${bundle.remoteSessionId} could not be compared safely`,
+          };
+        }
+
+        const versionResult = readProcessResult(await exec.run({
+          executable,
+          args: ['--version'],
+          cwd: { root: 'workspace', relativePath: '' },
+        }));
+        const version = versionResult.exitCode === 0 && versionResult.stdout.trim()
+          ? versionResult.stdout.trim()
+          : 'unknown version';
+        // The same pinned version's import command upserts the session and merges
+        // messages/parts on conflict. Until an exact resolved binary proves a
+        // conditional absent-create primitive, invoking it would violate
+        // create-or-identical by racing the read above.
         return {
-          ok: true,
-          value: {
-            providerSessionId: bundle.remoteSessionId,
-            source,
-            launch: {
-              directory: params.targetDirectory,
-              environmentVariables: buildOpenCodeSessionEnvironmentVariables({
-                backendMode,
-                serverBaseUrl,
-                serverBaseUrlExplicit: affinity.serverBaseUrlExplicit,
-              }),
-              sessionStateUpdates: sessionStateUpdatesForImportedSession({
-                providerSessionId: bundle.remoteSessionId,
-                backendMode,
-                ...(serverBaseUrl ? { serverBaseUrl } : {}),
-                serverBaseUrlExplicit: affinity.serverBaseUrlExplicit,
-              }),
-            },
-          },
+          ok: false,
+          code: 'agent_version_unsupported',
+          message: `OpenCode ${version} cannot safely create an absent handoff target`,
         };
       } catch (error) {
         return {
@@ -205,8 +286,6 @@ export function createOpenCodeHandoffSurfaceForExec(exec: Pick<ExecRuntimeServic
           code: 'target_import_failed',
           message: error instanceof Error ? error.message : 'OpenCode handoff import failed',
         };
-      } finally {
-        await rm(tempDir, { recursive: true, force: true });
       }
     },
   };

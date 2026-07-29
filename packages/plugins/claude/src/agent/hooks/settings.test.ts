@@ -26,9 +26,18 @@ describe('Claude hook settings leaf', () => {
         } as Parameters<typeof buildClaudeHookPluginHooks>[0] & { sessionHookSecretFile: string };
         const hooksJson = buildClaudeHookPluginHooks(params);
 
-        for (const hookName of ['SessionStart', 'UserPromptSubmit', 'Stop', 'StopFailure', 'SessionEnd', 'PostToolUse']) {
+        for (const hookName of [
+            'SessionStart',
+            'UserPromptSubmit',
+            'Stop',
+            'StopFailure',
+            'SessionEnd',
+            'PostToolUse',
+            'SubagentStart',
+            'SubagentStop',
+        ]) {
             const command = hooksJson.hooks[hookName]?.[0]?.hooks[0]?.command;
-            expect(command).toBe(`"/bin/node" "/app/session_hook_forwarder.cjs" 43123 "${hookName}" --secret-file "/tmp/happier-hooks/session.secret"`);
+            expect(command).toBe(`'/bin/node' '/app/session_hook_forwarder.cjs' '43123' '${hookName}' '--secret-file' '/tmp/happier-hooks/session.secret'`);
             expect(command).not.toContain('session-secret-123');
         }
         expect(hooksJson.hooks.PermissionRequest).toBeUndefined();
@@ -47,11 +56,11 @@ describe('Claude hook settings leaf', () => {
 
         expect(hooksJson.hooks.PermissionRequest?.[0]?.matcher).toBe('');
         expect(hooksJson.hooks.PermissionRequest?.[0]?.hooks[0]?.command).toBe(
-            '"/bin/node" "/app/permission_hook_forwarder.cjs" 43124 "PermissionRequest" --secret-file "/tmp/happier-hooks/permission.secret"',
+            "'/bin/node' '/app/permission_hook_forwarder.cjs' '43124' 'PermissionRequest' '--secret-file' '/tmp/happier-hooks/permission.secret'",
         );
         expect(hooksJson.hooks.PreToolUse?.[0]?.matcher).toBe('AskUserQuestion');
         expect(hooksJson.hooks.PreToolUse?.[0]?.hooks[0]?.command).toBe(
-            '"/bin/node" "/app/permission_hook_forwarder.cjs" 43124 "PreToolUse" --secret-file "/tmp/happier-hooks/permission.secret"',
+            "'/bin/node' '/app/permission_hook_forwarder.cjs' '43124' 'PreToolUse' '--secret-file' '/tmp/happier-hooks/permission.secret'",
         );
         expect(JSON.stringify(hooksJson)).not.toContain('secret-123');
     });
@@ -86,6 +95,23 @@ describe('Claude hook settings leaf', () => {
 
         expect(hooksJson.hooks.PermissionRequest?.[0]?.hooks[0]?.timeout).toBe(120);
         expect(hooksJson.hooks.PreToolUse?.[0]?.hooks[0]?.timeout).toBe(120);
+    });
+
+    it('quotes shell-sensitive POSIX argv without command substitution or token splitting', () => {
+        const hooksJson = buildClaudeHookPluginHooks({
+            port: 43127,
+            nodeExecutable: "/Applications/Happier $() `node`/node",
+            sessionForwarderScript: "/tmp/hook path/forwarder's \\\\script.cjs",
+            sessionHookSecretFile:
+                "/tmp/secret path/$() `secret` &|<>^%!()'token",
+        });
+
+        expect(hooksJson.hooks.Stop?.[0]?.hooks[0]?.command).toBe(
+            "'/Applications/Happier $() `node`/node' "
+            + "'/tmp/hook path/forwarder'\\''s \\\\script.cjs' "
+            + "'43127' 'Stop' '--secret-file' "
+            + "'/tmp/secret path/$() `secret` &|<>^%!()'\\''token'",
+        );
     });
 
     it('builds a session-scoped Claude plugin manifest', () => {

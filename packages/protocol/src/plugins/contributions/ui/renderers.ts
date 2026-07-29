@@ -35,7 +35,6 @@ export const PluginUiRendererFamilyV1Schema = z.enum([
   'sessionSurface',
   'sessionHeaderAction',
   'hostedWeb',
-  'embeddedWeb',
   'reactNative',
 ]);
 export type PluginUiRendererFamilyV1 = z.infer<typeof PluginUiRendererFamilyV1Schema>;

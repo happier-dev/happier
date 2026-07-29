@@ -11,7 +11,7 @@ describe('Gemini daemon spawn prerequisites', () => {
         },
       },
     })).resolves.toMatchObject({
-      allowed: false,
+      decision: 'deny',
       reasonCode: 'gemini_acp_credentials_unavailable',
       errorMessage: expect.stringContaining('GEMINI_API_KEY'),
     });
@@ -26,7 +26,7 @@ describe('Gemini daemon spawn prerequisites', () => {
           },
         },
       },
-    })).resolves.toEqual({ allowed: true });
+    })).resolves.toEqual({ decision: 'allow' });
   });
 
   it('allows daemon spawn when complete Vertex credentials are materialized', async () => {
@@ -40,7 +40,7 @@ describe('Gemini daemon spawn prerequisites', () => {
           },
         },
       },
-    })).resolves.toEqual({ allowed: true });
+    })).resolves.toEqual({ decision: 'allow' });
   });
 
   it('denies daemon spawn with a Vertex-specific diagnostic when Vertex env is incomplete', async () => {
@@ -53,7 +53,7 @@ describe('Gemini daemon spawn prerequisites', () => {
         },
       },
     })).resolves.toMatchObject({
-      allowed: false,
+      decision: 'deny',
       reasonCode: 'gemini_acp_credentials_unavailable',
       errorMessage: expect.stringContaining('GOOGLE_CLOUD_PROJECT'),
     });

@@ -1,66 +1,32 @@
-import type { TypedEventV1 } from '@happier-dev/plugin-sdk';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import type { ClaudeTerminalLifecycleObservation } from '../lifecycle.js';
 import {
-  CLAUDE_UNIFIED_PROVIDER_HOOK_EVENT_ID,
-  CLAUDE_UNIFIED_PROVIDER_TRANSCRIPT_EVENT_ID,
-  subscribeClaudeUnifiedTerminalLifecycleEvents,
+  mapClaudeUnifiedHookLifecyclePayload,
+  mapClaudeUnifiedTranscriptLifecyclePayload,
 } from './lifecycleEvents.js';
 import { CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID } from './constants.js';
 
 function createHarness() {
-  const handlers = new Map<string, (event: TypedEventV1) => Promise<void> | void>();
   const observations: ClaudeTerminalLifecycleObservation[] = [];
-  const ctx = {
-    events: {
-      subscribe: (id: string, handler: (event: TypedEventV1) => Promise<void> | void) => {
-        handlers.set(id, handler);
-        return { unsubscribe: () => handlers.delete(id) };
-      },
-    },
-    logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
-  } as unknown as Parameters<typeof subscribeClaudeUnifiedTerminalLifecycleEvents>[0]['ctx'];
-
-  subscribeClaudeUnifiedTerminalLifecycleEvents({
-    ctx,
-    happierSessionId: 'happy-session-1',
-    observer: {
-      observeTerminalLifecycle: (observation) => {
-        observations.push(observation);
-      },
-    },
-  });
 
   const publishHook = async (providerPayload: Record<string, unknown>, eventName: string) => {
-    await handlers.get(CLAUDE_UNIFIED_PROVIDER_HOOK_EVENT_ID)?.({
-      id: CLAUDE_UNIFIED_PROVIDER_HOOK_EVENT_ID,
-      payload: {
-        providerId: CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID,
-        sessionId: 'happy-session-1',
-        providerSessionId: 'claude-session-1',
-        eventName,
-        providerPayload,
-      },
-    } as unknown as TypedEventV1);
+    const observation = mapClaudeUnifiedHookLifecyclePayload(
+      { ...providerPayload, eventName },
+      'happy-session-1',
+    );
+    if (observation) observations.push(observation);
   };
 
   const publishTranscript = async (payload: Record<string, unknown>) => {
-    await handlers.get(CLAUDE_UNIFIED_PROVIDER_TRANSCRIPT_EVENT_ID)?.({
-      id: CLAUDE_UNIFIED_PROVIDER_TRANSCRIPT_EVENT_ID,
-      payload: {
-        providerId: CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID,
-        sessionId: 'happy-session-1',
-        providerSessionId: 'claude-session-1',
-        ...payload,
-      },
-    } as unknown as TypedEventV1);
+    const observation = mapClaudeUnifiedTranscriptLifecyclePayload(payload, 'happy-session-1');
+    if (observation) observations.push(observation);
   };
 
   return { observations, publishHook, publishTranscript };
 }
 
-describe('subscribeClaudeUnifiedTerminalLifecycleEvents sidechain gating (ported R-11 / HF-3)', () => {
+describe('Claude unified direct lifecycle mapping (ported R-11 / HF-3)', () => {
   it('maps main-chain hook events into lifecycle observations', async () => {
     const { observations, publishHook } = createHarness();
 

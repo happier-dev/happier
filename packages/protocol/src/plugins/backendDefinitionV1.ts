@@ -7,6 +7,8 @@ import {
 } from './_shared.js';
 import { BackendSurfaceDeclarationV1Schema } from './backendSurfaceDeclarationV1.js';
 import { findBackendExternalSessionSourceReferenceIssues } from './backendExternalSessionSourceReferences.js';
+import { ConnectedServiceIdSchema } from '../connect/connectedServiceBindings.js';
+import { MAX_PLUGIN_TRANSCRIPT_SOURCES_PER_CONTRIBUTION } from './contributionLimits.js';
 
 export const PluginBackendLaunchV1Schema = z.object({
   binaryName: PluginOptionalStringSchema,
@@ -83,7 +85,10 @@ export type PluginBackendExternalSessionSourceSchemaRefinementV1 =
 
 export const PluginBackendExternalSessionSourceSchemaV1Schema = z.object({
   passthrough: z.boolean().optional(),
-  fields: z.array(PluginBackendExternalSessionSourceSchemaFieldV1Schema).min(1),
+  fields: z.array(PluginBackendExternalSessionSourceSchemaFieldV1Schema).min(1).refine(
+    (fields) => new Set(fields.map((field) => field.name)).size === fields.length,
+    'External-session source field names must be unique',
+  ),
   refinements: z.array(PluginBackendExternalSessionSourceSchemaRefinementV1Schema).optional(),
 }).strict();
 export type PluginBackendExternalSessionSourceSchemaV1 =
@@ -123,10 +128,52 @@ export const PluginBackendExternalSessionSourceKeyV1Schema = z.object({
 export type PluginBackendExternalSessionSourceKeyV1 =
   z.infer<typeof PluginBackendExternalSessionSourceKeyV1Schema>;
 
+const PluginBackendExternalSessionSourceInstanceConstantV1Schema = z.union([
+  z.string(),
+  z.number().finite(),
+  z.boolean(),
+  z.null(),
+]);
+
+export const PluginBackendExternalSessionSourceInstanceV1Schema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('default'),
+    constants: z.record(z.string().trim().min(1), PluginBackendExternalSessionSourceInstanceConstantV1Schema).default({}),
+  }).strict(),
+  z.object({
+    kind: z.literal('connectedServiceProfiles'),
+    serviceId: ConnectedServiceIdSchema,
+    constants: z.record(z.string().trim().min(1), PluginBackendExternalSessionSourceInstanceConstantV1Schema).default({}),
+    fields: z.object({
+      serviceId: z.string().trim().min(1),
+      profileId: z.string().trim().min(1),
+    }).strict(),
+  }).strict(),
+]);
+export type PluginBackendExternalSessionSourceInstanceV1 =
+  z.infer<typeof PluginBackendExternalSessionSourceInstanceV1Schema>;
+
+function externalSessionInstanceConstantMatchesField(
+  field: PluginBackendExternalSessionSourceSchemaFieldV1,
+  value: string | number | boolean | null,
+): boolean {
+  if (value === null) return field.nullish === true;
+  if (field.kind === 'unknown') return true;
+  if (typeof value !== 'string') return false;
+  if (field.kind === 'literal') return value === field.value;
+  if (field.kind === 'enum') return field.values.includes(value);
+  return (field.min === undefined || value.length >= field.min)
+    && (field.max === undefined || value.length <= field.max);
+}
+
 export const PluginBackendExternalSessionSourceDeclarationV1Schema = z.object({
   sourceKind: z.string().trim().min(1),
   schema: PluginBackendExternalSessionSourceSchemaV1Schema,
   key: PluginBackendExternalSessionSourceKeyV1Schema,
+  instances: z.array(PluginBackendExternalSessionSourceInstanceV1Schema)
+    .min(1)
+    .max(MAX_PLUGIN_TRANSCRIPT_SOURCES_PER_CONTRIBUTION)
+    .optional(),
 }).strict().superRefine((declaration, ctx) => {
   for (const issue of findBackendExternalSessionSourceReferenceIssues(declaration)) {
     ctx.addIssue({
@@ -135,12 +182,101 @@ export const PluginBackendExternalSessionSourceDeclarationV1Schema = z.object({
       message: `Undeclared external-session source field "${issue.fieldName}"`,
     });
   }
+  const defaults = declaration.instances?.filter((instance) => instance.kind === 'default') ?? [];
+  if (defaults.length > 1) {
+    ctx.addIssue({ code: 'custom', path: ['instances'], message: 'Only one default external-session source instance is allowed' });
+  }
+  const connectedServiceIds = new Set<string>();
+  const fieldsByName = new Map(declaration.schema.fields.map((field) => [field.name, field] as const));
+  const kindField = fieldsByName.get('kind');
+  if (!kindField || kindField.kind !== 'literal' || kindField.value !== declaration.sourceKind) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['schema', 'fields'],
+      message: 'External-session source declarations require a kind literal matching sourceKind',
+    });
+  }
+  for (const [index, instance] of (declaration.instances ?? []).entries()) {
+    for (const [fieldName, value] of Object.entries(instance.constants)) {
+      const field = fieldsByName.get(fieldName);
+      if (field && !externalSessionInstanceConstantMatchesField(field, value)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['instances', index, 'constants', fieldName],
+          message: `External-session source constant does not satisfy field '${fieldName}'`,
+        });
+      }
+    }
+    const suppliedFields = new Set(['kind', ...Object.keys(instance.constants)]);
+    if (instance.kind === 'connectedServiceProfiles') {
+      suppliedFields.add(instance.fields.serviceId);
+      suppliedFields.add(instance.fields.profileId);
+    }
+    for (const field of declaration.schema.fields) {
+      if (field.optional || field.nullish || suppliedFields.has(field.name)) continue;
+      ctx.addIssue({
+        code: 'custom',
+        path: ['instances', index],
+        message: `External-session source instance does not supply required field '${field.name}'`,
+      });
+    }
+    if (instance.kind !== 'connectedServiceProfiles') continue;
+    if (connectedServiceIds.has(instance.serviceId)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['instances', index, 'serviceId'],
+        message: `Duplicate connected-service profile source owner for '${instance.serviceId}'`,
+      });
+    }
+    connectedServiceIds.add(instance.serviceId);
+    for (const [mappingName, fieldName] of Object.entries(instance.fields)) {
+      const field = fieldsByName.get(fieldName);
+      if (field && field.kind !== 'string') {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['instances', index, 'fields', mappingName],
+          message: `Connected-service identity target '${fieldName}' must be a string field`,
+        });
+      }
+    }
+    if (Object.prototype.hasOwnProperty.call(instance.constants, instance.fields.serviceId)
+      || Object.prototype.hasOwnProperty.call(instance.constants, instance.fields.profileId)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['instances', index, 'constants'],
+        message: 'Connected-service identity fields cannot also be constants',
+      });
+    }
+    if (instance.fields.serviceId === instance.fields.profileId) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['instances', index, 'fields'],
+        message: 'Connected-service and profile identifiers require distinct source fields',
+      });
+    }
+  }
 });
 export type PluginBackendExternalSessionSourceDeclarationV1 =
   z.infer<typeof PluginBackendExternalSessionSourceDeclarationV1Schema>;
 
+export const PluginAgentExternalLinkedTakeoverWriterSafetyV1Schema = z.enum([
+  'native_prevention',
+  'unsupported',
+]);
+export type PluginAgentExternalLinkedTakeoverWriterSafetyV1 = z.infer<
+  typeof PluginAgentExternalLinkedTakeoverWriterSafetyV1Schema
+>;
+
+const PluginAgentExternalLinkedTakeoverV1Schema = z.object({
+  writerSafety: PluginAgentExternalLinkedTakeoverWriterSafetyV1Schema,
+}).strict();
+
 export const PluginBackendExternalSessionSurfaceV1Schema = z.object({
-  sources: z.array(PluginBackendExternalSessionSourceDeclarationV1Schema).default([]),
+  sources: z.array(PluginBackendExternalSessionSourceDeclarationV1Schema).default([]).refine(
+    (sources) => new Set(sources.map((source) => source.sourceKind)).size === sources.length,
+    'External-session source kinds must be unique within an Agent contribution',
+  ),
+  externalLinkedTakeover: PluginAgentExternalLinkedTakeoverV1Schema.optional(),
 }).strict();
 export type PluginBackendExternalSessionSurfaceV1 =
   z.infer<typeof PluginBackendExternalSessionSurfaceV1Schema>;
@@ -355,14 +491,21 @@ export const PluginBackendDefinitionV1Schema = PluginBackendDefinitionV1BaseSche
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['runtimeAdapters'],
-      message: 'Backend surface declarations must use surfaceHandlers; runtimeAdapters is not final SDK vocabulary.',
+      message: 'Manifest-declared backend runtime handlers are retired; runtimeAdapters is not accepted.',
     });
   }
   if (hasOwn(value, 'runtimeCoreHooks')) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['runtimeCoreHooks'],
-      message: 'Backend surface declarations must use surfaceHandlers; runtimeCoreHooks is not final SDK vocabulary.',
+      message: 'Manifest-declared backend runtime handlers are retired; runtimeCoreHooks is not accepted.',
+    });
+  }
+  if (value.surfaceHandlers.length > 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['surfaceHandlers'],
+      message: 'Manifest-declared backend surface handlers are retired; executable handlers must be published by the authoritative activated runtime.',
     });
   }
 });

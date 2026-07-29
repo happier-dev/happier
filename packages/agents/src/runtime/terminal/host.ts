@@ -10,11 +10,18 @@ import type { TerminalHostLivenessV1 } from './inputReadiness.js';
 
 export type TerminalHostPreference = 'auto' | TerminalHostKind;
 
+declare const terminalAttachmentIdBrand: unique symbol;
+
+export type TerminalAttachmentId = string & Readonly<{
+    [terminalAttachmentIdBrand]: 'TerminalAttachmentId';
+}>;
+
 export type TerminalHostAttachMetadata = AttachSurfaceStaticMetadataV1 & Readonly<{
     attachStrategy: 'terminal_host';
 }>;
 
 export type TerminalHostHandle = Readonly<{
+    attachmentId?: TerminalAttachmentId;
     kind: TerminalHostKind;
     sessionName: string;
     paneId?: string;

@@ -24,5 +24,8 @@ describe('connectedServiceErrors', () => {
         expect(ConnectedServiceErrorCodeSchema.parse('connect_group_generation_conflict')).toBe(
             'connect_group_generation_conflict',
         );
+        expect(ConnectedServiceErrorCodeSchema.parse('connect_credential_mutation_superseded')).toBe(
+            'connect_credential_mutation_superseded',
+        );
     });
 });

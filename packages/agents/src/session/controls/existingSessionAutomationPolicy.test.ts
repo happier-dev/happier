@@ -3,12 +3,25 @@ import { describe, expect, it } from 'vitest';
 import { evaluateExistingSessionAutomationEligibility } from './existingSessionAutomationPolicy.js';
 
 describe('evaluateExistingSessionAutomationEligibility', () => {
-  it('accepts vendor-resumable sessions with a persisted resume id', () => {
+  it('requires Claude transcript continuity proof before vendor resume automation', () => {
     expect(
       evaluateExistingSessionAutomationEligibility({
         metadata: {
           flavor: 'claude',
           claudeSessionId: 'claude-session-1',
+        },
+      }),
+    ).toEqual({
+      eligible: false,
+      reasonCode: 'vendor_resume_continuity_proof_missing',
+    });
+
+    expect(
+      evaluateExistingSessionAutomationEligibility({
+        metadata: {
+          flavor: 'claude',
+          claudeSessionId: 'claude-session-1',
+          claudeTranscriptPath: '/tmp/claude-session-1.jsonl',
         },
       }),
     ).toEqual({

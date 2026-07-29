@@ -1,5 +1,19 @@
 import { z } from 'zod';
 
+export const SSH_TUNNEL_SYSTEM_TASK_KINDS = Object.freeze({
+  ensure: 'daemon.sshTunnel.ensure.v1',
+  list: 'daemon.sshTunnel.list.v1',
+  release: 'daemon.sshTunnel.release.v1',
+  stop: 'daemon.sshTunnel.stop.v1',
+} as const);
+export const SSH_TUNNEL_SYSTEM_TASK_KIND_IDS = Object.freeze([
+  SSH_TUNNEL_SYSTEM_TASK_KINDS.ensure,
+  SSH_TUNNEL_SYSTEM_TASK_KINDS.list,
+  SSH_TUNNEL_SYSTEM_TASK_KINDS.release,
+  SSH_TUNNEL_SYSTEM_TASK_KINDS.stop,
+] as const);
+export type SshTunnelSystemTaskKind = typeof SSH_TUNNEL_SYSTEM_TASK_KIND_IDS[number];
+
 export const SshTunnelPurposeSchema = z.enum([
   'remote-host-access',
   'relay-access-local-bridge',

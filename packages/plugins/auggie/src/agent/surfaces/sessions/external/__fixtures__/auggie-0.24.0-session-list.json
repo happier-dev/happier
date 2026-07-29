@@ -1,0 +1,35 @@
+[
+  {
+    "sessionId": "auggie-fixture-session-2",
+    "created": "2026-07-20T10:00:00.000Z",
+    "modified": "2026-07-20T10:15:00.000Z",
+    "exchangeCount": 3,
+    "workspaceRoot": "/workspace/fixture-two",
+    "workspaceId": "workspace-fixture-two",
+    "firstUserMessage": "Inspect the deterministic fixture",
+    "lastUserMessage": "Summarize the deterministic fixture",
+    "userMessages": [
+      "Inspect the deterministic fixture",
+      "Summarize the deterministic fixture"
+    ],
+    "lastRequestId": "request-fixture-2",
+    "requestIds": [
+      "request-fixture-1",
+      "request-fixture-2"
+    ],
+    "name": "Deterministic fixture session",
+    "poseidonAgentId": "poseidon-fixture",
+    "isCloudAgent": false
+  },
+  {
+    "sessionId": "auggie-fixture-session-1",
+    "created": "2026-07-19T08:00:00.000Z",
+    "modified": "2026-07-19T08:05:00.000Z",
+    "exchangeCount": 1,
+    "workspaceRoot": "/workspace/fixture-one",
+    "workspaceId": "workspace-fixture-one",
+    "userMessages": [],
+    "requestIds": [],
+    "isCloudAgent": false
+  }
+]

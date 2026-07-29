@@ -1,7 +1,6 @@
 import type {
-    PluginPromptAssetContributionV1,
-    PromptAssetCapabilitiesV1,
-    PromptAssetTypeDescriptorV1,
+    PromptAssetCapabilities,
+    PromptAssetTypeDescriptor,
 } from '@happier-dev/plugin-sdk/manifest';
 
 export type ClaudePromptAssetConfig = Readonly<{
@@ -13,7 +12,17 @@ export type ClaudePromptAssetConfig = Readonly<{
     projectRootDisplayPath: string;
     userRootPath: readonly string[];
     userRootDisplayPath: string;
-    capabilities?: PromptAssetCapabilitiesV1;
+    capabilities?: PromptAssetCapabilities;
+}>;
+
+/**
+ * Host adapter configuration retained for the existing prompt-library runtime.
+ * This is deliberately not a V2 manifest contribution: executable adapter
+ * selection is host-owned, while manifest prompt assets are declarative
+ * resources targeted at an Agent.
+ */
+export type ClaudePromptAssetAdapterConfig = ClaudePromptAssetConfig & Readonly<{
+    adapterKind: 'markdownDoc' | 'skillMd';
 }>;
 
 export const CLAUDE_COMMAND_PROMPT_ASSET_CONFIG = {
@@ -54,9 +63,9 @@ export const PLUGIN_PROMPT_ASSET_DESCRIPTORS = Object.freeze([
         adapterKind: 'skillMd',
         ...CLAUDE_SKILL_PROMPT_ASSET_CONFIG,
     },
-] satisfies readonly PluginPromptAssetContributionV1[]);
+] satisfies readonly ClaudePromptAssetAdapterConfig[]);
 
-export function buildClaudeCommandPromptAssetDescriptor(): PromptAssetTypeDescriptorV1 {
+export function buildClaudeCommandPromptAssetDescriptor(): PromptAssetTypeDescriptor {
     return {
         id: CLAUDE_COMMAND_PROMPT_ASSET_CONFIG.assetTypeId,
         providerId: CLAUDE_COMMAND_PROMPT_ASSET_CONFIG.providerId,
@@ -74,7 +83,7 @@ export function buildClaudeCommandPromptAssetDescriptor(): PromptAssetTypeDescri
     };
 }
 
-export function buildClaudeSkillPromptAssetDescriptor(): PromptAssetTypeDescriptorV1 {
+export function buildClaudeSkillPromptAssetDescriptor(): PromptAssetTypeDescriptor {
     return {
         id: CLAUDE_SKILL_PROMPT_ASSET_CONFIG.assetTypeId,
         providerId: CLAUDE_SKILL_PROMPT_ASSET_CONFIG.providerId,

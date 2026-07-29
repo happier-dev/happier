@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type {
   ScmHostingProviderRef,
   ScmPullRequestSummary,
-} from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm';
 
 import { createPrStatusCache } from './prStatusCache.js';
 

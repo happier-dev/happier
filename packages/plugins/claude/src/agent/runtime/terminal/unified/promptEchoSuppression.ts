@@ -1,8 +1,15 @@
 import { normalizeClaudeUnifiedPromptIdentityText } from './promptIdentity.js';
 
 export type ClaudeUnifiedPromptEchoSuppressor = Readonly<{
-  recordAcceptedPrompt(input: Readonly<{ text: string; acceptedAtMs?: number; agentTurnId?: string | null }>): void;
+  recordAcceptedPrompt(input: Readonly<{
+    text: string;
+    acceptedAtMs?: number;
+    agentTurnId?: string | null;
+    retainUntilObserved?: boolean;
+  }>): void;
   consumeAcceptedPromptEcho(input: Readonly<{ text: string; observedAtMs?: number; agentTurnId?: string | null }>): boolean;
+  // Hook and JSONL identities may differ during one live turn; after it ends, same-text rows are independent input.
+  clearAcceptedPromptEchoes(): void;
   recordMaterializedTerminalPrompt(input: Readonly<{ text: string; materializedAtMs?: number; agentTurnId?: string | null }>): void;
   consumeMaterializedTerminalPromptDuplicate(input: Readonly<{ text: string; observedAtMs?: number; agentTurnId?: string | null }>): boolean;
 }>;
@@ -15,8 +22,9 @@ export type ClaudeUnifiedPromptEchoSuppressorOptions = Readonly<{
 
 type PendingPromptText = Readonly<{
   text: string;
-  expiresAtMs: number;
+  expiresAtMs: number | null;
   agentTurnId: string | null;
+  retainUntilObserved: boolean;
 }>;
 
 const DEFAULT_ACCEPTED_PROMPT_ECHO_WINDOW_MS = 30_000;
@@ -39,10 +47,11 @@ function normalizeProviderTurnId(value: string | null | undefined): string | nul
 }
 
 function pruneExpired(prompts: PendingPromptText[], observedAtMs: number): void {
-  while (prompts.length > 0) {
-    const next = prompts[0];
-    if (!next || next.expiresAtMs >= observedAtMs) return;
-    prompts.shift();
+  for (let index = prompts.length - 1; index >= 0; index -= 1) {
+    const expiresAtMs = prompts[index]?.expiresAtMs;
+    if (expiresAtMs !== null && expiresAtMs !== undefined && expiresAtMs < observedAtMs) {
+      prompts.splice(index, 1);
+    }
   }
 }
 
@@ -50,12 +59,18 @@ function promptMatches(
   prompt: PendingPromptText,
   input: Readonly<{ text: string; agentTurnId?: string | null }>,
 ): boolean {
-  const agentTurnId = normalizeProviderTurnId(input.agentTurnId);
-  if (prompt.agentTurnId || agentTurnId) {
-    return prompt.agentTurnId !== null && agentTurnId !== null && prompt.agentTurnId === agentTurnId;
-  }
   const text = normalizeText(input.text);
-  return text !== null && prompt.text === text;
+  if (text === null || prompt.text !== text) return false;
+  if (prompt.retainUntilObserved) return true;
+
+  const agentTurnId = normalizeProviderTurnId(input.agentTurnId);
+  if (prompt.agentTurnId !== null && agentTurnId !== null) {
+    return prompt.agentTurnId === agentTurnId;
+  }
+  if (prompt.agentTurnId !== null || agentTurnId !== null) {
+    return false;
+  }
+  return true;
 }
 
 function consumeMatchingPrompt(
@@ -105,12 +120,18 @@ export function createClaudeUnifiedPromptEchoSuppressor(
       pruneExpired(acceptedPromptEchoes, acceptedAtMs);
       acceptedPromptEchoes.push({
         text,
-        expiresAtMs: acceptedAtMs + acceptedPromptEchoWindowMs,
+        expiresAtMs: input.retainUntilObserved === true
+          ? null
+          : acceptedAtMs + acceptedPromptEchoWindowMs,
         agentTurnId: normalizeProviderTurnId(input.agentTurnId),
+        retainUntilObserved: input.retainUntilObserved === true,
       });
     },
     consumeAcceptedPromptEcho(input) {
       return consumeMatchingPrompt(acceptedPromptEchoes, input, nowMs);
+    },
+    clearAcceptedPromptEchoes() {
+      acceptedPromptEchoes.length = 0;
     },
     recordMaterializedTerminalPrompt(input) {
       const text = normalizeText(input.text);
@@ -124,6 +145,7 @@ export function createClaudeUnifiedPromptEchoSuppressor(
         text,
         expiresAtMs: materializedAtMs + terminalPromptDuplicateWindowMs,
         agentTurnId: normalizeProviderTurnId(input.agentTurnId),
+        retainUntilObserved: false,
       });
     },
     consumeMaterializedTerminalPromptDuplicate(input) {

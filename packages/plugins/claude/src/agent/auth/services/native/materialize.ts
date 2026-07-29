@@ -1,11 +1,12 @@
 import { chmod, lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
-import type { ExecRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
+import type { PluginExecService } from '@happier-dev/plugin-sdk/runtime';
 
 import {
     buildClaudeCodeCredentialPayload,
+    readClaudeCodeNativeCredentialPayload,
     resolveClaudeCodeCredentialsFilePath,
     writeClaudeCodeCredentialsFile,
 } from './credentials.js';
@@ -20,6 +21,7 @@ import {
     resolveClaudeCodeNativeAuthProvenancePath,
     writeClaudeCodeNativeAuthProvenance,
 } from './provenance.js';
+import { reconcileClaudeAccountScopedRootConfig } from '../workspaceTrust.js';
 
 export type ClaudeNativeAuthMaterializationDiagnostic = Readonly<{
     code: string;
@@ -175,7 +177,7 @@ function lazySweepKey(params: Readonly<{
 }
 
 function scheduleLazyStaleKeychainSweep(params: Readonly<{
-    exec: ExecRuntimeServiceV1;
+    exec: PluginExecService;
     username?: string | null | undefined;
     homeDir?: string | null | undefined;
 }>): void {
@@ -209,6 +211,42 @@ async function credentialFileExists(claudeConfigDir: string): Promise<boolean> {
     }
 }
 
+function readNonBlankString(value: unknown): string | null {
+    return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+async function shouldPreserveClaudeAccountScopedState(params: Readonly<{
+    record: ConnectedServiceCredentialRecordV1;
+    claudeConfigDir: string;
+    existingProvenance: Awaited<ReturnType<typeof readClaudeCodeNativeAuthProvenance>>;
+    incomingPayload: ReturnType<typeof buildClaudeCodeCredentialPayload> & { status: 'ok' };
+}>): Promise<boolean> {
+    if (params.record.kind !== 'oauth' || params.existingProvenance?.credentialProfileId !== params.record.profileId) return false;
+    let existingCredential: ReturnType<typeof readClaudeCodeNativeCredentialPayload> = null;
+    let root: Record<string, unknown> | null = null;
+    try {
+        existingCredential = readClaudeCodeNativeCredentialPayload(JSON.parse(
+            await readFile(resolveClaudeCodeCredentialsFilePath(params.claudeConfigDir), 'utf8'),
+        ));
+        const parsed = JSON.parse(await readFile(join(params.claudeConfigDir, '.claude.json'), 'utf8')) as unknown;
+        root = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
+    } catch {
+        return false;
+    }
+    if (!existingCredential) return false;
+    const existingOauth = existingCredential.claudeAiOauth;
+    const incomingOauth = params.incomingPayload.payload.claudeAiOauth;
+    if (existingOauth.subscriptionType !== incomingOauth.subscriptionType || existingOauth.rateLimitTier !== incomingOauth.rateLimitTier) return false;
+    const oauthAccount = root?.oauthAccount && typeof root.oauthAccount === 'object' && !Array.isArray(root.oauthAccount)
+        ? root.oauthAccount as Record<string, unknown>
+        : null;
+    const accountId = readNonBlankString(oauthAccount?.accountUuid) ?? readNonBlankString(oauthAccount?.uuid);
+    const email = readNonBlankString(oauthAccount?.emailAddress) ?? readNonBlankString(oauthAccount?.email);
+    if (params.record.oauth.providerAccountId && accountId !== params.record.oauth.providerAccountId) return false;
+    if (params.record.oauth.providerEmail && email !== params.record.oauth.providerEmail) return false;
+    return true;
+}
+
 async function snapshotFileForRollback(path: string): Promise<FileRollbackSnapshot> {
     try {
         const [contents, stats] = await Promise.all([readFile(path), lstat(path)]);
@@ -235,7 +273,7 @@ async function restoreFileSnapshots(snapshots: readonly FileRollbackSnapshot[]):
 }
 
 export async function materializeClaudeCodeNativeAuth(params: Readonly<{
-    exec?: ExecRuntimeServiceV1 | null | undefined;
+    exec?: PluginExecService | null | undefined;
     record: ConnectedServiceCredentialRecordV1;
     claudeConfigDir: string;
     homeDir?: string | null | undefined;
@@ -254,12 +292,33 @@ export async function materializeClaudeCodeNativeAuth(params: Readonly<{
         payload: built.payload,
     });
     const existingProvenance = await readClaudeCodeNativeAuthProvenance(params.claudeConfigDir);
-    if (
+    const preserveExistingAccountState = await shouldPreserveClaudeAccountScopedState({
+        record: params.record,
+        claudeConfigDir: params.claudeConfigDir,
+        existingProvenance,
+        incomingPayload: built,
+    });
+    const exactExistingCredential = Boolean(
         existingProvenance?.credentialProfileId === nextProvenance.credentialProfileId
         && existingProvenance.credentialCreatedAt === nextProvenance.credentialCreatedAt
         && existingProvenance.credentialFingerprint === nextProvenance.credentialFingerprint
-        && await credentialFileExists(params.claudeConfigDir)
-    ) {
+        && await credentialFileExists(params.claudeConfigDir),
+    );
+    if (exactExistingCredential) {
+        try {
+            await reconcileClaudeAccountScopedRootConfig({
+                targetDir: params.claudeConfigDir,
+                preserveExistingAccountState,
+                providerAccountId: params.record.kind === 'oauth' ? params.record.oauth.providerAccountId : null,
+                providerEmail: params.record.kind === 'oauth' ? params.record.oauth.providerEmail : null,
+            });
+        } catch {
+            return {
+                status: 'diagnostic',
+                env: { CLAUDE_CONFIG_DIR: params.claudeConfigDir },
+                diagnostics: [diagnosticForCredentialFileWriteFailure()],
+            };
+        }
         return {
             status: 'materialized',
             env: { CLAUDE_CONFIG_DIR: params.claudeConfigDir },
@@ -271,6 +330,7 @@ export async function materializeClaudeCodeNativeAuth(params: Readonly<{
     const rollbackSnapshots = await Promise.all([
         snapshotFileForRollback(resolveClaudeCodeCredentialsFilePath(params.claudeConfigDir)),
         snapshotFileForRollback(resolveClaudeCodeNativeAuthProvenancePath(params.claudeConfigDir)),
+        snapshotFileForRollback(join(params.claudeConfigDir, '.claude.json')),
     ]);
     try {
         credentialPath = await writeClaudeCodeCredentialsFile({
@@ -280,6 +340,12 @@ export async function materializeClaudeCodeNativeAuth(params: Readonly<{
         await writeClaudeCodeNativeAuthProvenance({
             claudeConfigDir: params.claudeConfigDir,
             provenance: nextProvenance,
+        });
+        await reconcileClaudeAccountScopedRootConfig({
+            targetDir: params.claudeConfigDir,
+            preserveExistingAccountState,
+            providerAccountId: params.record.kind === 'oauth' ? params.record.oauth.providerAccountId : null,
+            providerEmail: params.record.kind === 'oauth' ? params.record.oauth.providerEmail : null,
         });
     } catch {
         await restoreFileSnapshots(rollbackSnapshots);

@@ -13,9 +13,8 @@ const OPENCODE_AGENT_CORE = Object.freeze({
     supportedKindsByServiceId: {
       'openai-codex': ['oauth'],
       openai: ['token'],
-      // Claude subscription is brokered (Bearer + anthropic-beta) for OpenCode: browser-login OAuth AND
-      // setup-token are both accepted via the Happier broker. The Anthropic Console API key
-      // (`anthropic`) stays token-only (direct x-api-key).
+      // Browser-login OAuth is resolved at the request interceptor. Setup tokens and Anthropic
+      // Console API keys remain native token credentials.
       'claude-subscription': ['oauth', 'token'],
       anthropic: ['token'],
     },
@@ -68,45 +67,6 @@ const OPENCODE_AGENT_MODEL_CONFIG = Object.freeze({
   acpModelConfigOptionId: 'model',
   defaultMode: 'default',
   allowedModes: ['default'],
-});
-
-const OPENCODE_AGENT_AUTH_PROBE_CONFIG = Object.freeze({
-  agentId: 'opencode',
-  binaryNames: ['opencode'],
-  statusCommand: ['auth', 'list'],
-  parser: 'opencodeAuthList',
-  backgroundChecks: 'safe',
-});
-
-const OPENCODE_AGENT_LOCAL_CLI = Object.freeze({
-  agentId: 'opencode',
-  detectKey: 'opencode',
-  machineLoginKey: 'opencode',
-  supportKind: 'login_terminal',
-  loginLaunch: {
-    command: 'opencode',
-    args: ['auth', 'login'],
-  },
-});
-
-const OPENCODE_AGENT_CLI_RUNTIME = Object.freeze({
-  id: 'opencode',
-  title: 'OpenCode CLI',
-  binaryName: 'opencode',
-  knownUserBinDirSuffixes: ['.opencode/bin', 'AppData/Roaming/npm'],
-  sourcePreferenceDefault: 'system-first',
-  managedInstall: {
-    kind: 'managed_package',
-    packageName: 'opencode-ai',
-    binaryName: 'opencode',
-    packageBinarySetup: { kind: 'opencode_platform_binary' },
-  },
-  manualInstallKind: 'command',
-  manualInstallRecipes: null,
-  acceptsJavaScriptFileOverride: false,
-  setupRecommendation: { order: 40 },
-  installGuideUrl: 'https://opencode.ai/docs',
-  docsUrl: 'https://opencode.ai',
 });
 
 const OPENCODE_RUNTIME_KIND_ALIASES = [
@@ -171,15 +131,11 @@ export const AGENT_DEFINITION = Object.freeze({
   sessionModeDescriptor: OPENCODE_AGENT_SESSION_MODE_DESCRIPTOR,
   sessionModesKind: 'acpAgentModes',
   modelConfig: OPENCODE_AGENT_MODEL_CONFIG,
-  authProbeConfig: OPENCODE_AGENT_AUTH_PROBE_CONFIG,
-  localCli: OPENCODE_AGENT_LOCAL_CLI,
-  agentCliRuntime: OPENCODE_AGENT_CLI_RUNTIME,
   commandSurface: {
     rootHelpLabel: 'happier opencode',
     rootHelpDescription: 'Start OpenCode CLI',
     allowTmux: true,
   },
-  agentSettings: null,
   runtimeContributions: {
     agentCatalogEntry: {
       importName: 'OPENCODE_AGENT_RUNTIME_CONTRIBUTION',

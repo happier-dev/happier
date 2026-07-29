@@ -1,9 +1,17 @@
+import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
+import { isNonSteerablePromptPayload, type PendingRequestedActionV1 } from '@happier-dev/protocol';
 import type { Session } from '@/sync/domains/state/storageTypes';
-import { isVersionSupported, MINIMUM_CLI_PENDING_QUEUE_V2_VERSION } from '@/utils/system/versionUtils';
+import {
+    isVersionSupported,
+    MINIMUM_CLI_PENDING_QUEUE_V2_VERSION,
+} from '@/utils/system/versionUtils';
 import { isSessionExclusiveLocalControl } from '@/sync/domains/session/control/sessionLocalControl';
-import { deriveSessionRuntimePresentationState } from '@/sync/domains/session/attention/runtimePresentation';
-import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/registry/registryCore';
+import { deriveSessionInputReadinessState } from '@/sync/domains/session/control/deriveSessionInputReadinessState';
+import {
+    getAgentCore,
+} from '@/agents/registry/registryCore';
 import type { AgentSessionComposerNonSteerableReason } from '@/agents/registry/registryUiBehavior';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 export type MessageSendMode = 'agent_queue' | 'interrupt' | 'server_pending';
 
@@ -31,7 +39,6 @@ export type SessionMessageDirectBypassReason =
     | 'interrupt'
     | 'subagent_command'
     | 'voice_turn'
-    | 'server_scoped_rpc'
     | 'spawn_post_process';
 
 export type SessionMessageDeliveryDecision = Readonly<{
@@ -39,6 +46,7 @@ export type SessionMessageDeliveryDecision = Readonly<{
     intent: SessionMessageDeliveryIntent;
     reason: string;
     pendingSupportState: PendingQueueSubmitSupportState;
+    requestedAction?: PendingRequestedActionV1;
     directBypassReason?: SessionMessageDirectBypassReason;
     nonSteerablePayloadReason?: string;
     sessionSteerUnavailableReason?: string;
@@ -47,50 +55,48 @@ export type SessionMessageDeliveryDecision = Readonly<{
 type SessionSubmitRuntimeState = Readonly<{
     localControlBlocksDirectSubmit: boolean;
     isBusy: boolean;
+    inputReadinessDisposition: 'accepts_next_turn' | 'steer_available' | 'blocked' | 'offline';
     isOnline: boolean;
     agentReady: boolean;
-    providerInFlightSteerSupported: boolean;
-    inFlightSteerSupported: boolean | undefined;
-    inFlightSteerAvailable: boolean | undefined;
 }>;
 
 function getProviderInFlightSteerSupported(session: Session | null): boolean {
-    const sessionFlavor = typeof session?.metadata?.flavor === 'string'
-        ? session.metadata.flavor
-        : null;
-    const agentId = resolveAgentIdFromFlavor(sessionFlavor);
+    const agentId = resolveAgentIdFromSessionMetadata(
+        session ? readSessionOwnerMetadataView(session) : null,
+    );
     if (!agentId) return false;
     return getAgentCore(agentId).runtimeInput?.inFlightSteerSupported === true;
 }
 
 function deriveSubmitRuntimeState(session: Session | null, nowMs: number): SessionSubmitRuntimeState {
     const localControlBlocksDirectSubmit = isSessionExclusiveLocalControl(session);
-    const runtimeStatus = deriveSessionRuntimePresentationState({
+    const capabilities = session?.agentState?.capabilities;
+    const providerInFlightSteerSupported = getProviderInFlightSteerSupported(session);
+    const inFlightSteerSupported = capabilities?.inFlightSteerSupported
+        ?? capabilities?.inFlightSteer
+        ?? providerInFlightSteerSupported;
+    const inFlightSteerAvailable = capabilities?.inFlightSteerAvailable
+        ?? capabilities?.inFlightSteer
+        ?? providerInFlightSteerSupported;
+    const inputReadiness = deriveSessionInputReadinessState({
         active: session?.active,
         activeAt: session?.activeAt,
         presence: session?.presence,
         thinking: session?.thinking,
         thinkingAt: session?.thinkingAt,
+        optimisticThinkingAt: session?.optimisticThinkingAt,
+        hasPendingUserMessages: typeof session?.pendingCount === 'number' && session.pendingCount > 0,
         latestTurnStatus: session?.latestTurnStatus ?? null,
         latestTurnStatusObservedAt: session?.latestTurnStatusObservedAt ?? null,
-        meaningfulActivityAt: session?.meaningfulActivityAt ?? null,
-        lastRuntimeIssue: session?.lastRuntimeIssue ?? null,
-        nowMs,
-    });
-    const capabilities = session?.agentState?.capabilities;
-    const providerInFlightSteerSupported = getProviderInFlightSteerSupported(session);
+        inFlightSteerSupported,
+        inFlightSteerAvailable,
+    }, nowMs);
     return {
         localControlBlocksDirectSubmit,
-        isBusy: runtimeStatus.working,
+        isBusy: inputReadiness.isInputBusy,
+        inputReadinessDisposition: inputReadiness.disposition,
         isOnline: session?.presence === 'online',
         agentReady: Boolean(session && session.agentStateVersion > 0),
-        providerInFlightSteerSupported,
-        inFlightSteerSupported: capabilities?.inFlightSteerSupported
-            ?? capabilities?.inFlightSteer
-            ?? providerInFlightSteerSupported,
-        inFlightSteerAvailable: capabilities?.inFlightSteerAvailable
-            ?? capabilities?.inFlightSteer
-            ?? providerInFlightSteerSupported,
     };
 }
 
@@ -99,7 +105,7 @@ function readSessionRecordValue(session: Session | null, key: string): unknown {
 }
 
 function readSessionMetadataValue(session: Session | null, key: string): unknown {
-    const metadata = session?.metadata;
+    const metadata = session ? readSessionOwnerMetadataView(session) : null;
     return metadata && typeof metadata === 'object'
         ? (metadata as Record<string, unknown>)[key]
         : undefined;
@@ -115,11 +121,6 @@ function estimateActiveTurnStartedAt(session: Session | null): number | null {
         return latestTurnObservedAt;
     }
     return readFiniteNumber(readSessionRecordValue(session, 'thinkingAt'));
-}
-
-function isSpecialSteerCommand(text: string | undefined): boolean {
-    const trimmed = typeof text === 'string' ? text.trim() : '';
-    return /^\/(?:clear|compact)(?:\s|$)/.test(trimmed);
 }
 
 function classifyFreshPermissionModeChange(opts: {
@@ -151,7 +152,7 @@ function classifyLocalNonSteerablePayload(opts: {
     nonSteerableSendPrompt?: 'on' | 'off';
     permissionModeApplyTiming?: 'current_turn' | 'next_prompt';
 }): string | null {
-    if (isSpecialSteerCommand(opts.text)) return 'special_command';
+    if (isNonSteerablePromptPayload(opts.text)) return 'special_command';
     if (opts.nonSteerableSendPrompt === 'off') return null;
     return classifyFreshPermissionModeChange({
         session: opts.session,
@@ -167,26 +168,7 @@ export function canDirectSubmitUserMessageNow(opts: {
     session: Session | null;
     nowMs?: number;
 }): boolean {
-    if (!opts.session || opts.session.active === false) {
-        return false;
-    }
-
-    const runtimeState = deriveSubmitRuntimeState(opts.session, opts.nowMs ?? Date.now());
-    if (
-        runtimeState.localControlBlocksDirectSubmit
-        || !runtimeState.isOnline
-        || !runtimeState.agentReady
-    ) {
-        return false;
-    }
-
-    if (!runtimeState.isBusy) {
-        return true;
-    }
-
-    return runtimeState.inFlightSteerSupported === true
-        && runtimeState.inFlightSteerAvailable === true
-        && (runtimeState.agentReady || runtimeState.providerInFlightSteerSupported);
+    return getPendingQueueSubmitSupportState(opts.session) === 'unsupported_cli_version';
 }
 
 export function getPendingQueueSubmitSupportState(session: Session | null): PendingQueueSubmitSupportState {
@@ -198,7 +180,7 @@ export function getPendingQueueSubmitSupportState(session: Session | null): Pend
         return 'unknown_pending_version';
     }
 
-    const cliVersion = session?.metadata?.version;
+    const cliVersion = readSessionOwnerMetadataView(session)?.version;
     const trimmedCliVersion = typeof cliVersion === 'string' ? cliVersion.trim() : '';
     if (trimmedCliVersion && !isVersionSupported(trimmedCliVersion, MINIMUM_CLI_PENDING_QUEUE_V2_VERSION)) {
         return 'unsupported_cli_version';
@@ -258,44 +240,18 @@ export function decideSessionMessageDelivery(opts: {
     applyConfigAndSteer?: boolean;
     steerWithoutConfig?: boolean;
 }): SessionMessageDeliveryDecision {
-    const configuredMode = opts.configuredMode;
-    const requestedMode = opts.explicitMode ?? configuredMode;
+    const requestedMode = opts.explicitMode ?? opts.configuredMode;
     const intent = getDeliveryIntent(opts);
     const session = opts.session;
     const pendingSupportState = getPendingQueueSubmitSupportState(session);
 
-    if (requestedMode === 'interrupt') {
-        return withDirectReason({
-            mode: 'interrupt',
-            intent,
-            reason: 'interrupt',
-            pendingSupportState,
-        });
-    }
-
-    if (
-        opts.forceImmediate === true
-        && canDirectSubmitUserMessageNow({ session, nowMs: opts.nowMs })
-    ) {
-        return withDirectReason({
-            mode: 'agent_queue',
-            intent,
-            reason: 'force_immediate_direct',
-            pendingSupportState,
-        });
-    }
-
-    // Server-side pending queue V2 support is negotiated via session summary fields.
-    // A missing version is an unknown state, not permission to bypass a queueing intent.
     if (pendingSupportState === 'unknown_session' || pendingSupportState === 'unknown_pending_version') {
-        return withDirectReason({
-            mode: requestedMode,
+        return {
+            mode: 'server_pending',
             intent,
-            reason: requestedMode === 'server_pending'
-                ? 'pending_support_unknown'
-                : 'pending_support_unknown_preserve_request',
+            reason: 'pending_support_unknown',
             pendingSupportState,
-        });
+        };
     }
 
     if (pendingSupportState === 'unsupported_cli_version') {
@@ -309,12 +265,13 @@ export function decideSessionMessageDelivery(opts: {
         });
     }
 
-    if (opts.explicitMode === 'server_pending') {
+    if (requestedMode === 'interrupt') {
         return {
             mode: 'server_pending',
             intent,
-            reason: 'explicit_pending',
+            reason: 'interrupt',
             pendingSupportState,
+            requestedAction: { v: 1, kind: 'send_now' },
         };
     }
 
@@ -324,20 +281,37 @@ export function decideSessionMessageDelivery(opts: {
             intent,
             reason: 'inactive_session',
             pendingSupportState,
+            requestedAction: { v: 1, kind: 'send_now' },
         };
     }
 
     const runtimeState = deriveSubmitRuntimeState(session, opts.nowMs ?? Date.now());
     const busySteerSendPolicy: BusySteerSendPolicy = opts.busySteerSendPolicy ?? DEFAULT_BUSY_STEER_SEND_POLICY;
-
-    // The in-flight steer window: the running turn can accept a steered message right now.
     const canSteerBusyTurnNow = runtimeState.isBusy
-        && runtimeState.inFlightSteerSupported === true
-        && runtimeState.inFlightSteerAvailable === true
-        && !runtimeState.localControlBlocksDirectSubmit
-        && runtimeState.isOnline
-        && (runtimeState.agentReady || runtimeState.providerInFlightSteerSupported)
-        && busySteerSendPolicy === 'steer_immediately';
+        && runtimeState.inputReadinessDisposition === 'steer_available';
+
+    if (opts.forceImmediate === true) {
+        return {
+            mode: 'server_pending',
+            intent,
+            reason: canSteerBusyTurnNow ? 'force_immediate_steer' : 'force_immediate_send',
+            pendingSupportState,
+            requestedAction: {
+                v: 1,
+                kind: canSteerBusyTurnNow ? 'steer_now' : 'send_now',
+            },
+        };
+    }
+
+    if (opts.explicitMode === 'server_pending') {
+        return {
+            mode: 'server_pending',
+            intent,
+            reason: 'explicit_pending',
+            pendingSupportState,
+            requestedAction: { v: 1, kind: 'enqueue' },
+        };
+    }
 
     if (runtimeState.isBusy) {
         const nonSteerablePayloadReason = opts.providerNonSteerableReason
@@ -356,24 +330,26 @@ export function decideSessionMessageDelivery(opts: {
                 && opts.applyConfigAndSteer === true
                 && canApplySteerConfigInFlight(session)
             ) {
-                return withDirectReason({
-                    mode: 'agent_queue',
+                return {
+                    mode: 'server_pending',
                     intent,
                     reason: 'busy_steer_config_apply',
                     pendingSupportState,
-                });
+                    requestedAction: { v: 1, kind: 'steer_now' },
+                };
             }
             if (
                 nonSteerablePayloadReason === 'mode_change_refused'
                 && canSteerBusyTurnNow
                 && opts.steerWithoutConfig === true
             ) {
-                return withDirectReason({
-                    mode: 'agent_queue',
+                return {
+                    mode: 'server_pending',
                     intent,
                     reason: 'busy_steer_text_only',
                     pendingSupportState,
-                });
+                    requestedAction: { v: 1, kind: 'steer_now' },
+                };
             }
             return {
                 mode: 'server_pending',
@@ -381,81 +357,40 @@ export function decideSessionMessageDelivery(opts: {
                 reason: 'busy_non_steerable_payload_pending',
                 pendingSupportState,
                 nonSteerablePayloadReason,
+                requestedAction: { v: 1, kind: 'enqueue' },
             };
         }
     }
 
-    // Prefer the metadata-backed queue when:
-    // - terminal has control (can't safely inject into local stdin),
-    // - the agent is busy (user may want to edit/remove before processing),
-    // - the agent is not ready yet (direct sends can be missed because the agent does not replay backlog), or
-    // - the machine is offline (queue gives reliable eventual processing once it reconnects).
-    //
-    // Exception: if the agent supports in-flight steer and is online+ready, do not auto-enqueue while busy.
-    // Dev also preserves the provider-registry fallback for agents whose capability snapshot is incomplete.
-    if (
-        runtimeState.isBusy
-        && runtimeState.inFlightSteerSupported === true
-        && runtimeState.inFlightSteerAvailable === true
-        && !runtimeState.localControlBlocksDirectSubmit
-        && runtimeState.isOnline
-        && (runtimeState.agentReady || runtimeState.providerInFlightSteerSupported)
-        && busySteerSendPolicy === 'steer_immediately'
-    ) {
-        return withDirectReason({
-            mode: 'agent_queue',
+    if (canSteerBusyTurnNow && busySteerSendPolicy === 'steer_immediately') {
+        return {
+            mode: 'server_pending',
             intent,
             reason: 'busy_steer_immediate',
             pendingSupportState,
-        });
-    }
-
-    if (runtimeState.localControlBlocksDirectSubmit) {
-        return {
-            mode: 'server_pending',
-            intent,
-            reason: 'local_control_pending',
-            pendingSupportState,
+            requestedAction: { v: 1, kind: 'steer_if_active' },
         };
     }
 
-    if (runtimeState.isBusy) {
-        const unavailableReason = session?.agentState?.capabilities?.inFlightSteerUnavailableReason;
-        return {
-            mode: 'server_pending',
-            intent,
-            reason: 'busy_policy_pending',
-            pendingSupportState,
-            ...(typeof unavailableReason === 'string' && unavailableReason.trim().length > 0
-                ? { sessionSteerUnavailableReason: unavailableReason }
-                : {}),
-        };
-    }
-
-    if (!runtimeState.isOnline) {
-        return {
-            mode: 'server_pending',
-            intent,
-            reason: 'offline_pending',
-            pendingSupportState,
-        };
-    }
-
-    if (!runtimeState.agentReady) {
-        return {
-            mode: 'server_pending',
-            intent,
-            reason: 'agent_not_ready_pending',
-            pendingSupportState,
-        };
-    }
-
-    return withDirectReason({
-        mode: configuredMode,
+    const unavailableReason = session?.agentState?.capabilities?.inFlightSteerUnavailableReason;
+    return {
+        mode: 'server_pending',
         intent,
-        reason: 'configured_mode',
+        reason: runtimeState.localControlBlocksDirectSubmit
+            ? 'local_control_pending'
+            : runtimeState.isBusy
+                ? 'busy_policy_pending'
+                : !runtimeState.isOnline
+                    ? 'offline_pending'
+                    : !runtimeState.agentReady
+                        ? 'agent_not_ready_pending'
+                        : 'configured_pending',
         pendingSupportState,
-    });
+        requestedAction: { v: 1, kind: 'enqueue' },
+        ...(typeof unavailableReason === 'string' && unavailableReason.trim().length > 0
+            ? { sessionSteerUnavailableReason: unavailableReason }
+            : {}),
+    };
 }
 
 export function chooseSubmitMode(opts: {

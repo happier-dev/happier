@@ -32,7 +32,7 @@ function hasUploadedAttachmentProvenance(value: unknown): boolean {
   return asRecord(value)?.kind === SESSION_ATTACHMENT_UPLOAD_STRUCTURED_INPUT_PROVENANCE_KIND;
 }
 
-function normalizeSessionAttachmentUploadPath(value: unknown): string | null {
+export function normalizeSessionAttachmentUploadPath(value: unknown): string | null {
   const rawPath = readString(value);
   if (!rawPath || rawPath.includes('\0')) return null;
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(rawPath)) return null;

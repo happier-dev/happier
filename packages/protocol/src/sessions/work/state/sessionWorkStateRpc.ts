@@ -15,6 +15,7 @@ import { SessionUsageLimitRecoveryResumePromptModeV1Schema } from '../../state/v
 import { ConnectedServiceIdSchema } from '../../../connect/connectedServiceBindings.js';
 import { ConnectedServiceQuotaSnapshotV1Schema } from '../../../connect/connectedServiceSchemas.js';
 import { SessionWorkStateStatusV1Schema, SessionWorkStateV1Schema } from './sessionWorkStateV1.js';
+import { PendingLocalIdSchema } from '../../pending/pendingLocalId.js';
 
 export const SessionWorkStateGetRequestV1Schema = z.object({}).passthrough();
 export type SessionWorkStateGetRequestV1 = z.infer<typeof SessionWorkStateGetRequestV1Schema>;
@@ -85,6 +86,7 @@ export const ConnectedServiceQuotaRecoveryCreditConsumeReceiptStatusV1Schema = z
   'consumed',
   'already_consumed',
   'not_available',
+  'nothing_to_reset',
   'unknown_after_timeout',
 ]);
 export type ConnectedServiceQuotaRecoveryCreditConsumeReceiptStatusV1 =
@@ -134,6 +136,7 @@ const ConnectedServiceRuntimeControlExpectedV1Schema = z
     profileId: ConnectedServiceRuntimeControlIdV1Schema.optional(),
     groupId: ConnectedServiceRuntimeControlIdV1Schema.optional(),
     generation: ConnectedServiceRuntimeControlGenerationV1Schema.optional(),
+    credentialRevision: z.string().trim().min(1).optional(),
   })
   .passthrough();
 
@@ -293,6 +296,7 @@ export const SessionConnectedServiceAuthReadRuntimeIdentityResponseV1Schema = z.
           profileId: z.string().trim().min(1).optional(),
           groupId: z.string().trim().min(1).optional(),
           generation: ConnectedServiceRuntimeControlGenerationV1Schema.optional(),
+          credentialRevision: z.string().trim().min(1).optional(),
         })
         .passthrough()
         .optional(),
@@ -349,6 +353,8 @@ export const SessionUsageLimitWaitResumeCancelRequestV1Schema = z
   .object({
     sessionId: SessionIdRequestFieldSchema,
     issueFingerprint: IssueFingerprintFieldSchema.nullable().optional(),
+    armedAtMs: z.number().int().nonnegative().optional(),
+    runtimeAuthRecoveryAttemptId: z.string().trim().min(1).optional(),
   })
   .passthrough();
 export type SessionUsageLimitWaitResumeCancelRequestV1 = z.infer<typeof SessionUsageLimitWaitResumeCancelRequestV1Schema>;
@@ -397,7 +403,7 @@ export type SessionConnectedServiceAuthInvalidateTransportsResponseV1 =
 export const SessionPendingQueueMaterializeNextResponseV1Schema = z.union([
   z.object({
     type: z.literal('materialized'),
-    localId: z.string().min(1),
+    localId: PendingLocalIdSchema,
     seq: z.number().int().nonnegative().nullable(),
     content: z.unknown(),
     createdAt: z.number().finite().optional(),

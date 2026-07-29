@@ -1,12 +1,14 @@
 import type { CodexConnectedServiceRefreshSelection } from '../../auth/services/runtime/auth/application.js';
 import { readCodexEnvironmentAuthTokens } from '../../cli/auth/environment.js';
+import { createHash } from 'node:crypto';
 
 const HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY = 'HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON';
 
 export type CodexConnectedServiceRuntimeIdentitySource =
   | 'spawn_selection'
   | 'applied_credential'
-  | 'live_account_read';
+  | 'live_account_read'
+  | 'token_refresh';
 
 export type CodexConnectedServiceRuntimeIdentity = Readonly<{
   serviceId: 'openai-codex';
@@ -14,6 +16,8 @@ export type CodexConnectedServiceRuntimeIdentity = Readonly<{
   profileId: string;
   groupId: string | null;
   generation: number | null;
+  credentialFingerprint: string | null;
+  credentialRevision: string | null;
   accountLabel: string | null;
   source: CodexConnectedServiceRuntimeIdentitySource;
 }>;
@@ -67,6 +71,32 @@ function readCodexConnectedServiceSelection(value: unknown): CodexConnectedServi
   };
 }
 
+function resolveCodexConnectedServiceCredentialRevisionFromEnv(
+  env: Readonly<Record<string, string | undefined>>,
+): string | null {
+  const raw = env[HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY];
+  if (!raw) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed)) return null;
+  for (const item of parsed) {
+    const record = readRecord(item);
+    if (record?.serviceId !== 'openai-codex') continue;
+    return trimString(record.credentialRevision);
+  }
+  return null;
+}
+
+export function computeCodexAccessTokenFingerprint(accessToken: string | null | undefined): string | null {
+  const normalized = accessToken?.trim();
+  if (!normalized) return null;
+  return `sha256:${createHash('sha256').update(normalized).digest('hex').slice(0, 8)}`;
+}
+
 export function resolveCodexConnectedServiceRefreshSelectionFromEnv(
   env: Readonly<Record<string, string | undefined>>,
 ): CodexConnectedServiceRefreshSelection | null {
@@ -94,6 +124,8 @@ export function resolveCodexInitialConnectedServiceRuntimeIdentity(
 
   const authTokens = readCodexEnvironmentAuthTokens(env);
   if (!authTokens.accountId) return null;
+  const credentialFingerprint = computeCodexAccessTokenFingerprint(authTokens.accessToken ?? authTokens.idToken);
+  const credentialRevision = resolveCodexConnectedServiceCredentialRevisionFromEnv(env);
 
   if (selection.kind === 'group') {
     return {
@@ -103,6 +135,8 @@ export function resolveCodexInitialConnectedServiceRuntimeIdentity(
       profileId: selection.activeProfileId,
       groupId: selection.groupId,
       generation: selection.generation,
+      credentialFingerprint,
+      credentialRevision,
       source: 'spawn_selection',
     };
   }
@@ -114,6 +148,8 @@ export function resolveCodexInitialConnectedServiceRuntimeIdentity(
     profileId: selection.profileId,
     groupId: null,
     generation: null,
+    credentialFingerprint,
+    credentialRevision,
     source: 'spawn_selection',
   };
 }
@@ -124,38 +160,19 @@ export function buildCodexLiveAccountRuntimeIdentity(input: Readonly<{
   previousIdentity: CodexConnectedServiceRuntimeIdentity | null;
 }>): CodexConnectedServiceRuntimeIdentity | null {
   const providerAccountId = input.liveProviderAccount.providerAccountId?.trim();
-  if (!providerAccountId) return null;
-
-  const selection = input.currentSelection;
-  if (selection?.kind === 'group') {
-    return {
-      serviceId: 'openai-codex',
-      providerAccountId,
-      accountLabel: input.liveProviderAccount.providerEmail,
-      profileId: selection.activeProfileId,
-      groupId: selection.groupId,
-      generation: selection.generation,
-      source: 'live_account_read',
-    };
-  }
-
-  if (selection?.kind === 'profile') {
-    return {
-      serviceId: 'openai-codex',
-      providerAccountId,
-      accountLabel: input.liveProviderAccount.providerEmail,
-      profileId: selection.profileId,
-      groupId: null,
-      generation: null,
-      source: 'live_account_read',
-    };
-  }
-
   const previous = input.previousIdentity;
-  if (!previous) return null;
+  if (!providerAccountId || !previous || providerAccountId !== previous.providerAccountId) return null;
+  const selection = input.currentSelection;
+  const selectionMatches = selection?.kind === 'group'
+    ? previous.profileId === selection.activeProfileId
+      && previous.groupId === selection.groupId
+      && previous.generation === selection.generation
+    : selection?.kind === 'profile'
+      ? previous.profileId === selection.profileId && previous.groupId === null
+      : true;
+  if (!selectionMatches) return null;
   return {
     ...previous,
-    providerAccountId,
     accountLabel: input.liveProviderAccount.providerEmail ?? previous.accountLabel,
     source: 'live_account_read',
   };

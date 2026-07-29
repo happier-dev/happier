@@ -1,13 +1,13 @@
 import type {
   ScmHostingProviderRef,
   ScmPullRequestSummary,
-} from '@happier-dev/plugin-sdk/scm';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
-import type { ScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/experimental/scm';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/experimental/scm';
+import type { ScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/experimental/scm';
 import { describe, expect, it } from 'vitest';
 
 const provider: ScmHostingProviderRef = {
-  id: 'scm.bitbucket',
+  id: 'happier.scm.hosting.bitbucket/bitbucket',
   kind: 'bitbucket',
   displayName: 'Bitbucket',
   baseUrl: 'https://bitbucket.org',
@@ -100,6 +100,7 @@ describe('Bitbucket API adapter', () => {
         });
       },
     });
+    const controller = new AbortController();
 
     await expect(adapter.listPullRequests({
       provider,
@@ -107,6 +108,7 @@ describe('Bitbucket API adapter', () => {
       head: 'feature/bitbucket',
       state: 'open',
       runtimeServices: createRuntimeServices(),
+      signal: controller.signal,
     })).resolves.toEqual([
       expect.objectContaining({
         number: 42,
@@ -134,6 +136,7 @@ describe('Bitbucket API adapter', () => {
     expect(requests[0]?.init?.headers).toMatchObject({
       Authorization: encodeBasicAuth('user-for-bitbucket.org', 'redacted-app-password'),
     });
+    expect(requests[0]?.init?.signal).toBe(controller.signal);
   });
 
   it('requires source repository identity when Bitbucket sends a source repository object', async () => {

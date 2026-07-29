@@ -1,4 +1,3 @@
-import { isNonSteerablePromptPayload, parseSpecialCommand } from '@happier-dev/plugin-sdk/experimental/runtime/session';
 import { sleep } from '@happier-dev/plugin-sdk/experimental/timeout';
 import type {
   TerminalHostHandle,
@@ -6,15 +5,26 @@ import type {
   TerminalControlPort,
   TerminalPromptInput,
   TerminalInputInjectionResult,
-  SessionTerminalComposerClearResultV1,
-  RuntimeConfigUpdateOutcomeV1,
-} from '@happier-dev/plugin-sdk/experimental/runtime/session';
+} from '@happier-dev/agents';
+import type {
+  AgentSessionHookServerHandle,
+  AgentSessionHooksService,
+  AgentSessionHostServices,
+  AgentSessionAuthRefreshRequest,
+  AgentSessionRuntimeContext,
+  AgentTranscriptFileFollowService,
+  AgentSessionProviderBinding,
+} from '@happier-dev/plugin-sdk/agent-runtime';
+import type { SessionWorkStateV1 } from '@happier-dev/plugin-sdk/experimental/sessions/workState';
 import {
-  createSessionRuntimeActivityPublisher,
-  type PluginContextV1,
-  type RuntimeEventV1,
-} from '@happier-dev/plugin-sdk';
+  isNonSteerablePromptPayload,
+  isRuntimeConfigUpdateOutcomeApplied,
+  parseSpecialCommand,
+  type ClaudeUnifiedTerminalWorkspaceTrustPolicy,
+} from '@happier-dev/agents';
+import { createClaudeRuntimeActivityPublisher } from '../../shared/runtimeActivityPublisher.js';
 import { randomUUID } from 'node:crypto';
+import { resolveClaudeTerminalHostDisposeIntent } from './terminalHostDisposeIntent.js';
 import {
   buildClaudeHookPluginHooks,
   buildClaudeHookPluginManifest,
@@ -22,6 +32,10 @@ import {
 import { buildDefaultPermissionHookResponse } from '../../../hooks/protocol.js';
 import { resolveClaudePermissionHookCeilingMs } from '../../../hooks/permissionHookTimeout.js';
 import { createClaudeStatuslineApplier } from '../../../statusline/apply.js';
+import type {
+  ClaudeEffectiveModelEvidence,
+  ClaudeEffectiveModelEvidenceSubscription,
+} from '../../effectiveModelEvidence.js';
 import {
   buildClaudeStatuslineOverlaySettings,
   resolveClaudeStatuslineOriginalCommand,
@@ -30,8 +44,14 @@ import {
 import { parseClaudeStatuslinePayload } from '../../../statusline/payload.js';
 
 import { recordClaudeRuntimeProviderAccountUsageSnapshot } from '../../accountUsage.js';
+import type { ClaudeRuntimeAccountUsageService } from '../../accountUsage.js';
+import type { ClaudePermissionContext } from '../../../permissions/createClaudePermissionEngine.js';
+import type { ClaudeRuntimeLogger } from '../../dependencies.js';
 import { createClaudeConnectedServiceRuntimeAuthAdapter } from '../../../auth/services/runtime/index.js';
-import type { ClaudeTerminalLifecycleObservation } from '../lifecycle.js';
+import {
+  isClaudeTaskNotificationPromptText,
+  type ClaudeTerminalLifecycleObservation,
+} from '../lifecycle.js';
 import { CLAUDE_TERMINAL_YOLO_ALLOW_FLAG } from '../argv.js';
 import { buildClaudeEffortCliArgs, isClaudeUltracodeSupportedModelId } from '../../reasoningEffort.js';
 import { mapToClaudePermissionMode, resolveClaudePermissionModeFromRuntimeMode } from '../../permissionMode.js';
@@ -39,14 +59,20 @@ import { isSidechainSessionHook } from '../../../hooks/sidechain.js';
 import { CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID } from './constants.js';
 import {
   createClaudeUnifiedInputArbiter,
+  hasCanonicalPendingOwner,
+  isClaudeUnifiedPromptDeliveryBlockReversible,
   type ClaudeUnifiedInputArbiter,
   type ClaudeUnifiedPromptDeliveryBlockedReason,
   type ClaudeUnifiedPromptInjectionFailure,
   type ClaudeUnifiedPromptTerminalRejection,
 } from './inputArbiter.js';
-import { subscribeClaudeUnifiedTerminalLifecycleEvents } from './lifecycleEvents.js';
+import {
+  mapClaudeUnifiedHookLifecyclePayload,
+  mapClaudeUnifiedTranscriptLifecyclePayload,
+} from './lifecycleEvents.js';
 import { createPersistedClaudeUnifiedOwnInjectedTextLog } from './ownInjectedTextLog.js';
 import { isControllerTypedSlashCommandResidue } from './tuiControls/slashControls.js';
+import { createClaudeResumeSummaryCompactResidueEpisode } from './resumeChoice/summaryCompactResidue.js';
 import {
   hasClaudeUnifiedVisibleDialog,
   resolveClaudeUnifiedDialogBlockedReason,
@@ -54,6 +80,8 @@ import {
 } from './tuiControls/dialogRegistry.js';
 import { createClaudeUnifiedPermissionHookHandler } from './permissionHooks.js';
 import { createClaudeUnifiedPromptEchoSuppressor } from './promptEchoSuppression.js';
+import { normalizeClaudeActivityStatusSignal } from '../../../activityStatus.js';
+import { parseClaudeTaskNotification } from '../../../transcripts/taskNotification.js';
 import { createClaudeUnifiedTerminalOriginLocalIdAllocator } from './terminalOriginLocalIds.js';
 import { isClaudeComposerCaptureStyleUnavailablePlaceholderCandidate } from './composerCaptureClassification.js';
 import {
@@ -66,6 +94,9 @@ import { createClaudeUnifiedGoalRuntime } from './goalRuntime.js';
 import {
   createClaudeUnifiedWorkflowRuntime,
   registerClaudeWorkflowOwnedToolUseIds,
+  type ClaudeWorkflowMetadataWriter,
+  type ClaudeWorkflowSystemRecordReader,
+  type ClaudeWorkflowSystemRecordWriter,
 } from '../../../workflowRecords/index.js';
 import {
   createClaudeUnifiedRuntimeConfigOutcomeEmitter,
@@ -88,13 +119,28 @@ import {
   type ClaudeUnifiedTuiControlController,
 } from './tuiControls/index.js';
 import { createClaudeUnifiedSteerCapabilityPublisher } from './steerCapabilityPublisher.js';
+import { isClaudeUnifiedPendingInputInterruptAndRunEnabled } from './pendingInputInterruptAndRunActivation.js';
+import { createClaudeUnifiedResumeTurnBarrier } from './resumeTurnBarrier.js';
+import {
+  applyClaudeUnifiedTerminalLaunchIntent,
+  type ClaudeUnifiedTerminalLaunchIntent,
+} from './launchIntent.js';
 import { createClaudeUnifiedTerminalRuntimeState } from './runtimeState.js';
 import {
+  ClaudeUnifiedResumeIdentityMismatchError,
   ClaudeUnifiedTerminalInjectionFailureError,
+  recordClaudeUnifiedHookActivationFailure,
   recordClaudeUnifiedProcessExitFailure,
+  recordClaudeUnifiedResumeIdentityMismatchFailure,
   recordClaudeUnifiedTurnFailure,
 } from './turnFailures.js';
 import { mapClaudeProviderFailureToUsageDetails } from '../../issues/runtimeIssues.js';
+import { buildClaudeAssistantUsageObservation } from '../../../usage/buildAssistantObservation.js';
+import { buildClaudeSdkResultUsageObservation } from '../../../usage/buildSdkResultObservation.js';
+import type {
+  ClaudeUsageObservation,
+  ClaudeUsageObservationSubscription,
+} from '../../../usage/types.js';
 import {
   isClaudeUnifiedProviderUnavailablePromptDeliveryWindowActive,
   resolveClaudeUnifiedProviderUnavailableUntilMs,
@@ -108,6 +154,7 @@ import {
 } from './runtimeEvents.js';
 import {
   createClaudeUnifiedPromptInput,
+  CLAUDE_UNIFIED_TERMINAL_INPUT_QUIET_PERIOD_MS,
   createClaudeUnifiedTerminalSessionName,
   createClaudeUnifiedTurnId,
   createClaudeUnifiedWritableReadiness,
@@ -119,23 +166,81 @@ import {
 } from './resumeChoice/startup.js';
 import type { ClaudeUnifiedResumeChoicePolicy } from './resumeChoice/types.js';
 import {
-  createClaudePublicSessionRuntime,
-  type ClaudePublicSessionRuntime,
+  readClaudePendingLocalId,
+  type ClaudeProviderConfigurationOutcome,
+  type ClaudeRuntimePromptSubmissionOutcome,
   type ClaudeRuntimeTurnOperations,
-} from '../../sessionRuntime.js';
+} from '../../providerOperations.js';
+import type {
+  ClaudeProviderEvent,
+} from '../../providerEvents.js';
 import {
-  buildClaudeProviderTaskRuntimeActivitySourceId,
   createClaudeProviderActivityLedger,
 } from '../../remote/sdk/providerActivity.js';
 import {
-  clearClaudeRuntimeActivitySources,
+  applyClaudeProviderTaskActivity,
   observeClaudeProviderTaskActivity,
-  publishClaudeProviderSessionId,
-  publishClaudeRuntimeActivityUpdate,
+  publishClaudeProviderTaskInventory,
   readClaudeRuntimeConfigEffortUpdate,
   readClaudeRuntimeConfigUltracodeUpdate,
   respondToClaudePermission,
 } from '../../shared/runtimeHelpers.js';
+
+type ClaudeUnifiedSessionHooksService = Omit<
+  AgentSessionHooksService,
+  'startServer' | 'createPluginDir'
+> & Readonly<{
+  startServer(
+    request: Parameters<AgentSessionHooksService['startServer']>[0] & Readonly<{
+      providerId: string;
+      sessionId: string;
+      lifecycle: Readonly<{ kind: 'session'; sessionId: string }>;
+    }>,
+  ): Promise<AgentSessionHookServerHandle>;
+  createPluginDir(
+    request: Parameters<AgentSessionHooksService['createPluginDir']>[0] & Readonly<{
+      providerId: string;
+      lifecycle: Readonly<{ kind: 'session'; sessionId: string }>;
+    }>,
+  ): Promise<string>;
+}>;
+
+export type ClaudeUnifiedTerminalContext = ClaudePermissionContext & Readonly<{
+  logger: ClaudeRuntimeLogger;
+  features: Readonly<{ isEnabled(featureId: string): boolean }>;
+  storage: Readonly<{
+    session: Readonly<{
+      get<T = unknown>(key: string): Promise<T | null>;
+      set(key: string, value: unknown): Promise<void>;
+    }>;
+  }>;
+  agentRuntime: Readonly<{
+    terminalHost: NonNullable<AgentSessionHostServices['terminalHost']>;
+    sessionHooks: ClaudeUnifiedSessionHooksService;
+    transcripts: Readonly<{ fileFollow: AgentTranscriptFileFollowService }>;
+    accountUsage: ClaudeRuntimeAccountUsageService;
+  }>;
+  sessions: Readonly<{
+    current: ClaudePermissionContext['sessions']['current'] & Readonly<{
+      writeMetadata: ClaudeWorkflowMetadataWriter;
+      writeSystemRecord?: ClaudeWorkflowSystemRecordWriter;
+      readSystemRecord?: ClaudeWorkflowSystemRecordReader;
+      writeStateField(request: Readonly<{
+        fieldId: 'identity.providerSessionId';
+        value: Readonly<{ metadataKey: 'claudeSessionId'; value: string }>;
+        reason: string;
+      }>): Promise<void>;
+      auth?: Readonly<{
+        services?: Readonly<{
+          refreshRuntimeAuth?(
+            request: AgentSessionAuthRefreshRequest & Readonly<{ agentId: string }>,
+            options?: Readonly<{ signal?: AbortSignal }>,
+          ): Promise<unknown>;
+        }>;
+      }>;
+    }>;
+  }>;
+}>;
 
 const claudeUnifiedTerminalRuntimeAuthAdapter = createClaudeConnectedServiceRuntimeAuthAdapter();
 
@@ -150,7 +255,7 @@ const claudeUnifiedTerminalRuntimeAuthAdapter = createClaudeConnectedServiceRunt
  * a subagent request, not the parent session's credentials — incident cmq8171vw). Best-effort.
  */
 async function reportClaudeUnifiedTerminalStopFailureRuntimeAuth(params: Readonly<{
-  ctx: PluginContextV1;
+  ctx: ClaudeUnifiedTerminalContext;
   happierSessionId: string;
   evidence: unknown;
 }>): Promise<void> {
@@ -175,7 +280,6 @@ async function reportClaudeUnifiedTerminalStopFailureRuntimeAuth(params: Readonl
   }).catch(() => undefined);
 }
 
-const DEFAULT_PROVIDER_ACCEPTANCE_TIMEOUT_MS = 5_000;
 const DEFAULT_QUEUED_BANNER_CUSTODY_CHECK_DELAY_MS = 400;
 const DEFAULT_QUEUED_BANNER_CUSTODY_RETRY_DELAYS_MS = [
   DEFAULT_QUEUED_BANNER_CUSTODY_CHECK_DELAY_MS,
@@ -236,14 +340,21 @@ function sanitizeTurnEndProbeDelaysMs(delays: readonly number[] | undefined): re
   return sanitized.length > 0 ? sanitized : DEFAULT_DIALOG_TURN_END_PROBE_DELAYS_MS;
 }
 const MAX_RECENT_PROVIDER_PROMPT_SUBMISSIONS = 64;
-const PROVIDER_CLAIMED_PENDING_PREFIX_RESIDUE_MIN_CHARS = 16;
 
 export type ClaudeUnifiedTerminalTurnOperationsParams = Readonly<{
-  ctx: PluginContextV1;
+  ctx: ClaudeUnifiedTerminalContext;
+  activeInput?: Pick<
+    AgentSessionRuntimeContext['session']['services']['activeInput'],
+    'publishStatus'
+  >;
   directory: string;
   happierSessionId: string;
   hostPreference: TerminalHostPreference;
   launchEnv: Readonly<Record<string, string>>;
+  providerModel?: AgentSessionProviderBinding['model'];
+  initialModelId?: string | null;
+  initialEffort?: string | null;
+  initialUltracode?: boolean;
   permissionMode: string | null;
   /** Persisted workflow headline from the session snapshot that created this runtime. */
   initialWorkflowActivityHeadline?: unknown;
@@ -251,7 +362,7 @@ export type ClaudeUnifiedTerminalTurnOperationsParams = Readonly<{
     providerSessionId: string;
     transcriptPath: string;
   }> | null;
-  setThinking?: (thinking: boolean) => void;
+  launchIntent?: ClaudeUnifiedTerminalLaunchIntent;
   startupReadiness?: Readonly<{
     baseTimeoutMs?: number;
     extendedTimeoutMs?: number;
@@ -271,6 +382,8 @@ export type ClaudeUnifiedTerminalTurnOperationsParams = Readonly<{
    * session). Defaults to asking the user through the existing AskUserQuestion permission surface.
    */
   resumeChoice?: ClaudeUnifiedResumeChoicePolicy | null | undefined;
+  /** Account-scoped policy for Claude's provider-owned pre-hook workspace trust prompt. */
+  workspaceTrustPolicy?: ClaudeUnifiedTerminalWorkspaceTrustPolicy | null | undefined;
   /**
    * Dialog-resolution tuning (test seam). `turnEndProbeDelaysMs` are the absolute offsets (from turn
    * settle) of the bounded turn-end/idle dialog re-arm tail; `injectionBlockEscalationMs` is the
@@ -280,6 +393,8 @@ export type ClaudeUnifiedTerminalTurnOperationsParams = Readonly<{
     turnEndProbeDelaysMs?: readonly number[];
     injectionBlockEscalationMs?: number;
   }>;
+  /** Native AgentRuntime work-state projection; omitting it preserves the legacy metadata owner. */
+  publishGoalWorkState?: (snapshot: SessionWorkStateV1) => void;
 }>;
 
 /**
@@ -299,13 +414,26 @@ type TurnCompletionWaiter = Readonly<{
   reject(error: Error): void;
 }>;
 
-type ClaudeUnifiedSessionHookServer = Awaited<ReturnType<PluginContextV1['agentRuntime']['sessionHooks']['startServer']>> & Readonly<{
+type ClaudeUnifiedSessionHookServer = AgentSessionHookServerHandle & Readonly<{
   sessionHookSecretFile?: string;
   permissionHookSecretFile?: string;
 }>;
 
+type AgentSessionTerminalComposerClearOutcome = Awaited<
+  ReturnType<
+    Parameters<AgentSessionHostServices['activeInput']['bind']>[0]['clearTerminalComposer']
+  >
+>;
+
+type WithSessionId<T> = T extends unknown
+  ? T & Readonly<{ sessionId: string }>
+  : never;
+
+type ClaudeSessionTerminalComposerClearResult =
+  WithSessionId<AgentSessionTerminalComposerClearOutcome>;
+
 type SessionTerminalComposerClearFailureStatusV1 = Extract<
-  SessionTerminalComposerClearResultV1,
+  ClaudeSessionTerminalComposerClearResult,
   { ok: false }
 >['status'];
 
@@ -313,8 +441,17 @@ type ClaudeUnifiedPromptDeliveryBlockerClear = Readonly<{
   deliveryBlockedReason?: ClaudeUnifiedPromptDeliveryBlockedReason;
 }>;
 
-type ClaudeUnifiedTerminalNativeRuntime = ClaudeRuntimeTurnOperations & Readonly<{
-  confirmProviderAcceptance(evidence?: Readonly<{ promptText?: string; includeTimedOutAmbiguous?: boolean; agentTurnId?: string | null }>): Promise<boolean>;
+export type ClaudeUnifiedTerminalNativeRuntime = ClaudeRuntimeTurnOperations & Readonly<{
+  promptCustody: 'unified_terminal';
+  subscribeEffectiveModel: ClaudeEffectiveModelEvidenceSubscription;
+  subscribeUsageObservation: ClaudeUsageObservationSubscription;
+  subscribeCanonicalAgentSessionEvents: ReturnType<typeof createClaudeRuntimeActivityPublisher>['subscribe'];
+  confirmProviderAcceptance(evidence?: Readonly<{
+    promptText?: string;
+    exactPromptText?: boolean;
+    includeTimedOutAmbiguous?: boolean;
+    agentTurnId?: string | null;
+  }>): Promise<boolean>;
   observeTerminalLifecycle(observation: ClaudeTerminalLifecycleObservation): Promise<void>;
   /**
    * HF-1 (A3-HIGH-1) provider-acceptance watermark seam: the host opts the session's
@@ -330,17 +467,17 @@ type ClaudeUnifiedTerminalNativeRuntime = ClaudeRuntimeTurnOperations & Readonly
   setOnPromptTerminallyRejectedBeforeProvider(
     handler: (info: ClaudeUnifiedPromptDeliveryIdentity) => void,
   ): void;
+  setOnPromptDeliveryOutcome(handler: ((outcome: ClaudeUnifiedPromptDeliveryOutcome) => void) | null): void;
   setOnPromptDeliveryBlockerCleared(
     handler: (info?: ClaudeUnifiedPromptDeliveryBlockerClear) => void,
   ): void;
-  /**
-   * HF-2 (F-1) undeliverable-prompt handback: prompts still queued/unaccepted when the runtime
-   * is disposed are handed back (FIFO) so the host can re-pend them instead of losing them.
-   */
   setOnUndeliverablePrompts(
     handler: (prompts: ReadonlyArray<ClaudeUnifiedUndeliverablePrompt>) => void,
   ): void;
-  sendTurnPrompt(prompt: string, meta?: ClaudeUnifiedPromptDeliveryMeta): Promise<void>;
+  sendProviderTurnPrompt(
+    prompt: string,
+    meta?: ClaudeUnifiedPromptDeliveryMeta,
+  ): Promise<ClaudeRuntimePromptSubmissionOutcome>;
   /**
    * ACTIVE-session native `/goal` controls (read off the native runtime by
    * runHostSessionRuntime's SessionRuntimeControls forwarder). Inject a literal
@@ -368,28 +505,41 @@ type ClaudeUnifiedTerminalNativeRuntime = ClaudeRuntimeTurnOperations & Readonly
    * keeps the legacy queue path.
    */
   applyConfigDeltaInFlight(delta: Readonly<{ permissionMode: string }>): Promise<ClaudeUnifiedInFlightConfigApplyOutcome>;
-  clearTerminalComposer(request?: Readonly<{ sessionId?: string }>): Promise<SessionTerminalComposerClearResultV1>;
+  clearTerminalComposer(request?: Readonly<{
+    sessionId?: string;
+    expectedStateAtMs?: number;
+  }>): Promise<ClaudeSessionTerminalComposerClearResult>;
+  interruptPendingInputAndRun(request: Readonly<{
+    sessionId?: string;
+    localId: string;
+    expectedStateAtMs?: number;
+  }>): Promise<unknown>;
 }>;
 
 type ClaudeUnifiedPromptDeliveryMeta = Readonly<{
   localId?: string | null;
   localIds?: readonly string[];
-  providerClaimedPendingLocalIds?: readonly string[];
   userMessageSeq?: number | null;
   userMessageSeqs?: readonly number[];
 }>;
 
-type ClaudeUnifiedPromptDeliveryIdentity = Readonly<{
+export type ClaudeUnifiedPromptDeliveryIdentity = Readonly<{
   localIds?: readonly string[];
   userMessageSeq: number | null;
   userMessageSeqs?: readonly number[];
   deliveryBlockedReason?: ClaudeUnifiedPromptDeliveryBlockedReason;
 }>;
 
+export type ClaudeUnifiedPromptDeliveryOutcome = ClaudeUnifiedPromptDeliveryIdentity & Readonly<{
+  type: 'custody_observed' | 'provider_accepted' | 'rejected_before_write' | 'possible_write';
+  reason?: string;
+}>;
+
 type RecentProviderPromptSubmissionEvidence = Readonly<{
   promptText: string;
   agentTurnId: string | null;
   queuedCommandEvidence: boolean;
+  source: 'hook' | 'transcript';
 }>;
 
 type ClaudeUnifiedUndeliverablePrompt = Readonly<{
@@ -434,7 +584,7 @@ function mapComposerClearFailureStatus(
 function mapComposerClearResult(
   sessionId: string,
   result: ClaudeUserAuthorizedComposerClearResult,
-): SessionTerminalComposerClearResultV1 {
+): ClaudeSessionTerminalComposerClearResult {
   switch (result.status) {
     case 'cleared':
     case 'already_empty':
@@ -483,6 +633,39 @@ function readAssistantModelId(row: unknown): string | null {
   return readNonEmptyString((message as Record<string, unknown>).model);
 }
 
+function readTaskNotificationTranscriptIdentity(row: unknown): Readonly<{
+  sessionId: string;
+  promptId: string | null;
+  uuid: string;
+}> | null {
+  if (!isRecord(row) || row.type !== 'user' || row.isSidechain === true) return null;
+  const origin = isRecord(row.origin) ? row.origin : null;
+  const message = isRecord(row.message) ? row.message : null;
+  const content = readNonEmptyString(message?.content);
+  if (readNonEmptyString(origin?.kind) !== 'task-notification' && !isClaudeTaskNotificationPromptText(content)) {
+    return null;
+  }
+  const sessionId = readNonEmptyString(row.session_id) ?? readNonEmptyString(row.sessionId);
+  const uuid = readNonEmptyString(row.uuid);
+  if (!sessionId || !uuid) return null;
+  return {
+    sessionId,
+    promptId: readNonEmptyString(row.prompt_id) ?? readNonEmptyString(row.promptId),
+    uuid,
+  };
+}
+
+function isMatchingTaskNotificationAssistantReaction(
+  row: unknown,
+  pending: Readonly<{ sessionId: string; transcriptUuid: string }>,
+): boolean {
+  if (!isRecord(row) || row.type !== 'assistant') return false;
+  if (row.isSidechain === true || row.isReplay === true || row.is_replay === true) return false;
+  const sessionId = readNonEmptyString(row.session_id) ?? readNonEmptyString(row.sessionId);
+  const parentUuid = readNonEmptyString(row.parentUuid) ?? readNonEmptyString(row.parent_uuid);
+  return sessionId === pending.sessionId && parentUuid === pending.transcriptUuid;
+}
+
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
@@ -519,40 +702,35 @@ const readUltracodeFromRuntimeConfigUpdate = readClaudeRuntimeConfigUltracodeUpd
 
 export function createClaudeUnifiedTerminalTurnOperations(
   params: ClaudeUnifiedTerminalTurnOperationsParams,
-): ClaudePublicSessionRuntime<ClaudeUnifiedTerminalNativeRuntime> {
+): ClaudeUnifiedTerminalNativeRuntime {
   const state = createClaudeUnifiedTerminalRuntimeState();
-  const handlers = new Set<(message: RuntimeEventV1) => void>();
+  const handlers = new Set<(message: ClaudeProviderEvent) => void>();
+  const effectiveModelListeners = new Set<(evidence: ClaudeEffectiveModelEvidence) => void>();
+  const usageObservationListeners = new Set<(observation: ClaudeUsageObservation) => void>();
+  let currentProviderModel = params.providerModel;
   const completionWaiters = new Set<TurnCompletionWaiter>();
   const publishedFailureTurnIds = new Set<string>();
   const observedCompactionCompletedEventIds = new Set<string>();
-  const providerActivityLedger = createClaudeProviderActivityLedger({
-    // W-3 backstop: a stale provider task whose terminal event was dropped expires after the TTL.
-    // Re-check turn-completion so a silent session does not stay "working" forever. (The target
-    // function is a hoisted declaration below; the arrow only runs at expiry, well after init.)
-    onActiveTasksExpired: () => { observeProviderTaskTerminalCompletionWhenReady(); },
+  const providerActivityLedger = createClaudeProviderActivityLedger();
+  const runtimeActivityPublisher = createClaudeRuntimeActivityPublisher({
+    sessionId: params.happierSessionId,
   });
-  const runtimeActivityPublisher = createSessionRuntimeActivityPublisher({
-    session: params.ctx.sessions.current,
-  });
+  let pendingTaskNotificationReaction: {
+    sessionId: string;
+    promptId: string | null;
+    transcriptUuid: string | null;
+  } | null = null;
   const promptEchoSuppressor = createClaudeUnifiedPromptEchoSuppressor();
   const terminalOriginLocalIds = createClaudeUnifiedTerminalOriginLocalIdAllocator({
     ctx: params.ctx,
     sessionId: params.happierSessionId,
   });
 
-  function publishRuntimeActivityUpdate(promise: Promise<void>, reason: string): void {
-    publishClaudeRuntimeActivityUpdate({
+  function publishProviderTaskInventory(reason: string): void {
+    publishClaudeProviderTaskInventory({
       logger: params.ctx.logger,
       logPrefix: '[ClaudeUnifiedTerminal]',
-      promise,
-      reason,
-    });
-  }
-
-  function clearRuntimeActivitySources(reason: string): void {
-    clearClaudeRuntimeActivitySources({
-      logger: params.ctx.logger,
-      logPrefix: '[ClaudeUnifiedTerminal]',
+      ledger: providerActivityLedger,
       runtimeActivityPublisher,
       reason,
     });
@@ -571,14 +749,16 @@ export function createClaudeUnifiedTerminalTurnOperations(
   // Centralized native `/goal` runtime (SOURCE + EFFECTOR). The source observes
   // every raw transcript row (incl. `goal_status` attachments + system-init
   // `slash_commands`) via the publisher's `onObserveRow`; the effector injects a
-  // literal `/goal …` user turn via `sendTurnPrompt` (late-bound below, since the
-  // native runtime that owns `sendTurnPrompt` is created further down).
+  // literal `/goal …` user turn via `sendProviderTurnPrompt` (late-bound below, since the
+  // native runtime that owns `sendProviderTurnPrompt` is created further down).
   const goalRuntime = createClaudeUnifiedGoalRuntime({
     backendId: 'claude',
     agentId: 'claude',
     getCurrentClaudeSessionId: () => state.providerSessionId ?? null,
-    writeMetadataUpdate: async (request) => { await params.ctx.sessions.current.writeMetadata(request); },
-    injectGoalCommand: async (message) => { await nativeRuntime.sendTurnPrompt(message); },
+    ...(params.publishGoalWorkState
+      ? { publishWorkStateSnapshot: params.publishGoalWorkState }
+      : { writeMetadataUpdate: async (request) => { await params.ctx.sessions.current.writeMetadata(request); } }),
+    injectGoalCommand: async (message) => { await nativeRuntime.sendProviderTurnPrompt(message); },
     logError: (message, error) => { params.ctx.logger.debug(`[ClaudeUnifiedTerminal] ${message}`, { error }); },
   });
   // Centralized Claude Dynamic Workflow ACTIVITY runtime (CWF2/CWF3/CWF4). Observes the SAME raw
@@ -607,8 +787,16 @@ export function createClaudeUnifiedTerminalTurnOperations(
       : {}),
     writeMetadata: async (request) => { await params.ctx.sessions.current.writeMetadata(request); },
     fileFollow: params.ctx.agentRuntime.transcripts.fileFollow,
-    runtimeActivityPublisher,
     initialWorkflowActivityHeadline: params.initialWorkflowActivityHeadline,
+    onProviderTaskActivity: (activity) => {
+      applyClaudeProviderTaskActivity({
+        activity,
+        ledger: providerActivityLedger,
+        runtimeActivityPublisher,
+        logger: params.ctx.logger,
+        logPrefix: '[ClaudeUnifiedTerminal]',
+      });
+    },
     logError: (message, error) => { params.ctx.logger.debug(`[ClaudeUnifiedTerminal] ${message}`, { error }); },
   });
   // CWF4: expose the workflow-owned subagent tool-use ids to the (engine-level, stateless) task
@@ -618,15 +806,60 @@ export function createClaudeUnifiedTerminalTurnOperations(
     params.happierSessionId,
     () => workflowRuntime.getWorkflowOwnedAgentToolUseIds(),
   );
+  const publishUsageObservation = (observation: ClaudeUsageObservation | null): void => {
+    if (!observation) return;
+    for (const listener of usageObservationListeners) listener(observation);
+  };
   const providerTranscriptPublisher = createClaudeUnifiedProviderTranscriptPublisher({
     ctx: params.ctx,
-    sessionId: params.happierSessionId,
-    onObserveRow: (row) => {
+    onPublishPayload: async (payload) => {
+      if (
+        payload.kind === 'slash_command'
+        && parseSpecialCommand(payload.text ?? '').type === 'compact'
+      ) {
+        // Resume-from-summary is submitted by Claude itself and appears as an authenticated
+        // provider transcript slash-command row rather than a UserPromptSubmit hook. Confirm the
+        // existing provisional resume turn at that exact boundary so the idle-release timer cannot
+        // falsely cancel an active compaction. This is lifecycle evidence only, never Pending
+        // acceptance for the queued user prompt that follows compaction.
+        nativeResumeTurnBarrier?.observePromptStart();
+      }
+      const observation = mapClaudeUnifiedTranscriptLifecyclePayload(payload, params.happierSessionId);
+      if (observation) await nativeRuntime.observeTerminalLifecycle(observation);
+    },
+    onObserveRow: (row, observation) => {
+      const modelSource = currentProviderModel ? 'provider' as const : 'claude-native' as const;
+      if (row.type === 'assistant' && row.message?.usage) {
+        publishUsageObservation(buildClaudeAssistantUsageObservation({
+          modelId: readAssistantModelId(row) ?? verifiedModelId ?? launchModelId,
+          modelSource,
+          usage: row.message.usage,
+        }));
+      } else if (row.type === 'result') {
+        const selectedModelId = verifiedModelId ?? launchModelId ?? currentProviderModel?.id ?? null;
+        const modelUsageIds = Object.keys(row.modelUsage);
+        const resultModelId = selectedModelId && modelUsageIds.includes(selectedModelId)
+          ? selectedModelId
+          : modelUsageIds.length === 1
+            ? modelUsageIds[0]!
+            : selectedModelId;
+        if (resultModelId) {
+          publishUsageObservation(buildClaudeSdkResultUsageObservation({
+            modelId: resultModelId,
+            modelSource,
+            result: row,
+          }));
+        }
+      }
+      observeTaskNotificationReactionTranscriptRow(row);
       statuslineApplier.applyModelEvidence({
         modelId: readAssistantModelId(row),
       });
       // ONE raw channel, two provider-clean sources: goal status + workflow activity.
       observeProviderTaskActivity(row);
+      if (!observation.historicalReplay) {
+        observeProviderTaskNotificationTerminal(row, observation.providerSessionId);
+      }
       goalRuntime.source.observeTranscriptMessage(row);
       const workflowObservation = workflowRuntime.observeTranscriptMessage(row);
       if (workflowObservation.terminalRunIds.length > 0) {
@@ -638,10 +871,45 @@ export function createClaudeUnifiedTerminalTurnOperations(
     ((info: ClaudeUnifiedPromptDeliveryIdentity) => void) | null = null;
   let onPromptTerminallyRejectedBeforeProviderHandler:
     ((info: ClaudeUnifiedPromptDeliveryIdentity) => void) | null = null;
+  let onPromptDeliveryOutcomeHandler:
+    ((outcome: ClaudeUnifiedPromptDeliveryOutcome) => void) | null = null;
   let onPromptDeliveryBlockerClearedHandler:
     ((info?: ClaudeUnifiedPromptDeliveryBlockerClear) => void) | null = null;
   let onUndeliverablePromptsHandler:
     ((prompts: ReadonlyArray<ClaudeUnifiedUndeliverablePrompt>) => void) | null = null;
+  const promptDeliveryTerminalWaiters = new Map<TerminalPromptInput, () => void>();
+
+  function waitForPromptDeliveryTerminal(input: TerminalPromptInput): Readonly<{
+    promise: Promise<void>;
+    cancel: () => void;
+  }> {
+    let resolveTerminal: () => void = () => {};
+    const promise = new Promise<void>((resolve) => {
+      resolveTerminal = resolve;
+    });
+    promptDeliveryTerminalWaiters.set(input, resolveTerminal);
+    return {
+      promise,
+      cancel: () => {
+        if (promptDeliveryTerminalWaiters.get(input) === resolveTerminal) {
+          promptDeliveryTerminalWaiters.delete(input);
+        }
+      },
+    };
+  }
+
+  function settlePromptDeliveryTerminal(input: TerminalPromptInput): void {
+    const resolveTerminal = promptDeliveryTerminalWaiters.get(input);
+    if (!resolveTerminal) return;
+    promptDeliveryTerminalWaiters.delete(input);
+    resolveTerminal();
+  }
+
+  function settleAllPromptDeliveryTerminalWaiters(): void {
+    const resolveTerminals = [...promptDeliveryTerminalWaiters.values()];
+    promptDeliveryTerminalWaiters.clear();
+    for (const resolveTerminal of resolveTerminals) resolveTerminal();
+  }
   let recentPrimaryProviderUnavailableForPromptDelivery:
     ClaudeUnifiedProviderUnavailablePromptDeliveryWindow | null = null;
   let sessionHookServer: ClaudeUnifiedSessionHookServer | null = null;
@@ -649,9 +917,15 @@ export function createClaudeUnifiedTerminalTurnOperations(
   let hookSecret: string | null = null;
   let statuslineOverlaySettings: ClaudeStatuslineOverlaySettings | null = null;
   let statuslineTranscriptPath: string | null = null;
-  const providerSessionPublicationState = { publishedProviderSessionId: null as string | null };
+  let publishedProviderSessionId: string | null = null;
   let knownProviderSessionBound = false;
   let sessionStartObservedForReadiness = false;
+  let nativeResumeTurnBarrier: ReturnType<typeof createClaudeUnifiedResumeTurnBarrier> | null = null;
+  const requestedResumeProviderSessionId = params.launchIntent?.kind === 'resume_native'
+    ? params.launchIntent.providerSessionId
+    : null;
+  let explicitResumeIdentityEstablished = requestedResumeProviderSessionId === null;
+  let explicitResumeIdentityFailure: ClaudeUnifiedResumeIdentityMismatchError | null = null;
   // Statusline-verified effective truth (the `lastVerified` analogue, lane Y intent): the model
   // and effort the live TUI is ACTUALLY running. Feeds the convergence baseline ONLY — never
   // desired-state surfaces, never the TUI, never launch args.
@@ -666,9 +940,6 @@ export function createClaudeUnifiedTerminalTurnOperations(
   let resumeChoiceControlPortPromise: Promise<TerminalControlPort | null> | null = null;
   const statuslineApplier = createClaudeStatuslineApplier({
     logger: params.ctx.logger,
-    // Async wrapper: a host without the session metadata seam rejects instead of throwing, and
-    // the applier downgrades that to a warn log (statusline is additive enrichment only).
-    writeMetadata: async (request) => await params.ctx.sessions.current.writeMetadata(request),
     readIdentity: () => ({
       providerSessionId: state.providerSessionId,
       transcriptPath: statuslineTranscriptPath,
@@ -686,6 +957,9 @@ export function createClaudeUnifiedTerminalTurnOperations(
         });
       }
     },
+    onEffectiveModel: (evidence) => {
+      for (const listener of effectiveModelListeners) listener(evidence);
+    },
     onModelChanged: (change) => {
       publishSessionEvent({
         id: change.eventId,
@@ -698,22 +972,27 @@ export function createClaudeUnifiedTerminalTurnOperations(
       });
     },
   });
-  let unsubscribeLifecycleEvents: (() => void) | null = null;
-  let launchModelId: string | null = null;
+  let launchModelId: string | null = readNonEmptyString(params.initialModelId);
   let launchFallbackModelId: string | null = null;
-  let launchEffort: string | null = null;
-  let launchUltracode = false;
+  let launchEffort: string | null = readNonEmptyString(params.initialEffort);
+  let launchUltracode = params.initialUltracode === true;
   // Effective permission mode at spawn. Plan-inclusive: a pre-launch `{modeId:'plan'}` toggle
   // wins over the raw permission mode so the TUI launches in plan rather than the raw mode.
   let launchPermissionMode: string | null = params.permissionMode;
 
   function publishProviderSessionId(nextSessionId: string, reason: string): void {
-    publishClaudeProviderSessionId({
-      ctx: params.ctx,
-      state: providerSessionPublicationState,
-      nextSessionId,
-      reason,
-      logPrefix: '[ClaudeUnifiedTerminal]',
+    if (publishedProviderSessionId === nextSessionId) return;
+    publishedProviderSessionId = nextSessionId;
+    publishClaudeUnifiedRuntimeEvent({
+      handlers,
+      logger: params.ctx.logger,
+      event: {
+        kind: 'session-id-publish',
+        sessionId: params.happierSessionId,
+        emittedAtMs: Date.now(),
+        publishedSessionId: nextSessionId,
+        source: reason,
+      },
     });
   }
 
@@ -729,10 +1008,24 @@ export function createClaudeUnifiedTerminalTurnOperations(
     publishProviderSessionId(input.providerSessionId, input.reason);
   }
 
+  function readPrimarySessionHookProviderSessionId(
+    providerSessionId: string,
+    payload: Readonly<Record<string, unknown>>,
+  ): string | null {
+    return readNonEmptyString(providerSessionId)
+      ?? readNonEmptyString(payload.session_id)
+      ?? readNonEmptyString(payload.sessionId);
+  }
+
   async function bindKnownProviderSessionTranscript(): Promise<void> {
     if (knownProviderSessionBound) return;
     const knownProviderSession = params.knownProviderSession;
     if (!knownProviderSession) return;
+    if (!explicitResumeIdentityEstablished) return;
+    if (
+      requestedResumeProviderSessionId
+      && knownProviderSession.providerSessionId !== requestedResumeProviderSessionId
+    ) return;
     knownProviderSessionBound = true;
     const bindResult = await providerTranscriptPublisher.bindKnownLiveTranscript(knownProviderSession);
     if (
@@ -798,6 +1091,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
       params.ctx.logger.warn('[ClaudeUnifiedTerminal] own-injected-text log storage degraded', { operation, error });
     },
   });
+  const resumeSummaryCompactResidue = createClaudeResumeSummaryCompactResidueEpisode();
   const recentProviderPromptSubmissions: RecentProviderPromptSubmissionEvidence[] = [];
   let pendingRuntimeConfigDeliveryBlocker: ClaudeUnifiedPromptDeliveryBlockedReason | null = null;
   let pendingProviderUnavailableDeliveryBlocker = false;
@@ -810,6 +1104,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
   function notifyPromptDeliveryBlockerCleared(
     deliveryBlockedReason: ClaudeUnifiedPromptDeliveryBlockedReason,
   ): void {
+    arbiter.clearHeadBeforeProviderBlock(deliveryBlockedReason);
     try {
       onPromptDeliveryBlockerClearedHandler?.({ deliveryBlockedReason });
     } catch (error) {
@@ -854,23 +1149,6 @@ export function createClaudeUnifiedTerminalTurnOperations(
     return true;
   }
 
-  function hasProviderClaimedPendingPrompt(meta: ClaudeUnifiedPromptDeliveryMeta | undefined): boolean {
-    return (meta?.providerClaimedPendingLocalIds ?? []).some((localId) => {
-      return typeof localId === 'string' && localId.trim().length > 0;
-    });
-  }
-
-  function recordProviderClaimedPendingPromptIfNeeded(
-    prompt: string,
-    meta: ClaudeUnifiedPromptDeliveryMeta | undefined,
-  ): void {
-    if (!hasProviderClaimedPendingPrompt(meta)) return;
-    ownInjectedTextLog.record(prompt);
-    ownInjectedTextLog.recordPossiblePartialResidue(prompt, {
-      minPrefixChars: PROVIDER_CLAIMED_PENDING_PREFIX_RESIDUE_MIN_CHARS,
-    });
-  }
-
   const DEPENDENT_RUNTIME_CONFIG_CHANGE_KEYS = new Set(['permissionMode', 'sessionMode']);
   const DEFERRED_RUNTIME_CONFIG_TIMINGS = new Set(['scheduled_for_next_prompt', 'queued_until_safe_window', 'next_idle']);
 
@@ -890,7 +1168,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
     return !dependentChanges.some(isRuntimeConfigChangePromptBlocking);
   }
 
-  function rememberRuntimeConfigUpdateOutcome<T extends RuntimeConfigUpdateOutcomeV1 | void>(
+  function rememberRuntimeConfigUpdateOutcome<T extends ClaudeProviderConfigurationOutcome | void>(
     outcome: T,
     opts: Readonly<{ promptMayProceed?: boolean }> = {},
   ): T {
@@ -914,12 +1192,47 @@ export function createClaudeUnifiedTerminalTurnOperations(
     reason: ClaudeUnifiedPromptDeliveryBlockedReason,
   ): boolean {
     if (!canRejectCurrentQueuedPromptBeforeProvider(reason)) return false;
-    const rejected = arbiter.rejectHeadBeforeProvider({ deliveryBlockedReason: reason });
+    const reversible = isClaudeUnifiedPromptDeliveryBlockReversible(reason);
+    const rejected = reversible
+      ? arbiter.blockHeadBeforeProvider({ deliveryBlockedReason: reason })
+      : arbiter.rejectHeadBeforeProvider({ deliveryBlockedReason: reason });
     if (!rejected) return false;
     state.dispatchAttemptInFlight = false;
-    params.setThinking?.(false);
+    if (reversible) state.turnCompleted = true;
     settleTurnCompletionWaiters();
     return true;
+  }
+
+  function failExplicitResumeIdentityMismatch(params2: Readonly<{
+    observedProviderSessionId: string | null;
+    source: string | null;
+  }>): void {
+    if (explicitResumeIdentityFailure) return;
+    explicitResumeIdentityFailure = recordClaudeUnifiedResumeIdentityMismatchFailure({
+      handlers,
+      logger: params.ctx.logger,
+      publishedFailureTurnIds,
+      sessionId: params.happierSessionId,
+      turnId: state.activeTurnId,
+      allocateTurnWhenIdle: state.activeTurnId === null,
+    });
+    params.ctx.logger.warn('[ClaudeUnifiedTerminal] explicit resume identity validation failed', {
+      sessionId: params.happierSessionId,
+      expectedProviderSessionId: requestedResumeProviderSessionId,
+      observedProviderSessionId: params2.observedProviderSessionId,
+      source: params2.source,
+    });
+    nativeResumeTurnBarrier?.observeTerminal();
+    state.lastTurnFailure = explicitResumeIdentityFailure;
+    state.turnCompleted = true;
+    state.turnInFlight = false;
+    state.terminalOriginTurnInFlight = false;
+    rejectCurrentQueuedPromptBeforeProvider('resume_identity_mismatch');
+    settleTurnCompletionWaiters();
+  }
+
+  function assertExplicitResumeIdentityDidNotFail(): void {
+    if (explicitResumeIdentityFailure) throw explicitResumeIdentityFailure;
   }
 
   function handlePendingRuntimeConfigDeliveryBlockerBeforeDrain(): boolean {
@@ -950,11 +1263,15 @@ export function createClaudeUnifiedTerminalTurnOperations(
     if (recentProviderPromptSubmissions.length === 0) return;
     const submissions = recentProviderPromptSubmissions.splice(0);
     for (const submission of submissions) {
-      await arbiter.confirmProviderAcceptance({
+      const evidence = {
         promptText: submission.promptText,
         ...(submission.agentTurnId ? { agentTurnId: submission.agentTurnId } : {}),
-        ...(submission.queuedCommandEvidence ? { includeTimedOutAmbiguous: true } : {}),
-      });
+        ...(submission.queuedCommandEvidence ? {
+          exactPromptText: true,
+          includeTimedOutAmbiguous: true,
+        } : {}),
+      };
+      await arbiter.confirmProviderAcceptance(evidence);
     }
   }
 
@@ -984,7 +1301,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
   };
   // Single owner of the runtime-config-outcome session-event emission (grouped per status,
   // transition-deduped). The session `send` seam is optional on older hosts; emission is then a
-  // logged no-op (outcomes still flow through the typed updateSessionRuntimeConfig return).
+  // logged no-op (outcomes still flow through the typed updateProviderConfiguration return).
   const runtimeConfigOutcomeEmitter = createClaudeUnifiedRuntimeConfigOutcomeEmitter({
     sendSessionEvent: (event: ClaudeUnifiedRuntimeConfigOutcomeSessionEvent) => {
       publishSessionEvent(event, {
@@ -1022,9 +1339,8 @@ export function createClaudeUnifiedTerminalTurnOperations(
     const localIds: string[] = [];
     const seen = new Set<string>();
     for (const rawLocalId of rawLocalIds) {
-      if (typeof rawLocalId !== 'string') continue;
-      const localId = rawLocalId.trim();
-      if (!localId || seen.has(localId)) continue;
+      const localId = readClaudePendingLocalId(rawLocalId);
+      if (localId === null || seen.has(localId)) continue;
       seen.add(localId);
       localIds.push(localId);
     }
@@ -1076,15 +1392,6 @@ export function createClaudeUnifiedTerminalTurnOperations(
       return undefined;
     }
     return { deliveryBlockedReason: 'provider_unavailable_before_acceptance' };
-  }
-
-  function isPromptDeliveryAccepted(input: TerminalPromptInput): boolean {
-    try {
-      return params.ctx.sessions.current.hasProviderAcceptedUserMessageDelivery?.(buildPromptDeliveryIdentity(input)) === true;
-    } catch (error) {
-      params.ctx.logger.warn('[ClaudeUnifiedTerminal] provider-accepted delivery query failed', { error });
-      return false;
-    }
   }
 
   function isTuiRuntimeControlFeatureEnabled(): boolean {
@@ -1154,6 +1461,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
       ctx: params.ctx,
       sessionId: params.happierSessionId,
       policy: params.resumeChoice,
+      workspaceTrustPolicy: params.workspaceTrustPolicy,
       port,
       settleMs: params.tuiControl?.timings?.commandSettleMs ?? DEFAULT_CLAUDE_TUI_CONTROL_TIMINGS.commandSettleMs,
       wait: waitMs,
@@ -1168,6 +1476,16 @@ export function createClaudeUnifiedTerminalTurnOperations(
       // dialog surfacing during the idle probe is published like any other dialog, never silently
       // deferred to a dedicated startup owner that is already gone.
       isStartupActive: () => !sessionStartObservedForReadiness,
+      onPendingUserActionChange: (pending) => {
+        if (pending) {
+          stopReadinessWake();
+          return;
+        }
+        readinessWaitStartedAtMs = Date.now();
+        lastScreenProgressAtMs = Date.now();
+        ensureReadinessWake();
+      },
+      onResumeSummaryCompactResidue: resumeSummaryCompactResidue.arm,
     });
     return resumeChoiceStartupHandler;
   }
@@ -1197,7 +1515,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
   // delivery decision can stop pretending a non-steerable send was delivered. Fed by the
   // steer-window decisions inside observeCurrentReadiness; controller-independent.
   const steerCapabilityPublisher = createClaudeUnifiedSteerCapabilityPublisher({
-    session: params.ctx.sessions.current,
+    publishStatus: params.activeInput?.publishStatus ?? (() => undefined),
     logger: params.ctx.logger,
     isCanonicalTurnActive: () => !state.disposed && (state.turnInFlight || state.terminalOriginTurnInFlight),
     // Lane Q: resolved once at runtime creation; the UI's "Apply & steer now" gate is fail-closed
@@ -1205,7 +1523,6 @@ export function createClaudeUnifiedTerminalTurnOperations(
     inFlightConfigApplySupported: isTuiRuntimeControlFeatureEnabled(),
   });
   const arbiter = createClaudeUnifiedInputArbiter({
-    providerAcceptanceTimeoutMs: DEFAULT_PROVIDER_ACCEPTANCE_TIMEOUT_MS,
     injectPrompt: async (input) => {
       const handle = await ensureHost();
       // Never interleave prompt bytes with an in-flight control sequence (slash command /
@@ -1224,8 +1541,17 @@ export function createClaudeUnifiedTerminalTurnOperations(
     },
     onPromptInjected: async (input, acceptance) => {
       recordProviderActivity();
-      params.setThinking?.(true);
       scheduleQueuedBannerCustodyCheck(input, acceptance.acceptedAs);
+      // A slash command can replace the composer with a native chooser without a hook or
+      // turn-lifecycle event. Its Enter write may finish just before Claude paints the chooser, so
+      // reuse the existing bounded control settle before probing the single dialog owner once.
+      if (input.text.trimStart().startsWith('/')) {
+        await waitMs(
+          params.tuiControl?.timings?.commandSettleMs
+            ?? DEFAULT_CLAUDE_TUI_CONTROL_TIMINGS.commandSettleMs,
+        );
+      }
+      await probeVisibleDialogOnce();
       await replayRecentProviderPromptSubmissions();
     },
     onPromptAccepted: async (input, acceptance) => {
@@ -1233,10 +1559,10 @@ export function createClaudeUnifiedTerminalTurnOperations(
       promptEchoSuppressor.recordAcceptedPrompt({
         text: input.text,
         agentTurnId: acceptance.agentTurnId ?? null,
+        retainUntilObserved: hasCanonicalPendingOwner(input),
       });
       ensureAcceptedTurnStarted(input);
       state.turnInFlight = true;
-      params.setThinking?.(true);
       // HF-1: provider acceptance is the watermark-confirmation point for this prompt's row seq.
       try {
         onPromptAcceptedByProviderHandler?.(buildPromptDeliveryIdentity(input));
@@ -1255,7 +1581,6 @@ export function createClaudeUnifiedTerminalTurnOperations(
       }
     },
     onUndeliverableInputs: (inputs) => {
-      // HF-2: never silently drop queued/unaccepted prompts on dispose; hand them back.
       try {
         onUndeliverablePromptsHandler?.(inputs.map((input) => ({
           text: input.text,
@@ -1265,7 +1590,12 @@ export function createClaudeUnifiedTerminalTurnOperations(
         params.ctx.logger.warn('[ClaudeUnifiedTerminal] onUndeliverablePrompts handler failed', { error });
       }
     },
-    isPromptDeliveryAccepted,
+    onPendingInputInterruptAndRunLocalIdChange: (localId) => {
+      const handle = state.handle;
+      steerCapabilityPublisher.publishPendingInputInterruptAndRunLocalId(
+        handle && isClaudeUnifiedPendingInputInterruptAndRunEnabled(handle.kind) ? localId : null,
+      );
+    },
     resolvePromptTerminalRejection: resolveProviderUnavailablePromptTerminalRejection,
     onInjectionFailure: (failure) => {
       params.ctx.logger.warn('[ClaudeUnifiedTerminal] prompt injection failed', {
@@ -1273,7 +1603,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
         phase: failure.result.phase,
         failureState: failure.failureState,
       });
-      params.setThinking?.(false);
+      publishAmbiguousProviderInputOutcome(failure);
       if (failure.failureState === 'failed_ambiguous') {
         publishAmbiguousInjectionFailure(failure);
         return;
@@ -1308,7 +1638,17 @@ export function createClaudeUnifiedTerminalTurnOperations(
           const screen = parseClaudeScreenState(inputState.currentInput, { cursor: inputState.cursor });
           if (screen.queuedMessageBannerVisible && !screen.userDraftPresent) {
             shouldRetry = false;
-            await arbiter.observeTerminalPromptCustody(input);
+            const custodyObserved = await arbiter.observeTerminalPromptCustody(input);
+            if (custodyObserved) {
+              try {
+                onPromptDeliveryOutcomeHandler?.({
+                  type: 'custody_observed',
+                  ...buildPromptDeliveryIdentity(input),
+                });
+              } catch (error) {
+                params.ctx.logger.warn('[ClaudeUnifiedTerminal] custody delivery handler failed', { error });
+              }
+            }
           }
         }
         if (shouldRetry) {
@@ -1348,7 +1688,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
     // only the FIRST --settings). The overlay value is secret-free: the forwarder reads the
     // hook secret from its 0600 secret file, never from the command line.
     const settingsOverlay: Record<string, unknown> = {
-      ...(launchUltracode && isClaudeUltracodeSupportedModelId(launchModelId)
+      ...(launchUltracode && isClaudeUltracodeSupportedModelId(launchModelId, currentProviderModel)
         ? { ultracode: true }
         : {}),
       ...(statuslineOverlaySettings ? { statusLine: statuslineOverlaySettings } : {}),
@@ -1364,11 +1704,15 @@ export function createClaudeUnifiedTerminalTurnOperations(
         launch: {
           kind: 'agent-cli',
           agentId: CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID,
-          args: [
+          args: applyClaudeUnifiedTerminalLaunchIntent([
             ...(resolvedHookPluginDir ? ['--plugin-dir', resolvedHookPluginDir] : []),
             ...(launchModelId ? ['--model', launchModelId] : []),
             ...(launchFallbackModelId ? ['--fallback-model', launchFallbackModelId] : []),
-            ...buildClaudeEffortCliArgs({ modelId: launchModelId, effort: launchEffort }),
+            ...buildClaudeEffortCliArgs({
+              modelId: launchModelId,
+              effort: launchEffort,
+              ...(currentProviderModel ? { providerModel: currentProviderModel } : {}),
+            }),
             // Single --settings overlay (ultracode + statusline forwarder). An unhonorable
             // ultracode request resolves to OFF: the gate is xhigh capability on the launch
             // model, so we never enable ultracode at a model that cannot offer it.
@@ -1377,7 +1721,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
               : []),
             CLAUDE_TERMINAL_YOLO_ALLOW_FLAG,
             ...(launchPermissionMode ? ['--permission-mode', mapToClaudePermissionMode(launchPermissionMode)] : []),
-          ],
+          ], params.launchIntent ?? { kind: 'new_session' }),
           cwd: params.directory,
           env: params.launchEnv,
         },
@@ -1399,14 +1743,54 @@ export function createClaudeUnifiedTerminalTurnOperations(
         lifecycle: { kind: 'session', sessionId: params.happierSessionId },
         sessionHookSecret: hookSecret,
         onSessionHook: async (providerSessionId, payload) => {
+          // Runtime Activity observes the authenticated hook before identity/sidechain routing.
+          // SubagentStart may refresh only an admitted ID; SubagentStop may clear only its exact ID.
+          observeProviderTaskActivity(payload, providerSessionId);
+          const lifecycleObservation = mapClaudeUnifiedHookLifecyclePayload(payload, params.happierSessionId);
+          if (lifecycleObservation) {
+            await nativeRuntime.observeTerminalLifecycle(lifecycleObservation);
+          }
           // Sidechain (subagent) session hooks must never rebind the PRIMARY provider session
           // identity or transcript path (ported R-11 / HF-7).
           if (isSidechainSessionHook(payload)) return;
           const hookEventName = readNonEmptyString(payload.hook_event_name)
             ?? readNonEmptyString(payload.hookEventName)
             ?? readNonEmptyString(payload.eventName);
+          let establishedExplicitResumeIdentityNow = false;
           if (hookEventName === 'SessionStart') {
+            pendingTaskNotificationReaction = null;
+            const source = readNonEmptyString(payload.source);
+            const observedProviderSessionId = readPrimarySessionHookProviderSessionId(providerSessionId, payload);
+            if (requestedResumeProviderSessionId && !explicitResumeIdentityEstablished) {
+              if (source !== 'resume' || observedProviderSessionId !== requestedResumeProviderSessionId) {
+                failExplicitResumeIdentityMismatch({ observedProviderSessionId, source });
+                return;
+              }
+              explicitResumeIdentityEstablished = true;
+              establishedExplicitResumeIdentityNow = true;
+              await bindKnownProviderSessionTranscript();
+            }
             sessionStartObservedForReadiness = true;
+            nativeResumeTurnBarrier?.observeProviderSessionStart(source);
+          } else if (
+            hookEventName === 'UserPromptSubmit'
+            && isClaudeTaskNotificationPromptText(readNonEmptyString(payload.prompt))
+          ) {
+            // A task notification is detached provider evidence. It neither confirms nor extends
+            // the provisional native-resume turn and is never Pending acceptance. Only a later
+            // authenticated primary-chain reaction may open a foreground turn.
+            if (!state.activeTurnId) {
+              const taskNotificationSessionId = readPrimarySessionHookProviderSessionId(providerSessionId, payload);
+              if (taskNotificationSessionId) {
+                pendingTaskNotificationReaction = {
+                  sessionId: taskNotificationSessionId,
+                  promptId: readNonEmptyString(payload.prompt_id) ?? readNonEmptyString(payload.promptId),
+                  transcriptUuid: null,
+                };
+              }
+            }
+          } else if (hookEventName === 'UserPromptSubmit') {
+            pendingTaskNotificationReaction = null;
           }
           const bindResult = await providerTranscriptPublisher.bindFromSessionHook(providerSessionId, payload);
           if (
@@ -1420,9 +1804,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
               reason: 'claude-unified-session-start',
             });
           } else if (hookEventName === 'SessionStart' && !state.providerSessionId) {
-            const trustedProviderSessionId = readNonEmptyString(providerSessionId)
-              ?? readNonEmptyString(payload.session_id)
-              ?? readNonEmptyString(payload.sessionId);
+            const trustedProviderSessionId = readPrimarySessionHookProviderSessionId(providerSessionId, payload);
             if (trustedProviderSessionId) {
               adoptProviderSessionId({
                 providerSessionId: trustedProviderSessionId,
@@ -1431,10 +1813,74 @@ export function createClaudeUnifiedTerminalTurnOperations(
               });
             }
           }
+          if (hookEventName === 'PostToolUse' && state.handle) {
+            // Claude can keep working behind a short-lived nonblocking overlay (for example an LSP
+            // recommendation). The authenticated primary hook is an event-driven observation edge;
+            // the existing generalized dialog controller remains the only parser/decision owner.
+            await probeVisibleDialogOnce();
+          }
+          if (hookEventName === 'PostToolUse' && pendingTaskNotificationReaction) {
+            const toolSessionId = readPrimarySessionHookProviderSessionId(providerSessionId, payload);
+            if (toolSessionId === pendingTaskNotificationReaction.sessionId) {
+              beginTaskNotificationReactionTurn();
+            }
+          }
+          if (
+            hookEventName === 'Stop'
+            || hookEventName === 'StopFailure'
+            || hookEventName === 'SessionEnd'
+          ) {
+            pendingTaskNotificationReaction = null;
+          }
+          if (hookEventName === 'SessionStart' && establishedExplicitResumeIdentityNow) {
+            // SessionStart can race terminalHost.start() resolving. Avoid recursively starting a
+            // second host while still waking a prompt that was parked behind identity validation.
+            if (state.handle) {
+              await observeCurrentReadiness();
+              await arbiter.drain();
+            }
+            ensureReadinessWake();
+          }
         },
-        onStatuslineUpdate: (payload) => {
+        onStatuslineUpdate: async (payload) => {
           const parsed = parseClaudeStatuslinePayload(payload);
           if (!parsed) return;
+          const statuslineProviderSessionId = readNonEmptyString(parsed.session_id);
+          const statuslineProviderTranscriptPath = readNonEmptyString(parsed.transcript_path);
+          if (
+            !state.providerSessionId
+            && statuslineProviderSessionId
+            && explicitResumeIdentityEstablished
+          ) {
+            if (statuslineProviderTranscriptPath) {
+              const bindResult = await providerTranscriptPublisher.bindKnownLiveTranscript({
+                providerSessionId: statuslineProviderSessionId,
+                transcriptPath: statuslineProviderTranscriptPath,
+              });
+              if (
+                !state.providerSessionId
+                && (
+                  bindResult.status === 'bound'
+                  || bindResult.status === 'unchanged'
+                  || bindResult.status === 'deferred'
+                )
+              ) {
+                adoptProviderSessionId({
+                  providerSessionId: bindResult.binding.providerSessionId,
+                  transcriptPath: bindResult.binding.transcriptPath,
+                  reason: 'claude-unified-statusline-transcript',
+                });
+              }
+            } else {
+              // The statusline forwarder is authenticated by the same session-scoped secret as
+              // hooks. Even if Claude omits its transcript path, retain its provider identity so a
+              // later Stop/Resume does not silently launch a fresh native session.
+              adoptProviderSessionId({
+                providerSessionId: statuslineProviderSessionId,
+                reason: 'claude-unified-statusline-session',
+              });
+            }
+          }
           statuslineApplier.apply(parsed);
         },
         onPermissionHook: createClaudeUnifiedPermissionHookHandler(params.ctx),
@@ -1543,6 +1989,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
     const turnId = state.activeTurnId;
     if (state.lastTurnFailure) return;
     if (!turnId || publishedTerminalLifecycleTurnIds.has(turnId)) return;
+    promptEchoSuppressor.clearAcceptedPromptEchoes();
     publishedTerminalLifecycleTurnIds.add(turnId);
     publishClaudeUnifiedTurnComplete({
       handlers,
@@ -1556,6 +2003,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
   function publishActiveTurnCancelled(nowMs: number, reason?: string): void {
     const turnId = state.activeTurnId;
     if (!turnId || publishedTerminalLifecycleTurnIds.has(turnId)) return;
+    promptEchoSuppressor.clearAcceptedPromptEchoes();
     publishedTerminalLifecycleTurnIds.add(turnId);
     publishClaudeUnifiedTurnCancelled({
       handlers,
@@ -1567,10 +2015,58 @@ export function createClaudeUnifiedTerminalTurnOperations(
     });
   }
 
-  function resetCompletedTurnState(): void {
+  function beginProviderContinuationTurn(): void {
+    state.promptNonce += 1;
+    state.activeTurnId = createClaudeUnifiedTurnId(params.happierSessionId, state.promptNonce);
+    state.activePromptText = null;
+    state.dispatchAttemptInFlight = false;
+    state.providerAccepted = true;
+    state.turnInFlight = true;
+    state.turnCompleted = false;
+    state.terminalOriginTurnInFlight = false;
+    state.lastTurnFailure = null;
+    const nowMs = Date.now();
+    lastTurnProgressPublishedAtMs = nowMs;
+    publishActiveTurnStarted(nowMs);
+  }
+
+  function beginTaskNotificationReactionTurn(): void {
+    pendingTaskNotificationReaction = null;
+    if (state.activeTurnId) return;
+    beginProviderContinuationTurn();
+  }
+
+  function observeTaskNotificationReactionTranscriptRow(row: unknown): void {
+    const pendingReaction = pendingTaskNotificationReaction;
+    if (!pendingReaction) return;
+    const notification = readTaskNotificationTranscriptIdentity(row);
+    if (notification) {
+      if (
+        notification.sessionId === pendingReaction.sessionId
+        && (!pendingReaction.promptId || notification.promptId === pendingReaction.promptId)
+      ) {
+        pendingReaction.transcriptUuid = notification.uuid;
+      }
+      return;
+    }
+    if (
+      pendingReaction.transcriptUuid
+      && isMatchingTaskNotificationAssistantReaction(row, {
+        sessionId: pendingReaction.sessionId,
+        transcriptUuid: pendingReaction.transcriptUuid,
+      })
+    ) {
+      beginTaskNotificationReactionTurn();
+    }
+  }
+
+  function resetCompletedTurnState(options?: Readonly<{ preserveResumePromptProvenance?: boolean }>): void {
+    if (options?.preserveResumePromptProvenance !== true) {
+      nativeResumeTurnBarrier?.observeTerminal();
+    }
+    promptEchoSuppressor.clearAcceptedPromptEchoes();
     staleTurnDemandActive = false;
     stopStaleTurnWake();
-    providerActivityLedger.clearProviderTasks();
     state.activePromptText = null;
     state.dispatchAttemptInFlight = false;
     state.turnInFlight = false;
@@ -1580,7 +2076,6 @@ export function createClaudeUnifiedTerminalTurnOperations(
     state.terminalOriginTurnInFlight = false;
     state.lastTurnFailure = null;
     lastTurnProgressPublishedAtMs = null;
-    params.setThinking?.(false);
   }
 
   function readPromptText(value: string | null | undefined): string | null {
@@ -1606,7 +2101,6 @@ export function createClaudeUnifiedTerminalTurnOperations(
     const nowMs = Date.now();
     lastTurnProgressPublishedAtMs = nowMs;
     publishActiveTurnStarted(nowMs);
-    params.setThinking?.(true);
   }
 
   function readPromptNonce(input: TerminalPromptInput): number | null {
@@ -1633,9 +2127,18 @@ export function createClaudeUnifiedTerminalTurnOperations(
     publishActiveTurnStarted(nowMs);
   }
 
-  function clearProviderTasksForNewTurn(): void {
-    providerActivityLedger.clearProviderTasks();
-  }
+  nativeResumeTurnBarrier = createClaudeUnifiedResumeTurnBarrier({
+    intent: params.launchIntent ?? { kind: 'new_session' },
+    quietMs: CLAUDE_UNIFIED_TERMINAL_INPUT_QUIET_PERIOD_MS,
+    begin: beginProviderContinuationTurn,
+    cancel: () => {
+      publishActiveTurnCancelled(Date.now(), 'idle_native_resume');
+      // The screen is authoritatively idle, but Claude's first resume-native prompt hook can be
+      // forwarded after that observation. Reset the provisional turn without discarding the exact
+      // SessionStart provenance needed to classify that one delayed prompt.
+      resetCompletedTurnState({ preserveResumePromptProvenance: true });
+    },
+  });
 
   function recordTerminalHostStartupFailure(error: unknown): Error | null {
     if (!isTerminalHostStartupFailure(error)) return null;
@@ -1667,26 +2170,11 @@ export function createClaudeUnifiedTerminalTurnOperations(
       // turn id exists. Publish a complete synthetic lifecycle instead of dropping the failure.
       allocateTurnWhenIdle,
     });
-    params.setThinking?.(false);
     settleTurnCompletionWaiters();
     return state.lastTurnFailure;
   }
 
   function publishAmbiguousInjectionFailure(failure: ClaudeUnifiedPromptInjectionFailure): void {
-    if (
-      failure.result.reason === 'host_unreachable'
-      && failure.result.phase === 'after_enter_unknown'
-      && failure.result.recoverable === true
-      && failure.result.duplicateRisk !== 'none'
-    ) {
-      try {
-        onPromptTerminallyRejectedBeforeProviderHandler?.(buildPromptDeliveryIdentity(failure.input, {
-          deliveryBlockedReason: 'ambiguous_terminal_delivery',
-        }));
-      } catch (error) {
-        params.ctx.logger.warn('[ClaudeUnifiedTerminal] ambiguous pending delivery block handler failed', { error });
-      }
-    }
     publishClaudeUnifiedRuntimeEvent({
       handlers,
       logger: params.ctx.logger,
@@ -1709,6 +2197,25 @@ export function createClaudeUnifiedTerminalTurnOperations(
     });
   }
 
+  function publishAmbiguousProviderInputOutcome(failure: ClaudeUnifiedPromptInjectionFailure): void {
+    if (
+      failure.result.phase !== 'after_enter_unknown'
+      || failure.result.duplicateRisk === 'none'
+      || resolveProviderUnavailablePromptTerminalRejection(failure.input, failure.result) !== undefined
+    ) {
+      return;
+    }
+    try {
+      onPromptDeliveryOutcomeHandler?.({
+        type: 'possible_write',
+        ...buildPromptDeliveryIdentity(failure.input),
+        reason: 'ambiguous_terminal_delivery',
+      });
+    } catch (error) {
+      params.ctx.logger.warn('[ClaudeUnifiedTerminal] ambiguous provider-input outcome handler failed', { error });
+    }
+  }
+
   function hasQueuedPromptAwaitingProviderAcceptance(): boolean {
     const snapshot = arbiter.snapshot();
     return snapshot.queuedCount > 0 && snapshot.headInputState === 'awaiting_provider_acceptance';
@@ -1717,7 +2224,6 @@ export function createClaudeUnifiedTerminalTurnOperations(
   function recordTerminalOriginTurnStarted(promptText?: string): void {
     if (hasQueuedPromptAwaitingProviderAcceptance()) {
       state.terminalOriginTurnInFlight = true;
-      params.setThinking?.(true);
       return;
     }
     ensureTerminalOriginTurnStarted(promptText);
@@ -1733,7 +2239,6 @@ export function createClaudeUnifiedTerminalTurnOperations(
     // Claude terminal JSONL can close a Dynamic Workflow via `task_updated` without a separate
     // assistant-stop row. Treat that provider-task terminal signal as turn-completion evidence so
     // the session does not stay working after Claude has finished.
-    arbiter.armPendingProviderAcceptanceTimeout();
     // A queued control (e.g. `/effort`) can pop a dialog into the now-idle session with no further
     // screen observation. Re-arm the bounded turn-end dialog probe so it is surfaced, not silent —
     // for both the terminal-origin and the accepted-prompt completion paths.
@@ -1753,9 +2258,10 @@ export function createClaudeUnifiedTerminalTurnOperations(
     observeProviderTaskTerminalCompletion();
   }
 
-  function observeProviderTaskActivity(row: unknown): void {
+  function observeProviderTaskActivity(row: unknown, providerSessionId?: string): void {
     observeClaudeProviderTaskActivity({
       row,
+      ...(providerSessionId ? { providerSessionId } : {}),
       ledger: providerActivityLedger,
       runtimeActivityPublisher,
       logger: params.ctx.logger,
@@ -1763,22 +2269,39 @@ export function createClaudeUnifiedTerminalTurnOperations(
     });
   }
 
-  function observeSidechainRuntimeActivity(sourceTaskId: string): void {
-    const sourceId = buildClaudeProviderTaskRuntimeActivitySourceId(sourceTaskId);
-    if (!sourceId) return;
-    publishRuntimeActivityUpdate(
-      runtimeActivityPublisher.renewSource(sourceId),
-      'sidechain-hook-activity',
-    );
-  }
-
-  function clearSidechainRuntimeActivity(sourceTaskId: string): void {
-    const sourceId = buildClaudeProviderTaskRuntimeActivitySourceId(sourceTaskId);
-    if (!sourceId) return;
-    publishRuntimeActivityUpdate(
-      runtimeActivityPublisher.clearSource(sourceId),
-      'sidechain-hook-terminal',
-    );
+  function observeProviderTaskNotificationTerminal(
+    row: unknown,
+    providerSessionId: string,
+  ): void {
+    const notification = parseClaudeTaskNotification(row);
+    if (
+      !notification?.taskId
+      || (
+        notification.sourceSessionId !== undefined
+        && notification.sourceSessionId !== providerSessionId
+      )
+    ) return;
+    const status = normalizeClaudeActivityStatusSignal(notification.status, 'task_notification');
+    const terminalStatus = status === 'complete'
+      ? 'completed' as const
+      : status === 'failed'
+        ? 'failed' as const
+        : status === 'cancelled'
+          ? 'stopped' as const
+          : null;
+    if (!terminalStatus) return;
+    applyClaudeProviderTaskActivity({
+      activity: {
+        type: 'terminal',
+        terminalStatus,
+        sessionId: providerSessionId,
+        taskId: notification.taskId,
+      },
+      ledger: providerActivityLedger,
+      runtimeActivityPublisher,
+      logger: params.ctx.logger,
+      logPrefix: '[ClaudeUnifiedTerminal]',
+    });
   }
 
   async function materializeTerminalOriginPrompt(params2: Readonly<{
@@ -1910,7 +2433,8 @@ export function createClaudeUnifiedTerminalTurnOperations(
   // (ported HF-4): controller-typed slash residue from the finite /model//effort vocabulary is
   // provably our own even when the persisted registry cannot match after a respawn.
   function isOwnLeftoverDraft(composerContent: string | null | undefined): boolean {
-    return ownInjectedTextLog.matches(composerContent)
+    return resumeSummaryCompactResidue.ownsComposerDraft(composerContent ?? '')
+      || ownInjectedTextLog.matches(composerContent)
       || isControllerTypedSlashCommandResidue(composerContent);
   }
 
@@ -1930,7 +2454,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
       const recapture = await params.ctx.agentRuntime.terminalHost.captureInputState(handle).catch(() => null);
       if (!recapture) return null;
       const next = parseClaudeScreenState(recapture.currentInput, { cursor: recapture.cursor });
-      if (!next.userDraftPresent) {
+      if ((next.composerContent?.length ?? 0) === 0) {
         params.ctx.logger.info('[ClaudeUnifiedTerminal] cleared own leftover composer draft', {
           sessionId: params.happierSessionId,
           attempts: attempt,
@@ -1994,6 +2518,31 @@ export function createClaudeUnifiedTerminalTurnOperations(
   async function observeCurrentReadiness(): Promise<void> {
     const handle = await ensureHost();
     lastSteerVetoReason = null;
+    if (explicitResumeIdentityFailure) {
+      lastReadinessKind = 'failed';
+      arbiter.observeReadiness({
+        status: 'failed_terminal',
+        observedAt: Date.now(),
+        reason: 'resume_identity_mismatch',
+        hostKind: handle.kind,
+        hostSessionName: handle.sessionName,
+        ...(handle.paneId ? { paneId: handle.paneId } : {}),
+        recoverable: false,
+      });
+      return;
+    }
+    if (!explicitResumeIdentityEstablished) {
+      lastReadinessKind = 'deferred';
+      arbiter.observeReadiness({
+        status: 'defer_provider_starting',
+        observedAt: Date.now(),
+        reason: 'resume_identity_unverified',
+        hostKind: handle.kind,
+        hostSessionName: handle.sessionName,
+        ...(handle.paneId ? { paneId: handle.paneId } : {}),
+      });
+      return;
+    }
     const liveness = await params.ctx.agentRuntime.terminalHost.evaluateLiveness(handle).catch((error: unknown) => {
       params.ctx.logger.warn('[ClaudeUnifiedTerminal] terminal liveness check failed', { error });
       return null;
@@ -2092,7 +2641,16 @@ export function createClaudeUnifiedTerminalTurnOperations(
         });
         return;
       }
-      if (screen.userDraftPresent && hasPromptDeliveryDemand()) {
+      // Consume the one-shot provenance only from an idle composer observation. During Claude's
+      // compact turn the composer may be temporarily empty or contain `/compact`; neither is an
+      // idle draft-guard decision and Escape would interrupt generation.
+      if (!screen.generating) {
+        resumeSummaryCompactResidue.ownsComposerDraft(screen.composerContent ?? '');
+      }
+      // Slash-prefixed composer content is deliberately excluded from `userDraftPresent`; route
+      // every non-empty draft through the exact owner classifier so owned control/resume residue
+      // is reachable while foreign slash commands still fail closed with zero keypresses.
+      if ((screen.composerContent?.length ?? 0) > 0 && hasPromptDeliveryDemand()) {
         const clearedScreen = await maybeClearOwnLeftoverDraft(handle, screen);
         if (clearedScreen) {
           screen = clearedScreen;
@@ -2219,6 +2777,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
 
   function readinessWakeNeeded(): boolean {
     if (state.disposed) return false;
+    if (resumeChoiceUserActionPending()) return false;
     const snapshot = arbiter.snapshot();
     return snapshot.queuedCount > 0
       && (snapshot.headInputState === 'waiting_for_readiness' || snapshot.headInputState === 'queued');
@@ -2259,12 +2818,6 @@ export function createClaudeUnifiedTerminalTurnOperations(
     });
     if (!readinessWakeNeeded()) {
       stopReadinessWake();
-      return;
-    }
-    if (resumeChoiceUserActionPending()) {
-      readinessWaitStartedAtMs = Date.now();
-      lastScreenProgressAtMs = Date.now();
-      ensureReadinessWake();
       return;
     }
     const startedAt = readinessWaitStartedAtMs ?? Date.now();
@@ -2344,7 +2897,6 @@ export function createClaudeUnifiedTerminalTurnOperations(
       ...diagnostics,
       lastScreenTail,
     });
-    params.setThinking?.(false);
     settleTurnCompletionWaiters();
   }
 
@@ -2434,8 +2986,15 @@ export function createClaudeUnifiedTerminalTurnOperations(
   // stays unresolved past the bounded escalation window the block escalates ONCE and projects a
   // durable block via the existing `runtime_config_blocked` reason — never a silent deferral loop.
   function resetDialogInjectionBlock(): void {
+    const hadEscalatedDialogBlock = dialogInjectionBlockEscalated;
     dialogInjectionBlockStartedAtMs = null;
     dialogInjectionBlockEscalated = false;
+    if (
+      hadEscalatedDialogBlock
+      && pendingRuntimeConfigDeliveryBlocker !== 'runtime_config_blocked'
+    ) {
+      notifyPromptDeliveryBlockerCleared('runtime_config_blocked');
+    }
   }
 
   function noteDialogInjectionBlock(blockedReason: ClaudeUnifiedDialogBlockedReason): void {
@@ -2485,7 +3044,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
     turnEndDialogProbeGeneration += 1;
   }
 
-  async function probeTurnEndDialogOnce(): Promise<boolean> {
+  async function probeVisibleDialogOnce(): Promise<boolean> {
     if (state.disposed) return true;
     const handle = state.handle;
     if (!handle) return true;
@@ -2520,7 +3079,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
     if (state.disposed || generation !== turnEndDialogProbeGeneration) return;
     let resolved = false;
     try {
-      resolved = await probeTurnEndDialogOnce();
+      resolved = await probeVisibleDialogOnce();
     } catch (error) {
       params.ctx.logger.debug('[ClaudeUnifiedTerminal] turn-end dialog probe shot failed', { error });
     }
@@ -2635,21 +3194,89 @@ export function createClaudeUnifiedTerminalTurnOperations(
     return sawRecognizedDirective;
   }
 
+  async function runInFlightSteerPrompt(
+    prompt: string,
+    meta?: ClaudeUnifiedPromptDeliveryMeta,
+  ): Promise<void> {
+    assertExplicitResumeIdentityDidNotFail();
+    const text = readPromptText(prompt);
+    if (!text) return;
+    if (state.disposed) {
+      throw new Error('claude_unified_steer_vetoed: runtime_disposed');
+    }
+    if (isNonSteerablePromptPayload(text)) {
+      // Context-mutating special commands keep the deferred path and drain at turn end as
+      // normal new-turn prompts. Other native Claude slash commands are accepted by the TUI's
+      // own pending queue and sequenced at its safe boundary.
+      params.ctx.logger.info('[ClaudeUnifiedTerminal] steer window vetoed', {
+        sessionId: params.happierSessionId,
+        decision: 'vetoed',
+        reason: 'non_steerable_special_command',
+      });
+      throw new Error('claude_unified_steer_vetoed: non_steerable_special_command');
+    }
+    pendingTerminalHostStartupFailurePromptMeta = meta ?? null;
+    try {
+      await observeCurrentReadiness();
+    } finally {
+      pendingTerminalHostStartupFailurePromptMeta = null;
+    }
+    if (lastReadinessKind !== 'writable' && lastReadinessKind !== 'writable_steer') {
+      throw new Error(`claude_unified_steer_vetoed: ${lastSteerVetoReason ?? 'screen_not_steerable'}`);
+    }
+    state.promptNonce += 1;
+    const input = createClaudeUnifiedPromptInput({
+      text,
+      sessionId: params.happierSessionId,
+      nonce: state.promptNonce,
+      isSteer: true,
+      localId: meta?.localId ?? null,
+      localIds: meta?.localIds ?? [],
+      userMessageSeq: meta?.userMessageSeq ?? null,
+      userMessageSeqs: meta?.userMessageSeqs ?? [],
+    });
+    const deliveryTerminal = waitForPromptDeliveryTerminal(input);
+    try {
+      arbiter.enqueue(input);
+      if (!handlePendingRuntimeConfigDeliveryBlockerBeforeDrain()) {
+        await arbiter.drain();
+        ensureReadinessWake();
+      }
+      await deliveryTerminal.promise;
+    } catch (error) {
+      deliveryTerminal.cancel();
+      throw error;
+    }
+  }
+
   const nativeRuntime: ClaudeUnifiedTerminalNativeRuntime = {
-    beginTurnLifecycle() {
-      clearProviderTasksForNewTurn();
+    promptCustody: 'unified_terminal',
+    subscribeCanonicalAgentSessionEvents: runtimeActivityPublisher.subscribe,
+    subscribeEffectiveModel(listener) {
+      effectiveModelListeners.add(listener);
+      return () => effectiveModelListeners.delete(listener);
+    },
+    subscribeUsageObservation(listener) {
+      usageObservationListeners.add(listener);
+      return () => usageObservationListeners.delete(listener);
+    },
+    beginProviderTurn() {
+      publishProviderTaskInventory('new-turn');
       state.promptNonce += 1;
       state.dispatchAttemptInFlight = true;
       state.lastTurnFailure = null;
       state.providerAccepted = false;
       state.turnCompleted = false;
       lastTurnProgressPublishedAtMs = null;
-      params.setThinking?.(true);
     },
-    async startOrLoadSession() {
+    async startProviderSession() {
+      // Publish the foreground barrier before host startup can create a pending-input pump. The
+      // provider's SessionStart/UserPromptSubmit hooks are necessarily later than this boundary.
+      nativeResumeTurnBarrier?.beginBeforeProviderRun();
       const handle = await ensureHost();
       await bindKnownProviderSessionTranscript();
       await observeCurrentReadiness();
+      nativeResumeTurnBarrier?.observeStartupReady();
       return {
         sessionId: handle.sessionName,
         hostKind: handle.kind,
@@ -2657,9 +3284,9 @@ export function createClaudeUnifiedTerminalTurnOperations(
         ...(handle.paneId ? { paneId: handle.paneId } : {}),
       };
     },
-    async sendTurnPrompt(prompt: string, meta?: ClaudeUnifiedPromptDeliveryMeta) {
-      if (!state.activeTurnId && !state.dispatchAttemptInFlight) nativeRuntime.beginTurnLifecycle();
-      recordProviderClaimedPendingPromptIfNeeded(prompt, meta);
+    async sendProviderTurnPrompt(prompt: string, meta?: ClaudeUnifiedPromptDeliveryMeta) {
+      assertExplicitResumeIdentityDidNotFail();
+      if (!state.activeTurnId && !state.dispatchAttemptInFlight) nativeRuntime.beginProviderTurn();
       pendingTerminalHostStartupFailurePromptMeta = meta ?? null;
       try {
         await observeCurrentReadiness();
@@ -2678,38 +3305,17 @@ export function createClaudeUnifiedTerminalTurnOperations(
       });
       arbiter.enqueue(input);
       if (handlePendingRuntimeConfigDeliveryBlockerBeforeDrain()) {
-        return;
+        return { kind: 'custody_observed' };
       }
       await arbiter.drain();
       ensureReadinessWake();
+      return { kind: 'custody_observed' };
     },
     setGoal: (objective, options) => goalRuntime.setGoal(objective, options),
     clearGoal: () => goalRuntime.clearGoal(),
-    async steerInFlightTurn(message, meta) {
-      recordProviderClaimedPendingPromptIfNeeded(message, meta);
-      pendingTerminalHostStartupFailurePromptMeta = meta ?? null;
-      try {
-        await observeCurrentReadiness();
-      } finally {
-        pendingTerminalHostStartupFailurePromptMeta = null;
-      }
-      state.promptNonce += 1;
-      const input = createClaudeUnifiedPromptInput({
-        text: message,
-        sessionId: params.happierSessionId,
-        nonce: state.promptNonce,
-        isSteer: true,
-        localId: meta?.localId ?? null,
-        localIds: meta?.localIds ?? [],
-        userMessageSeq: meta?.userMessageSeq ?? null,
-        userMessageSeqs: meta?.userMessageSeqs ?? [],
-      });
-      arbiter.enqueue(input);
-      if (handlePendingRuntimeConfigDeliveryBlockerBeforeDrain()) {
-        return;
-      }
-      await arbiter.drain();
-      ensureReadinessWake();
+    async steerProviderTurn(message, meta) {
+      await runInFlightSteerPrompt(message, meta);
+      return { kind: 'custody_observed' };
     },
     // Host in-flight steer hooks (consumed by the session loop's InFlightSteerController):
     // a prompt delivered while a turn is running is steered into the live TUI when the
@@ -2722,58 +3328,22 @@ export function createClaudeUnifiedTerminalTurnOperations(
       return !state.disposed && (state.turnInFlight || state.terminalOriginTurnInFlight);
     },
     canSteerPrompt() {
-      return !state.disposed && (state.turnInFlight || state.terminalOriginTurnInFlight);
+      return !state.disposed
+        && explicitResumeIdentityEstablished
+        && explicitResumeIdentityFailure === null
+        && (state.turnInFlight || state.terminalOriginTurnInFlight);
     },
     async steerPrompt(prompt: string, options?: ClaudeUnifiedPromptDeliveryMeta) {
-      const text = readPromptText(prompt);
-      if (!text) return;
-      if (state.disposed) {
-        throw new Error('claude_unified_steer_vetoed: runtime_disposed');
-      }
-      if (isNonSteerablePromptPayload(text)) {
-        // Context-mutating special commands keep the deferred path and drain at turn end as
-        // normal new-turn prompts. Other native Claude slash commands are accepted by the TUI's
-        // own pending queue and sequenced at its safe boundary.
-        params.ctx.logger.info('[ClaudeUnifiedTerminal] steer window vetoed', {
-          sessionId: params.happierSessionId,
-          decision: 'vetoed',
-          reason: 'non_steerable_special_command',
-        });
-        throw new Error('claude_unified_steer_vetoed: non_steerable_special_command');
-      }
-      recordProviderClaimedPendingPromptIfNeeded(text, options);
-      pendingTerminalHostStartupFailurePromptMeta = options ?? null;
-      try {
-        await observeCurrentReadiness();
-      } finally {
-        pendingTerminalHostStartupFailurePromptMeta = null;
-      }
-      if (lastReadinessKind !== 'writable' && lastReadinessKind !== 'writable_steer') {
-        throw new Error(`claude_unified_steer_vetoed: ${lastSteerVetoReason ?? 'screen_not_steerable'}`);
-      }
-      state.promptNonce += 1;
-      const input = createClaudeUnifiedPromptInput({
-        text,
-        sessionId: params.happierSessionId,
-        nonce: state.promptNonce,
-        isSteer: true,
-        localId: options?.localId ?? null,
-        localIds: options?.localIds ?? [],
-        userMessageSeq: options?.userMessageSeq ?? null,
-        userMessageSeqs: options?.userMessageSeqs ?? [],
-      });
-      arbiter.enqueue(input);
-      if (handlePendingRuntimeConfigDeliveryBlockerBeforeDrain()) {
-        return;
-      }
-      await arbiter.drain();
-      ensureReadinessWake();
+      await runInFlightSteerPrompt(prompt, options);
     },
     setOnPromptAcceptedByProvider(handler) {
       onPromptAcceptedByProviderHandler = handler;
     },
     setOnPromptTerminallyRejectedBeforeProvider(handler) {
       onPromptTerminallyRejectedBeforeProviderHandler = handler;
+    },
+    setOnPromptDeliveryOutcome(handler) {
+      onPromptDeliveryOutcomeHandler = handler;
     },
     setOnPromptDeliveryBlockerCleared(handler) {
       onPromptDeliveryBlockerClearedHandler = handler;
@@ -2788,7 +3358,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
       if (lastProviderActivityAtMs === null) lastProviderActivityAtMs = Date.now();
       ensureStaleTurnWake();
     },
-    async clearTerminalComposer(request): Promise<SessionTerminalComposerClearResultV1> {
+    async clearTerminalComposer(request): Promise<ClaudeSessionTerminalComposerClearResult> {
       const sessionId = request?.sessionId ?? params.happierSessionId;
       if (!isTuiRuntimeControlFeatureEnabled()) {
         return {
@@ -2796,6 +3366,17 @@ export function createClaudeUnifiedTerminalTurnOperations(
           status: 'unsupported',
           sessionId,
           error: 'tui_runtime_control_unavailable',
+        };
+      }
+      if (
+        request?.expectedStateAtMs !== undefined
+        && request.expectedStateAtMs !== steerCapabilityPublisher.readStateUpdatedAtMs()
+      ) {
+        return {
+          ok: false,
+          status: 'stale_state',
+          sessionId,
+          error: 'stale_terminal_input_state',
         };
       }
       const handle = state.handle;
@@ -2836,6 +3417,51 @@ export function createClaudeUnifiedTerminalTurnOperations(
       ensureReadinessWake();
       return result;
     },
+    async interruptPendingInputAndRun(request) {
+      const sessionId = request.sessionId ?? params.happierSessionId;
+      const base = { sessionId, localId: request.localId } as const;
+      const handle = state.handle;
+      if (state.disposed || !handle) {
+        return { ok: false as const, status: 'no_live_terminal' as const, ...base, error: 'no_live_terminal' };
+      }
+      if (!isClaudeUnifiedPendingInputInterruptAndRunEnabled(handle.kind)) {
+        return { ok: false as const, status: 'unsupported' as const, ...base, error: 'host_not_verified' };
+      }
+      if (
+        request.expectedStateAtMs !== undefined
+        && request.expectedStateAtMs !== steerCapabilityPublisher.readPendingInputInterruptAndRunStateAtMs()
+      ) {
+        return { ok: false as const, status: 'stale_state' as const, ...base, error: 'stale_terminal_input_state' };
+      }
+      if (arbiter.readPendingInputInterruptAndRunLocalId() !== request.localId) {
+        return { ok: false as const, status: 'stale_state' as const, ...base, error: 'not_current_custody_head' };
+      }
+      const inputState = await params.ctx.agentRuntime.terminalHost.captureInputState(handle).catch(() => null);
+      if (!inputState) {
+        return { ok: false as const, status: 'capture_unavailable' as const, ...base };
+      }
+      const screen = parseClaudeScreenState(inputState.currentInput, { cursor: inputState.cursor });
+      if (
+        !screen.queuedMessageBannerVisible
+        || resolveClaudeScreenInFlightSteerVeto(screen) !== null
+      ) {
+        return { ok: false as const, status: 'not_safe' as const, ...base };
+      }
+      if (!arbiter.claimPendingInputInterruptAndRun(request.localId)) {
+        return { ok: false as const, status: 'stale_state' as const, ...base, error: 'custody_claim_lost' };
+      }
+      try {
+        await params.ctx.agentRuntime.terminalHost.interruptTurn(handle);
+        return { ok: true as const, status: 'interrupted' as const, ...base };
+      } catch (error) {
+        return {
+          ok: false as const,
+          status: 'interrupt_failed' as const,
+          ...base,
+          error: error instanceof Error ? error.message : 'interrupt_failed',
+        };
+      }
+    },
     async applyConfigDeltaInFlight(delta): Promise<ClaudeUnifiedInFlightConfigApplyOutcome> {
       const controller = await ensureTuiController();
       if (!controller) {
@@ -2853,7 +3479,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
       const detail = outcome.timing !== undefined ? `${outcome.status}:${outcome.timing}` : outcome.status;
       return { status: 'failed', reason: `in_flight_mode_apply_${detail}` };
     },
-    async waitForTurnCompletion() {
+    async waitForProviderTurnCompletion() {
       const failure = readTurnCompletionFailure();
       if (failure) throw failure;
       if (state.turnCompleted) {
@@ -2872,13 +3498,13 @@ export function createClaudeUnifiedTerminalTurnOperations(
         settleTurnCompletionWaiters();
       });
     },
-    subscribeRuntimeEvents(handler) {
+    subscribeProviderEvents(handler) {
       handlers.add(handler);
       return () => {
         handlers.delete(handler);
       };
     },
-    async respondToPermission(requestId, approved) {
+    async respondToProviderPermission(requestId, approved) {
       return respondToClaudePermission({
         ctx: params.ctx,
         provider: CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID,
@@ -2886,7 +3512,9 @@ export function createClaudeUnifiedTerminalTurnOperations(
         approved,
       });
     },
-    async cancelTurn() {
+    async cancelProviderTurn() {
+      nativeResumeTurnBarrier?.observeTerminal();
+      pendingTaskNotificationReaction = null;
       stopReadinessWake();
       staleTurnDemandActive = false;
       stopStaleTurnWake();
@@ -2904,13 +3532,23 @@ export function createClaudeUnifiedTerminalTurnOperations(
       state.lastTurnFailure = null;
       state.terminalOriginTurnInFlight = false;
       lastTurnProgressPublishedAtMs = null;
-      params.setThinking?.(false);
       rejectTurnCompletionWaiters(new Error('Claude unified terminal turn was cancelled'));
     },
-    readSessionIdentity() {
+    readProviderIdentity() {
       return { sessionId: state.providerSessionId };
     },
-    async updateSessionRuntimeConfig(update) {
+    async updateProviderConfiguration(update) {
+      const nextProviderModel = update.providerBinding === undefined
+        ? undefined
+        : update.providerBinding.model;
+      const commitProviderModelIfApplied = <Outcome extends ClaudeProviderConfigurationOutcome | void>(
+        outcome: Outcome,
+      ): Outcome => {
+        if (nextProviderModel && isRuntimeConfigUpdateOutcomeApplied(outcome)) {
+          currentProviderModel = nextProviderModel;
+        }
+        return outcome;
+      };
       const promptDependentUpdate = isRuntimeConfigUpdatePromptDependent(update);
       if (state.handle) {
         // The Claude TUI is already running. Convergence short-circuit (L5d, anti-hot-loop): when
@@ -2918,10 +3556,10 @@ export function createClaudeUnifiedTerminalTurnOperations(
         // apply, so report `skipped_already_effective` and let the override-synchronizer stop
         // re-attempting it.
         if (isRuntimeConfigUpdateConvergedWithLaunch(update)) {
-          return rememberRuntimeConfigUpdateOutcome(
+          return commitProviderModelIfApplied(rememberRuntimeConfigUpdateOutcome(
             Object.freeze({ status: 'applied', timing: 'skipped_already_effective' } as const),
             promptDependentUpdate ? { promptMayProceed: true } : {},
-          );
+          ));
         }
         // Live TUI runtime control (feature-gated): route the update through the verified
         // controller (`/model`, `/effort`, ShiftTab mode cycling). Deferred timings keep the
@@ -2955,10 +3593,10 @@ export function createClaudeUnifiedTerminalTurnOperations(
                 });
               }
             }
-            return rememberRuntimeConfigUpdateOutcome(
+            return commitProviderModelIfApplied(rememberRuntimeConfigUpdateOutcome(
               Object.freeze(mapped),
               promptDependentUpdate ? { promptMayProceed: dependentRuntimeConfigPromptMayProceed(outcome) } : {},
-            );
+            ));
           }
           return rememberRuntimeConfigUpdateOutcome(Object.freeze({
             status: 'requires_interactive_control',
@@ -3013,13 +3651,15 @@ export function createClaudeUnifiedTerminalTurnOperations(
         });
       }
       // Captured into the next launch args; it will take effect before the next prompt.
-      return rememberRuntimeConfigUpdateOutcome(
+      return commitProviderModelIfApplied(rememberRuntimeConfigUpdateOutcome(
         Object.freeze({ status: 'applied', timing: 'before_next_prompt' } as const),
         promptDependentUpdate ? { promptMayProceed: true } : {},
-      );
+      ));
     },
-    async resetOrDisposeRuntime() {
+    async disposeProviderSession(reason) {
       state.disposed = true;
+      usageObservationListeners.clear();
+      resumeSummaryCompactResidue.cancel();
       stopReadinessWake();
       clearQueuedBannerCustodyTimers();
       clearTurnEndDialogProbe();
@@ -3027,18 +3667,18 @@ export function createClaudeUnifiedTerminalTurnOperations(
       stopStaleTurnWake();
       steerCapabilityPublisher.dispose();
       arbiter.dispose();
+      settleAllPromptDeliveryTerminalWaiters();
       runtimeConfigOutcomeEmitter.dispose();
       if (tuiController) {
         await tuiController.dispose().catch(() => undefined);
         tuiController = null;
         tuiControllerPromise = null;
       }
-      resumeChoiceStartupHandler?.dispose();
+      await resumeChoiceStartupHandler?.dispose();
       resumeChoiceStartupHandler = null;
       resumeChoiceControlPortPromise = null;
       const handle = state.handle;
       state.handle = null;
-      params.setThinking?.(false);
       let terminalHostDisposeError: unknown;
       let cleanupError: unknown;
       const recordCleanupError = (error: unknown, message: string): void => {
@@ -3046,7 +3686,9 @@ export function createClaudeUnifiedTerminalTurnOperations(
         params.ctx.logger.warn(message, { error });
       };
       try {
-        if (handle) await params.ctx.agentRuntime.terminalHost.dispose(handle);
+        if (handle) {
+          await params.ctx.agentRuntime.terminalHost.dispose(handle, resolveClaudeTerminalHostDisposeIntent(reason));
+        }
       } catch (error) {
         terminalHostDisposeError = error;
         params.ctx.logger.warn('[ClaudeUnifiedTerminal] terminal host dispose failed', { error });
@@ -3069,13 +3711,6 @@ export function createClaudeUnifiedTerminalTurnOperations(
             disposeWorkflowOwnedToolUseIdsRegistration();
           }
           try {
-            unsubscribeLifecycleEvents?.();
-          } catch (error) {
-            recordCleanupError(error, '[ClaudeUnifiedTerminal] lifecycle unsubscribe failed');
-          } finally {
-            unsubscribeLifecycleEvents = null;
-          }
-          try {
             if (hookPluginDir) {
               await params.ctx.agentRuntime.sessionHooks.disposePluginDir(hookPluginDir);
             }
@@ -3092,6 +3727,8 @@ export function createClaudeUnifiedTerminalTurnOperations(
           hookPluginDir = null;
           hookSecret = null;
           sessionStartObservedForReadiness = false;
+          nativeResumeTurnBarrier?.dispose();
+          pendingTaskNotificationReaction = null;
           state.providerSessionId = null;
           state.activeTurnId = null;
           state.activePromptText = null;
@@ -3101,8 +3738,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
           state.turnInFlight = false;
           state.terminalOriginTurnInFlight = false;
           state.lastTurnFailure = null;
-          providerActivityLedger.clearProviderTasks();
-          clearRuntimeActivitySources('runtime-dispose');
+          publishProviderTaskInventory('runtime-dispose');
           lastTurnProgressPublishedAtMs = null;
           recentPrimaryProviderUnavailableForPromptDelivery = null;
           publishedLifecycleStartTurnIds.clear();
@@ -3118,7 +3754,6 @@ export function createClaudeUnifiedTerminalTurnOperations(
     async confirmProviderAcceptance(evidence) {
       const accepted = await arbiter.confirmProviderAcceptance(evidence);
       if (accepted) {
-        params.setThinking?.(true);
       }
       return accepted;
     },
@@ -3126,12 +3761,21 @@ export function createClaudeUnifiedTerminalTurnOperations(
       if (observation.agentId !== CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID) return;
       recordProviderActivity();
       if (observation.type === 'prompt_submitted') {
+        const nativeResumePrompt = nativeResumeTurnBarrier?.observePromptStart() === true;
+        if (nativeResumePrompt) {
+          recordProviderActivity();
+          return;
+        }
         const queuedCommandEvidence = observation.providerEvidence === 'queued_command';
-        const acceptedQueuedPrompt = await nativeRuntime.confirmProviderAcceptance({
+        const providerAcceptanceEvidence = {
           ...(observation.promptText ? { promptText: observation.promptText } : {}),
           ...(observation.turnId ? { agentTurnId: observation.turnId } : {}),
-          ...(queuedCommandEvidence ? { includeTimedOutAmbiguous: true } : {}),
-        });
+          ...(queuedCommandEvidence ? {
+            exactPromptText: true,
+            includeTimedOutAmbiguous: true,
+          } : {}),
+        };
+        const acceptedQueuedPrompt = await nativeRuntime.confirmProviderAcceptance(providerAcceptanceEvidence);
         if (acceptedQueuedPrompt) {
           // FIFO multi-steer: once the head prompt is accepted, re-evaluate the screen so
           // the next queued prompt (e.g. a second steer) can take its safe window.
@@ -3151,6 +3795,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
             promptText: observation.promptText,
             agentTurnId: observation.turnId ?? null,
             queuedCommandEvidence,
+            source: observation.source,
           });
           return;
         }
@@ -3172,10 +3817,11 @@ export function createClaudeUnifiedTerminalTurnOperations(
       }
       if (observation.type === 'compaction_completed') {
         if (!rememberCompactionCompletedEventId(observation.agentEventId)) return;
-        const acceptedCompactPrompt = await nativeRuntime.confirmProviderAcceptance({
+        const compactAcceptanceEvidence = {
           promptText: '/compact',
           includeTimedOutAmbiguous: true,
-        });
+        } as const;
+        const acceptedCompactPrompt = await nativeRuntime.confirmProviderAcceptance(compactAcceptanceEvidence);
         const completesActiveCompactPrompt = acceptedCompactPrompt || isCompactPromptText(state.activePromptText);
         arbiter.observeCompaction({ phase: 'completed' });
         if (completesActiveCompactPrompt) {
@@ -3194,14 +3840,13 @@ export function createClaudeUnifiedTerminalTurnOperations(
         return;
       }
       if (observation.type === 'sidechain_activity') {
-        observeSidechainRuntimeActivity(observation.sidechainAgentId);
         return;
       }
       if (observation.type === 'sidechain_terminal') {
-        clearSidechainRuntimeActivity(observation.sidechainAgentId);
         return;
       }
       if (observation.type === 'completion_candidate') {
+        nativeResumeTurnBarrier?.observeTerminal();
         observeProviderTaskTerminalCompletionWhenReady();
         return;
       }
@@ -3214,7 +3859,6 @@ export function createClaudeUnifiedTerminalTurnOperations(
         if (observation.source === 'hook' && observation.sidechainAgentId) {
           // Sidechain StopFailure carve-out (ported R-11 / HF-3): subagent usage/auth evidence
           // stays valid at the ACCOUNT level but must never terminalize the parent turn.
-          clearSidechainRuntimeActivity(observation.sidechainAgentId);
           await recordClaudeRuntimeProviderAccountUsageSnapshot({
             ctx: params.ctx,
             evidence: observation.evidence ?? observation.detail ?? observation.reason,
@@ -3223,7 +3867,9 @@ export function createClaudeUnifiedTerminalTurnOperations(
           });
           return;
         }
+        nativeResumeTurnBarrier?.observeTerminal();
         if (consumeTerminalOriginTurnCompletion()) return;
+        promptEchoSuppressor.clearAcceptedPromptEchoes();
         const allocateFailedTurn = !state.activeTurnId && state.dispatchAttemptInFlight;
         state.dispatchAttemptInFlight = false;
         const failureEvidence = observation.source === 'hook'
@@ -3256,16 +3902,13 @@ export function createClaudeUnifiedTerminalTurnOperations(
           turnId: state.activeTurnId,
           allocateTurnWhenIdle: allocateFailedTurn,
         });
-        if (!arbiter.observePendingProviderAcceptanceTerminalFailure()) {
-          arbiter.armPendingProviderAcceptanceTimeout();
-        }
+        arbiter.observePendingProviderAcceptanceTerminalFailure();
         state.turnCompleted = true;
-        params.setThinking?.(false);
         settleTurnCompletionWaiters();
         return;
       }
       if (observation.type === 'turn_aborted') {
-        arbiter.armPendingProviderAcceptanceTimeout();
+        nativeResumeTurnBarrier?.observeTerminal();
         if (consumeTerminalOriginTurnCompletion()) return;
         state.dispatchAttemptInFlight = false;
         publishActiveTurnCancelled(Date.now(), observation.reason);
@@ -3277,11 +3920,16 @@ export function createClaudeUnifiedTerminalTurnOperations(
         state.terminalOriginTurnInFlight = false;
         state.lastTurnFailure = null;
         lastTurnProgressPublishedAtMs = null;
-        params.setThinking?.(false);
         rejectTurnCompletionWaiters(new Error(observation.detail));
         return;
       }
+      if (observation.type === 'process_exited' && !state.disposed) {
+        providerActivityLedger.noteObservationLost();
+        publishProviderTaskInventory('process-exited-observation-lost');
+      }
       if (observation.type === 'process_exited' && (state.turnInFlight || state.dispatchAttemptInFlight)) {
+        nativeResumeTurnBarrier?.observeTerminal();
+        promptEchoSuppressor.clearAcceptedPromptEchoes();
         state.dispatchAttemptInFlight = false;
         state.lastTurnFailure = recordClaudeUnifiedProcessExitFailure({
           exitCode: observation.exitCode, signal: observation.signal, handlers,
@@ -3289,11 +3937,11 @@ export function createClaudeUnifiedTerminalTurnOperations(
           sessionId: params.happierSessionId, turnId: state.activeTurnId,
         });
         state.turnCompleted = true;
-        params.setThinking?.(false);
         settleTurnCompletionWaiters();
         return;
       }
       if (observation.type === 'process_exited' && !state.disposed) {
+        nativeResumeTurnBarrier?.observeTerminal();
         // IDLE host death (SILENT-F1 port): the Claude process died between turns. Surface a
         // structured failed turn (allocated begin+fail) instead of staying silent. Turn state
         // is deliberately untouched — there is no in-flight turn to settle and the allocated
@@ -3313,11 +3961,5 @@ export function createClaudeUnifiedTerminalTurnOperations(
     },
   };
 
-  unsubscribeLifecycleEvents = subscribeClaudeUnifiedTerminalLifecycleEvents({
-    ctx: params.ctx,
-    happierSessionId: params.happierSessionId,
-    observer: nativeRuntime,
-  });
-
-  return createClaudePublicSessionRuntime(nativeRuntime);
+  return nativeRuntime;
 }

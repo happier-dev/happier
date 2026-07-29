@@ -1,6 +1,5 @@
-Qwen plugin package for the Stage E.3 thin ACP extraction pilot.
+Qwen plugin package.
 
-This package owns the Qwen agent definition and ACP backend activation through
-`ctx.acp.defineAcpBackend(...)`. The former host-local Qwen backend and UI
-provider owners have been folded into plugin metadata plus generated CLI/UI
-projections.
+This package owns the Qwen Agent definition and contributes it through the
+single plugin `activate(api)` ABI. The centralized host runtime owns session and
+turn lifecycle; generated CLI/UI projections consume the Agent contribution.

@@ -1,106 +1,134 @@
 import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 
-import type { AcpBackendSpecV1 } from '@happier-dev/plugin-sdk/experimental/acp';
-import type { AgentRuntimeV1 } from '@happier-dev/plugin-sdk';
-import { createAcpBackendEngine, readAcpBackendSpec } from '@happier-dev/plugin-sdk/experimental/acp';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import type {
+  AgentAcpRuntimeOptions,
+  AgentSessionOpenRequest,
+  AgentSessionRuntime,
+  AgentSessionRuntimeContext,
+} from '@happier-dev/plugin-sdk/agent-runtime';
 import { describe, expect, it, vi } from 'vitest';
 
 import { activate } from './activate.js';
+import { PLUGIN_MANIFEST } from './manifest.js';
 
-type KimiBackendRegistration = Readonly<{
-  agentId: string;
-  create: (ctx: Readonly<{
-    agentRuntime: Readonly<{
-      acp: Readonly<{
-        defineAcpBackend: (spec: AcpBackendSpecV1) => AgentRuntimeV1;
-      }>;
-    }>;
-  }>) => AgentRuntimeV1 | Promise<AgentRuntimeV1>;
-}>;
-
-function readRegisteredBackend(registerAgentRuntime: ReturnType<typeof vi.fn>): KimiBackendRegistration {
-  const registration = registerAgentRuntime.mock.calls[0]?.[0];
-  if (!registration || typeof registration !== 'object') {
-    throw new Error('Expected Kimi activation to register a backend engine');
-  }
-  return registration as KimiBackendRegistration;
-}
-
-async function readKimiSpec(): Promise<AcpBackendSpecV1> {
-  const registerAgentRuntime = vi.fn();
-  activate({ registerAgentRuntime, registerHook: vi.fn() });
-  const registration = readRegisteredBackend(registerAgentRuntime);
-  const engine = await registration.create({
-    agentRuntime: {
-      acp: {
-        defineAcpBackend: createAcpBackendEngine,
-      },
-    },
+async function createKimiRuntime() {
+  const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+  const factory = activation.registration('agents', 'kimi')?.factory;
+  if (!factory) throw new Error('Expected Kimi Agent factory');
+  const runtime = await factory({
+    plugin: { id: 'happier.agent.kimi', version: '0.0.0' },
+    agent: { id: 'kimi' },
+    signal: new AbortController().signal,
   });
-  return readAcpBackendSpec(engine);
+  await activation.dispose();
+  return runtime;
 }
 
 describe('activate', () => {
   it('registers the Kimi ACP spawn prerequisite hook through the plugin API', async () => {
-    const registerAgentRuntime = vi.fn();
-    const registerHook = vi.fn();
-    activate({ registerAgentRuntime, registerHook });
+    const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
 
-    expect(registerHook).toHaveBeenCalledWith(expect.objectContaining({
-      hookId: 'agent.resolvePrerequisites',
-      filters: { agentId: 'kimi' },
-      executionKind: 'decide',
-      handler: expect.any(Function),
-    }));
+    expect(activation.registration('hooks', 'resolve-prerequisites')).toEqual(expect.any(Function));
+    await activation.dispose();
   });
 
-  it('registers the Kimi ACP backend through the plugin API', async () => {
-    const spec = await readKimiSpec();
+  it('opens Kimi through the native ACP composer without a V1 fallback', async () => {
+    const runtime = await createKimiRuntime();
+    const session = {
+      send: vi.fn(async () => ({ status: 'admitted' as const })),
+      watch: () => ({ dispose: () => undefined }),
+      dispose: vi.fn(),
+    } satisfies AgentSessionRuntime;
+    const open = vi.fn(async (
+      _request: AgentSessionOpenRequest,
+      _options: AgentAcpRuntimeOptions,
+    ) => session);
+    const request: AgentSessionOpenRequest = {
+      kind: 'create',
+      sessionId: 'session-kimi',
+      cwd: '/workspace',
+      launchEnvironment: {
+        values: {
+          HAPPIER_KIMI_ACP_SELECTOR: 'poll',
+          PYTHONPATH: '/existing',
+        },
+        unset: ['KIMI_LEGACY_SETTING'],
+      },
+      configuration: {
+        mode: { value: null, updatedAtMs: 10 },
+        model: { value: null, updatedAtMs: 11 },
+        permissionIntent: { value: 'read-only', updatedAtMs: 12 },
+        options: {},
+      },
+    };
 
-    expect(spec).toMatchObject({
-      backendId: 'kimi',
+    await expect(runtime.sessions.open(request, {
+      protocols: { acp: { open } },
+    } as AgentSessionRuntimeContext)).resolves.toBe(session);
+    const options = open.mock.calls[0]?.[1];
+    if (!options || options.transport.kind !== 'stdio') {
+      throw new Error('Expected Kimi native stdio ACP options');
+    }
+    const composedRequest = open.mock.calls[0]?.[0];
+    expect(composedRequest?.launchEnvironment?.values).toMatchObject({
+      HAPPIER_KIMI_ACP_SELECTOR: 'poll',
+    });
+    expect(composedRequest?.launchEnvironment?.values).not.toHaveProperty('PYTHONPATH');
+    expect(options).toMatchObject({
       transport: {
         kind: 'stdio',
-        launch: {
-          kind: 'agent-cli',
-          agentId: 'kimi',
-        },
+        executable: { kind: 'systemTool', id: 'kimi-cli' },
+        args: expect.arrayContaining(['--work-dir', '/workspace', 'acp']),
       },
-      sessionIdHeaderName: 'kimiSessionId',
-      mcp: { policy: 'drop' },
-      stderrRules: {
-        statusErrors: expect.arrayContaining([
-          expect.objectContaining({
-            detail: 'Authentication error. Run `kimi login` to re-authenticate, then retry.',
-          }),
-        ]),
+      definition: {
+        mcp: { policy: 'drop' },
+        stderrRules: expect.any(Object),
+        toolNameInference: expect.any(Object),
       },
     });
-    expect(spec.transport.timeouts).toMatchObject({
-      initMs: 90_000,
-      toolCallMs: 120_000,
-      toolKindTimeouts: {
-        think: 30_000,
-      },
-    });
-    expect(spec.callbacks?.argvBuilder).toBeTypeOf('function');
-    expect(spec.callbacks?.envBuilder).toBeTypeOf('function');
+    expect(options.transport.args).toContain('--agent-file');
+    if (process.platform === 'linux') {
+      expect(options.transport.env?.PYTHONPATH).toContain('kimi-acp-poll-selector');
+      expect(options.transport.env?.PYTHONPATH).toContain('/existing');
+    } else {
+      expect(options.transport.env?.PYTHONPATH).toBe('/existing');
+    }
   });
 
-  it('preserves Kimi ordered argv and readonly agent-file callback behavior', async () => {
-    const spec = await readKimiSpec();
-    const buildArgv = spec.callbacks?.argvBuilder;
+  it('preserves Kimi ordered argv and readonly agent-file behavior', async () => {
+    const runtime = await createKimiRuntime();
+    const session = {
+      send: vi.fn(async () => ({ status: 'admitted' as const })),
+      watch: () => ({ dispose: () => undefined }),
+      dispose: vi.fn(),
+    } satisfies AgentSessionRuntime;
+    const open = vi.fn(async (
+      _request: AgentSessionOpenRequest,
+      _options: AgentAcpRuntimeOptions,
+    ) => session);
+    const request: AgentSessionOpenRequest = {
+      kind: 'create',
+      sessionId: 'session-kimi-readonly',
+      cwd: '/workspace',
+      configuration: {
+        mode: { value: null, updatedAtMs: 10 },
+        model: { value: null, updatedAtMs: 11 },
+        permissionIntent: { value: 'read-only', updatedAtMs: 12 },
+        options: {},
+      },
+    };
+    await runtime.sessions.open(request, {
+      protocols: { acp: { open } },
+    } as AgentSessionRuntimeContext);
+    const options = open.mock.calls[0]?.[1];
+    if (!options || options.transport.kind !== 'stdio') {
+      throw new Error('Expected Kimi native stdio ACP options');
+    }
+    const argv = options.transport.args;
     let agentFilePath: string | undefined;
 
-    expect(buildArgv).toBeTypeOf('function');
     try {
-      const argv = await buildArgv?.({
-        baseArgs: ['acp'],
-        cwd: '/workspace',
-        env: {},
-        permissionMode: 'read-only',
-      });
-
       expect(argv?.slice(0, 2)).toEqual(['--work-dir', '/workspace']);
       expect(argv?.at(-1)).toBe('acp');
       const agentFileIndex = argv?.indexOf('--agent-file') ?? -1;
@@ -116,28 +144,36 @@ describe('activate', () => {
     }
   });
 
-  it('preserves Kimi yolo argv and Python selector env behavior', async () => {
-    const spec = await readKimiSpec();
-    const argv = await spec.callbacks?.argvBuilder?.({
-      baseArgs: ['acp'],
+  it('forwards the canonical yolo intent through the native ACP composer', async () => {
+    const runtime = await createKimiRuntime();
+    const session = {
+      send: vi.fn(async () => ({ status: 'admitted' as const })),
+      watch: () => ({ dispose: () => undefined }),
+      dispose: vi.fn(),
+    } satisfies AgentSessionRuntime;
+    const open = vi.fn(async (
+      _request: AgentSessionOpenRequest,
+      _options: AgentAcpRuntimeOptions,
+    ) => session);
+    const request: AgentSessionOpenRequest = {
+      kind: 'resume',
+      sessionId: 'session-kimi-yolo',
+      providerSessionId: 'kimi-provider-session',
       cwd: '/workspace',
-      env: {},
-      permissionMode: 'yolo',
-    });
-    const env = await spec.callbacks?.envBuilder?.({
-      cwd: '/workspace',
-      env: {
-        HAPPIER_KIMI_ACP_SELECTOR: 'poll',
-        PYTHONPATH: '/existing',
+      configuration: {
+        mode: { value: null, updatedAtMs: 10 },
+        model: { value: null, updatedAtMs: 11 },
+        permissionIntent: { value: 'yolo', updatedAtMs: 12 },
+        options: {},
       },
-    });
+    };
 
-    expect(argv).toEqual(['--work-dir', '/workspace', '--yolo', 'acp']);
-    if (process.platform === 'linux') {
-      expect(env?.PYTHONPATH).toContain('kimi-acp-poll-selector');
-      expect(env?.PYTHONPATH).toContain('/existing');
-    } else {
-      expect(env?.PYTHONPATH).toBe('/existing');
-    }
+    await expect(runtime.sessions.open(request, {
+      protocols: { acp: { open } },
+    } as AgentSessionRuntimeContext)).resolves.toBe(session);
+    expect(open.mock.calls[0]?.[1]).toMatchObject({
+      transport: { args: ['--work-dir', '/workspace', '--yolo', 'acp'] },
+    });
   });
+
 });

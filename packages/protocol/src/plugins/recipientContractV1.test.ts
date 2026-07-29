@@ -1,0 +1,191 @@
+import { describe, expect, it } from 'vitest';
+
+import {
+  createRecipientContractDigestV1,
+  materializeRecipientOperationRequestV1,
+  normalizeRecipientContractV1,
+  serializeRecipientContractV1,
+} from './recipientContractV1.js';
+
+const input = {
+  version: 1 as const,
+  package: {
+    pluginId: 'com.acme.voice',
+    source: { kind: 'package' as const, locator: '@acme/voice' },
+  },
+  publisher: {
+    trust: 'verified' as const,
+    identity: 'npm:https://registry.npmjs.org:@acme',
+  },
+  contribution: {
+    pluginId: 'com.acme.voice',
+    localId: 'conversation',
+  },
+  credentialSlot: {
+    id: 'api-key',
+    scope: 'account' as const,
+  },
+  operations: [{
+    id: 'mint-client-auth',
+    purpose: 'voice.client-auth',
+    credentialSlotId: 'api-key',
+    effect: 'read' as const,
+    request: {
+      origin: 'https://api.example.com',
+      pathTemplate: '/v1/conversations/{agentId}/token',
+      queryTemplate: [{ name: 'mode', value: 'realtime' }],
+      headerTemplate: [{ name: 'accept', value: 'application/json' }],
+      bodyTemplate: { kind: 'none' as const },
+      method: 'GET' as const,
+      credential: { kind: 'httpHeader' as const, name: 'x-api-key', format: 'raw' as const },
+      redirect: 'error' as const,
+      maxBodyBytes: 0,
+      contentTypes: [],
+    },
+    parameters: {
+      schema: {
+        type: 'object' as const,
+        properties: { agentId: { type: 'string' as const, minLength: 1, maxLength: 256 } },
+        required: ['agentId'],
+        additionalProperties: false,
+      },
+      mapping: [{
+        parameter: 'agentId',
+        target: { kind: 'path' as const, placeholder: 'agentId', encoding: 'uri_component' as const },
+      }],
+    },
+    response: {
+      maxBytes: 32_768,
+      contentTypes: ['application/json'],
+    },
+  }],
+};
+
+describe('RecipientContractV1', () => {
+  it('has a stable canonical serialization and digest golden vector', () => {
+    const normalized = normalizeRecipientContractV1(input);
+    expect(serializeRecipientContractV1(normalized)).toBe(
+      '{"contribution":{"localId":"conversation","pluginId":"com.acme.voice"},"credentialSlot":{"id":"api-key","scope":"account"},"operations":[{"credentialSlotId":"api-key","effect":"read","id":"mint-client-auth","parameters":{"mapping":[{"parameter":"agentId","target":{"encoding":"uri_component","kind":"path","placeholder":"agentId"}}],"schema":{"additionalProperties":false,"properties":{"agentId":{"maxLength":256,"minLength":1,"type":"string"}},"required":["agentId"],"type":"object"}},"purpose":"voice.client-auth","request":{"bodyTemplate":{"kind":"none"},"contentTypes":[],"credential":{"format":"raw","kind":"httpHeader","name":"x-api-key"},"headerTemplate":[{"name":"accept","value":"application/json"}],"maxBodyBytes":0,"method":"GET","origin":"https://api.example.com","pathTemplate":"/v1/conversations/{agentId}/token","queryTemplate":[{"name":"mode","value":"realtime"}],"redirect":"error"},"response":{"contentTypes":["application/json"],"maxBytes":32768}}],"package":{"pluginId":"com.acme.voice","source":{"kind":"package","locator":"@acme/voice"}},"publisher":{"identity":"npm:https://registry.npmjs.org:@acme","trust":"verified"},"version":1}',
+    );
+    expect(createRecipientContractDigestV1(normalized)).toBe(
+      'sha256:cc4abb33445788f71a46e67333cd2776044d6d7fa3ef7176aac243ebc600f1db',
+    );
+  });
+
+  it('sorts operation and template sets while retaining every executable security field', () => {
+    const baseline = createRecipientContractDigestV1(input);
+    const localizedPresentationChange = createRecipientContractDigestV1({
+      ...input,
+      presentation: { title: 'Localized presentation only' },
+    });
+    expect(localizedPresentationChange).toBe(baseline);
+
+    const mutations: unknown[] = [
+      {
+        ...input,
+        package: { ...input.package, pluginId: 'com.acme.other' },
+        contribution: { ...input.contribution, pluginId: 'com.acme.other' },
+      },
+      { ...input, publisher: { ...input.publisher, identity: 'npm:other' } },
+      { ...input, contribution: { ...input.contribution, localId: 'other' } },
+      {
+        ...input,
+        credentialSlot: { ...input.credentialSlot, id: 'other' },
+        operations: [{ ...input.operations[0], credentialSlotId: 'other' }],
+      },
+      { ...input, operations: [{ ...input.operations[0], purpose: 'voice.catalog' }] },
+      { ...input, operations: [{ ...input.operations[0], effect: 'mutation' }] },
+      { ...input, operations: [{ ...input.operations[0], request: { ...input.operations[0].request, origin: 'https://other.example.com' } }] },
+      { ...input, operations: [{ ...input.operations[0], request: { ...input.operations[0].request, pathTemplate: '/other/{agentId}' } }] },
+      { ...input, operations: [{ ...input.operations[0], request: { ...input.operations[0].request, queryTemplate: [{ name: 'mode', value: 'batch' }] } }] },
+      { ...input, operations: [{ ...input.operations[0], request: { ...input.operations[0].request, headerTemplate: [{ name: 'accept', value: 'text/plain' }] } }] },
+      {
+        ...input,
+        operations: [{
+          ...input.operations[0],
+          request: {
+            ...input.operations[0].request,
+            method: 'POST',
+            bodyTemplate: { kind: 'json', value: { mode: 'realtime' } },
+          },
+        }],
+      },
+      { ...input, operations: [{ ...input.operations[0], request: { ...input.operations[0].request, method: 'POST' } }] },
+      { ...input, operations: [{ ...input.operations[0], request: { ...input.operations[0].request, credential: { ...input.operations[0].request.credential, name: 'authorization' } } }] },
+      { ...input, operations: [{ ...input.operations[0], request: { ...input.operations[0].request, maxBodyBytes: 1 } }] },
+      { ...input, operations: [{ ...input.operations[0], request: { ...input.operations[0].request, contentTypes: ['application/json'] } }] },
+      { ...input, operations: [{ ...input.operations[0], parameters: { ...input.operations[0].parameters, schema: { ...input.operations[0].parameters.schema, required: [] } } }] },
+      {
+        ...input,
+        operations: [{
+          ...input.operations[0],
+          request: { ...input.operations[0].request, pathTemplate: '/v1/conversations/token' },
+          parameters: {
+            ...input.operations[0].parameters,
+            mapping: [{ parameter: 'agentId', target: { kind: 'query', name: 'agent_id' } }],
+          },
+        }],
+      },
+      { ...input, operations: [{ ...input.operations[0], response: { ...input.operations[0].response, maxBytes: 65_536 } }] },
+      { ...input, operations: [{ ...input.operations[0], response: { ...input.operations[0].response, contentTypes: ['application/cbor'] } }] },
+    ];
+    for (const mutation of mutations) {
+      expect(createRecipientContractDigestV1(mutation), JSON.stringify(mutation)).not.toBe(baseline);
+    }
+  });
+
+  it('rejects undeclared mappings, non-canonical origins, and credential header templates', () => {
+    expect(() => normalizeRecipientContractV1({
+      ...input,
+      operations: [{
+        ...input.operations[0],
+        parameters: {
+          ...input.operations[0].parameters,
+          mapping: [{ parameter: 'missing', target: { kind: 'query', name: 'agent_id' } }],
+        },
+      }],
+    })).toThrow();
+    expect(() => normalizeRecipientContractV1({
+      ...input,
+      operations: [{
+        ...input.operations[0],
+        request: { ...input.operations[0].request, origin: 'https://api.example.com/path' },
+      }],
+    })).toThrow();
+    expect(() => normalizeRecipientContractV1({
+      ...input,
+      operations: [{
+        ...input.operations[0],
+        request: {
+          ...input.operations[0].request,
+          headerTemplate: [{ name: 'x-api-key', value: 'forbidden' }],
+        },
+      }],
+    })).toThrow();
+  });
+
+  it.each([
+    '//attacker.example/collect',
+    '/\\\\attacker.example/collect',
+    '/v1/allowed/../collect',
+    '/v1/%2e%2e/collect',
+  ])('rejects authority-confusing or normalization-changing path template %s', (pathTemplate) => {
+    const contract = {
+      ...input,
+      operations: [{
+        ...input.operations[0],
+        request: { ...input.operations[0].request, pathTemplate },
+        parameters: {
+          schema: { type: 'object' as const, properties: {}, additionalProperties: false },
+          mapping: [],
+        },
+      }],
+    };
+    expect(() => normalizeRecipientContractV1(contract)).toThrow();
+    expect(() => materializeRecipientOperationRequestV1({
+      contract,
+      operationId: 'mint-client-auth',
+      parameters: {},
+    })).toThrow();
+  });
+});

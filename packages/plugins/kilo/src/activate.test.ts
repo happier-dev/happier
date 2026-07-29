@@ -1,57 +1,91 @@
-import type { AcpBackendSpecV1 } from '@happier-dev/plugin-sdk/experimental/acp';
-import type { AgentRuntimeV1 } from '@happier-dev/plugin-sdk';
-import { createAcpBackendEngine, readAcpBackendSpec } from '@happier-dev/plugin-sdk/experimental/acp';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import type {
+  AgentAcpRuntimeOptions,
+  AgentSessionOpenRequest,
+  AgentSessionRuntime,
+  AgentSessionRuntimeContext,
+} from '@happier-dev/plugin-sdk/agent-runtime';
 import { describe, expect, it, vi } from 'vitest';
 
 import { activate } from './activate.js';
+import { PLUGIN_MANIFEST } from './manifest.js';
 
-type KiloBackendRegistration = Readonly<{
-  agentId: string;
-  create: (ctx: Readonly<{
-    agentRuntime: Readonly<{
-      acp: Readonly<{
-        defineAcpBackend: (spec: AcpBackendSpecV1) => AgentRuntimeV1;
-      }>;
-    }>;
-  }>) => AgentRuntimeV1 | Promise<AgentRuntimeV1>;
-}>;
+describe('Kilo activation', () => {
+  it('registers its runtime through the public Agent activation API', async () => {
+    const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    expect(activation.registrations()).toContainEqual({ family: 'agents', localId: 'kilo' });
+    expect(activation.registration('agents', 'kilo')?.factory).toEqual(expect.any(Function));
+    await activation.dispose();
+  });
 
-function readRegisteredBackend(registerAgentRuntime: ReturnType<typeof vi.fn>): KiloBackendRegistration {
-  const registration = registerAgentRuntime.mock.calls[0]?.[0];
-  if (!registration || typeof registration !== 'object') {
-    throw new Error('Expected Kilo activation to register a backend engine');
-  }
-  return registration as KiloBackendRegistration;
-}
-
-describe('Kilo activate', () => {
-  it('registers the Kilo ACP backend through the plugin API', async () => {
-    const registerAgentRuntime = vi.fn();
-
-    activate({ registerAgentRuntime });
-
-    const registration = readRegisteredBackend(registerAgentRuntime);
-    expect(registration.agentId).toBe('kilo');
-
-    const engine = await registration.create({
-      agentRuntime: {
-        acp: {
-          defineAcpBackend: createAcpBackendEngine,
-        },
-      },
+  it.each([
+    { kind: 'create' as const },
+    { kind: 'resume' as const, providerSessionId: 'kilo-provider-session' },
+  ])('opens a $kind session through the native ACP composer with canonical permissions', async (variant) => {
+    const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    const factory = activation.registration('agents', 'kilo')?.factory;
+    if (!factory) throw new Error('Expected Kilo Agent factory');
+    const runtime = await factory({
+      plugin: { id: 'happier.agent.kilo', version: '0.0.0' },
+      agent: { id: 'kilo' },
+      signal: new AbortController().signal,
     });
-    expect(readAcpBackendSpec(engine)).toMatchObject({
-      backendId: 'kilo',
+    const session = {
+      send: vi.fn(async () => ({ status: 'admitted' as const })),
+      cancel: vi.fn(async ({ turnId }: { turnId: string }) => ({ status: 'requested' as const, turnId })),
+      watch: () => ({ dispose: () => undefined }),
+      dispose: vi.fn(),
+    } satisfies AgentSessionRuntime;
+    const open = vi.fn(async (
+      _request: AgentSessionOpenRequest,
+      _options: AgentAcpRuntimeOptions,
+    ) => session);
+    const request: AgentSessionOpenRequest = {
+      ...variant,
+      sessionId: `session-kilo-${variant.kind}`,
+      cwd: '/workspace',
+      launchEnvironment: {
+        values: { DEBUG: 'transport-debug' },
+        unset: ['KILO_LEGACY_SETTING'],
+      },
+      configuration: {
+        mode: { value: null, updatedAtMs: 10 },
+        model: { value: 'model-kilo', updatedAtMs: 11 },
+        permissionIntent: { value: 'read-only', updatedAtMs: 12 },
+        options: {},
+      },
+    };
+
+    await expect(runtime.sessions.open(request, {
+      protocols: { acp: { open } },
+    } as AgentSessionRuntimeContext)).resolves.toBe(session);
+    expect(open).toHaveBeenCalledWith(request, {
       transport: {
         kind: 'stdio',
-        launch: {
-          kind: 'agent-cli',
-          agentId: 'kilo',
-          args: ['acp'],
-        },
+        executable: { kind: 'systemTool', id: 'kilo-cli' },
+        args: ['acp'],
+        env: { OPENCODE_PERMISSION: expect.any(String) },
       },
-      sessionIdHeaderName: 'kiloSessionId',
-      mcp: { policy: 'pass_through' },
+      definition: expect.objectContaining({
+        modelConfigOptionId: 'model',
+        mcp: { policy: 'pass_through' },
+        timeouts: expect.any(Object),
+        stderrRules: expect.any(Object),
+        toolNameInference: expect.any(Object),
+      }),
     });
+    const options = open.mock.calls[0]?.[1];
+    if (!options || options.transport.kind !== 'stdio') {
+      throw new Error('Expected Kilo native stdio ACP options');
+    }
+    expect(JSON.parse(options.transport.env?.OPENCODE_PERMISSION ?? '{}')).toMatchObject({
+      '*': 'deny',
+      read: 'allow',
+      edit: 'deny',
+      bash: 'deny',
+      external_directory: 'deny',
+    });
+    expect(options.definition).not.toHaveProperty('permissionOptionSelection');
+    await activation.dispose();
   });
 });

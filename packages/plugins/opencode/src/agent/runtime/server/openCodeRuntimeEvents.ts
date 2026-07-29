@@ -1,38 +1,38 @@
-import {
-  buildSessionRuntimeIssueV1,
-  type RuntimeEventV1,
-  type SessionRuntimeIssueV1,
-} from '@happier-dev/plugin-sdk/experimental/runtime/session';
+import type {
+  OpenCodeRuntimeEvent,
+  OpenCodeRuntimeIssue,
+} from './runtimeEvents.js';
 
 export function buildOpenCodeRuntimeIssue(params: Readonly<{
   code: string;
-  source: SessionRuntimeIssueV1['source'];
+  source: string;
   message?: string | null;
   occurredAt: number;
-  usageLimit?: SessionRuntimeIssueV1['usageLimit'];
-}>): SessionRuntimeIssueV1 {
-  return buildSessionRuntimeIssueV1({
+  usageLimit?: OpenCodeRuntimeIssue['usageLimit'];
+}>): OpenCodeRuntimeIssue {
+  return {
+    v: 1,
     code: params.code,
     source: params.source,
     occurredAt: params.occurredAt,
     agentId: 'opencode',
-    sanitizedPreview: params.message,
-    usageLimit: params.usageLimit,
-  });
+    sanitizedPreview: params.message ?? null,
+    ...(params.usageLimit ? { usageLimit: params.usageLimit } : {}),
+  };
 }
 
 export async function publishOpenCodeRuntimeEvent(
-  publishRuntimeEvent: (event: RuntimeEventV1) => void,
-  event: RuntimeEventV1,
+  publishRuntimeEvent: (event: OpenCodeRuntimeEvent) => void,
+  event: OpenCodeRuntimeEvent,
 ): Promise<void> {
   publishRuntimeEvent(event);
 }
 
 export async function publishOpenCodeTurnFailed(params: Readonly<{
-  publishRuntimeEvent: (event: RuntimeEventV1) => void;
+  publishRuntimeEvent: (event: OpenCodeRuntimeEvent) => void;
   sessionId: string;
   turnId: string;
-  issue: SessionRuntimeIssueV1;
+  issue: OpenCodeRuntimeIssue;
   emittedAtMs: number;
 }>): Promise<void> {
   await publishOpenCodeRuntimeEvent(params.publishRuntimeEvent, {
@@ -56,7 +56,7 @@ export async function publishOpenCodeTurnFailed(params: Readonly<{
 }
 
 export async function publishOpenCodeTurnCancelled(params: Readonly<{
-  publishRuntimeEvent: (event: RuntimeEventV1) => void;
+  publishRuntimeEvent: (event: OpenCodeRuntimeEvent) => void;
   sessionId: string;
   turnId: string;
   reason?: string;

@@ -16,11 +16,23 @@ describe('AGENT_AUTH_PROBE_CONFIG', () => {
     expect(Object.keys(AGENT_AUTH_PROBE_CONFIG).sort()).toEqual([...AGENT_IDS].sort());
   });
 
-  it('sources canonical provider auth probe facts from bundled provider definitions', () => {
-    for (const providerId of AGENT_IDS) {
-      expect(CANONICAL_AGENT_AUTH_PROBE_CONFIG[providerId]).toBe(
-        BUNDLED_AGENT_DEFINITIONS_BY_ID[providerId].authProbeConfig,
-      );
+  it('projects canonical auth probe facts from strict bundled CLI metadata', () => {
+    for (const agentId of AGENT_IDS) {
+      const definition = BUNDLED_AGENT_DEFINITIONS_BY_ID[agentId];
+      const probe = definition.cli.auth.probe;
+
+      expect(CANONICAL_AGENT_AUTH_PROBE_CONFIG[agentId]).toEqual({
+        agentId,
+        binaryNames: [
+          definition.cli.executable.binaryName,
+          ...(definition.cli.executable.alternativeBinaryNames ?? []),
+        ],
+        statusCommand: probe.statusArgs ?? null,
+        parser: probe.parser,
+        backgroundChecks: probe.backgroundChecks,
+        ...(probe.envVars ? { envVars: probe.envVars } : {}),
+        ...(probe.credentialPaths ? { credentialPaths: probe.credentialPaths } : {}),
+      });
     }
   });
 
@@ -72,8 +84,8 @@ describe('AGENT_AUTH_PROBE_CONFIG', () => {
         'GOOGLE_CLOUD_PROJECT',
         'GOOGLE_CLOUD_LOCATION',
       ],
-      credentialPaths: [],
     });
+    expect(config).not.toHaveProperty('credentialPaths');
     for (const forbiddenFact of [
       'oauth_creds.json',
       'auth.json',

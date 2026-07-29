@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import { AGENT_DEFINITION } from './definition.js';
+import { PLUGIN_MANIFEST } from '../manifest.js';
 
 describe('Antigravity agent definition', () => {
-  it('keeps provider identity, backend ownership, and agy CLI runtime facts as data', () => {
+  it('keeps provider identity and backend ownership as definition data', () => {
     expect(JSON.parse(JSON.stringify(AGENT_DEFINITION))).toEqual(AGENT_DEFINITION);
     expect(AGENT_DEFINITION).toMatchObject({
       id: 'antigravity',
@@ -18,7 +19,7 @@ describe('Antigravity agent definition', () => {
           supportedKindsByServiceId: { gemini: ['token'] },
         },
         sessionStorage: { direct: false, persisted: true },
-        resume: { vendorResume: 'unsupported', vendorResumeIdField: null },
+        resume: { vendorResume: 'supported', vendorResumeIdField: 'antigravitySessionId' },
         handoff: { vendorStateTransfer: 'unsupported' },
         localControl: {
           supported: true,
@@ -44,16 +45,6 @@ describe('Antigravity agent definition', () => {
           description: expect.any(String),
         }],
       },
-      agentCliRuntime: {
-        id: 'antigravity',
-        title: 'Antigravity CLI',
-        binaryName: 'agy',
-        sourcePreferenceDefault: 'system-first',
-        managedInstall: null,
-        manualInstallKind: 'vendor_recipe',
-        acceptsJavaScriptFileOverride: false,
-        docsUrl: 'https://antigravity.google/docs/cli-install',
-      },
       runtimeContributions: {
         agentCatalogEntry: {
           importName: 'ANTIGRAVITY_AGENT_RUNTIME_CONTRIBUTION',
@@ -63,5 +54,11 @@ describe('Antigravity agent definition', () => {
     });
     expect(AGENT_DEFINITION.core.connectedServices?.supportedKindsByServiceId?.gemini).toEqual(['token']);
     expect(AGENT_DEFINITION.core.connectedServices?.supportedKindsByServiceId?.gemini).not.toContain('oauth');
+    expect(AGENT_DEFINITION).not.toHaveProperty('agentCliRuntime');
+    expect(PLUGIN_MANIFEST.contributes.agents[0]?.cli).toMatchObject({
+      executable: { binaryName: 'agy', sourcePreference: 'system-first' },
+      install: { manual: { kind: 'vendor_recipe' } },
+      auth: { support: 'login_terminal', machineLoginKey: 'antigravity-cli' },
+    });
   });
 });

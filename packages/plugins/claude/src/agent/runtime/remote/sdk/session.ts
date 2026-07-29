@@ -1,21 +1,34 @@
-import {
-    createSessionRuntimeActivityPublisher,
-    type CreateSessionRuntimeParamsV1,
-    type PluginContextV1,
-    type RuntimeEventV1,
-    type SessionRuntimeCreateResultV1,
-} from '@happier-dev/plugin-sdk';
+import type {
+    AgentSessionHookServerHandle,
+    AgentSessionProviderBinding,
+} from '@happier-dev/plugin-sdk/agent-runtime';
+import type { SessionWorkStateV1 } from '@happier-dev/plugin-sdk/experimental/sessions/workState';
+import { createClaudeRuntimeActivityPublisher } from '../../shared/runtimeActivityPublisher.js';
 import { redactBugReportSensitiveText } from '@happier-dev/plugin-sdk/experimental/diagnostics';
 import {
-    buildSessionRuntimeIssueV1,
-    RuntimeEventV1Schema,
-    type SessionRuntimeIssueSourceV1,
-} from '@happier-dev/plugin-sdk/experimental/runtime/session';
+    readClaudePendingLocalId,
+} from '../../providerOperations.js';
 import { raceWithTimeout } from '@happier-dev/plugin-sdk/experimental/timeout';
+import {
+    ConnectedServiceCredentialRevisionV1Schema,
+    type ConnectedServiceCredentialRevisionV1,
+} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
-import { createClaudePermissionEngine } from '../../../permissions/createClaudePermissionEngine.js';
-import { createClaudeSdkNoResultError, query } from '../../../sdk/query.js';
+import {
+    createClaudePermissionEngine,
+    type ClaudePermissionEngine,
+} from '../../../permissions/createClaudePermissionEngine.js';
+import {
+    buildClaudeHookPluginHooks,
+    buildClaudeHookPluginManifest,
+} from '../../../hooks/settings.js';
+import {
+    createClaudeSdkNoResultError,
+    queryWithContext,
+    type ClaudeSdkQueryContext,
+} from '../../../sdk/query.js';
 import type { ClaudeSdkQuery } from '../../../sdk/query.js';
 import type {
     PermissionResult,
@@ -27,19 +40,35 @@ import type {
 } from '../../../sdk/types.js';
 import { recordClaudeRuntimeProviderAccountUsageSnapshot } from '../../accountUsage.js';
 import { buildClaudeLiveContextUsageSnapshot } from '../../../usage/liveContextSnapshot.js';
+import { buildClaudeAssistantUsageObservation } from '../../../usage/buildAssistantObservation.js';
+import { buildClaudeSdkResultUsageObservation } from '../../../usage/buildSdkResultObservation.js';
+import type {
+    ClaudeTokenUsage,
+    ClaudeUsageObservation,
+    ClaudeUsageObservationSubscription,
+} from '../../../usage/types.js';
 import { resolveClaudePermissionModeFromRuntimeMode } from '../../permissionMode.js';
 import { isClaudeUltracodeSupportedModelId } from '../../reasoningEffort.js';
+import { getClaudeProjectPath, resolveClaudeConfigDirOverride } from '../../../surfaces/sessions/handoff/path.js';
+import type {
+    ClaudeProviderPromptDeliveryOutcomeCallback,
+    ClaudeRuntimePromptSubmissionOutcome,
+    ClaudeRuntimeTurnOperations,
+} from '../../providerOperations.js';
 import {
-    createClaudePublicSessionRuntime,
-    type ClaudePublicSessionRuntime,
-    type ClaudeRuntimeTurnOperations,
-} from '../../sessionRuntime.js';
+    ClaudeProviderEventSchema,
+    readClaudeProviderEvent,
+    type ClaudeProviderEvent,
+} from '../../providerEvents.js';
+import {
+    buildClaudeSessionRuntimeIssue,
+    type ClaudeSessionRuntimeIssueSource,
+} from '../../issues/runtimeIssues.js';
 import {
     createClaudeUnifiedWorkflowRuntime,
     registerClaudeWorkflowOwnedToolUseIds,
 } from '../../../workflowRecords/index.js';
 import { createClaudeUnifiedGoalRuntime } from '../../terminal/unified/goalRuntime.js';
-import { getClaudeProjectPath, resolveClaudeConfigDirOverride } from '../../../surfaces/sessions/handoff/path.js';
 import { computeClaudeSubscriptionAccessTokenFingerprint } from '../../../auth/services/cloud/refreshBridge.js';
 import {
     createClaudeAgentSdkGoalStatusTail,
@@ -50,21 +79,27 @@ import {
     extractToolUseBlocksFromSdkMessage,
 } from './streamEvents.js';
 import {
-    buildClaudeProviderTaskRuntimeActivitySourceId,
     createClaudeProviderActivityLedger,
+    isClaudeProviderActivityHookObservationLoss,
+    isReplayClaudeAgentSdkMessage,
+    normalizeClaudeProviderTaskEvent,
+    type ClaudeProviderTaskActivity,
 } from './providerActivity.js';
 import {
-    clearClaudeRuntimeActivitySources,
-    observeClaudeProviderTaskActivity,
-    publishClaudeProviderSessionId,
-    publishClaudeRuntimeActivityUpdate,
+    applyClaudeProviderTaskActivity,
+    publishClaudeProviderTaskInventory,
     readClaudeRuntimeConfigEffortUpdate,
     readClaudeRuntimeConfigUltracodeUpdate,
-    readClaudeRuntimeDirectory,
-    readClaudeRuntimeEnv,
     readClaudeRuntimeString,
     respondToClaudePermission,
 } from '../../shared/runtimeHelpers.js';
+import { createClaudeAgentSdkResumeIdentityOwner } from './resumeIdentity.js';
+import type { ClaudeUnifiedTerminalContext } from '../../terminal/unified/turnOperations.js';
+import type {
+    ClaudeEffectiveModelEvidence,
+    ClaudeEffectiveModelEvidenceSubscription,
+} from '../../effectiveModelEvidence.js';
+import type { ClaudeRemoteAdvancedOptions } from '../../../../protocol/remoteSettings.js';
 
 export type ClaudeAgentSdkToolPermissionPolicy =
     | 'no_tools'
@@ -72,10 +107,23 @@ export type ClaudeAgentSdkToolPermissionPolicy =
     | 'workspace_write'
     | 'parent_session_prompt';
 
-type RuntimeEventMessage = RuntimeEventV1;
+export type ClaudeAgentSdkContext = Readonly<{
+    logger: ClaudeUnifiedTerminalContext['logger'];
+    agentRuntime: Readonly<{
+        exec: ClaudeSdkQueryContext;
+        sessionHooks: ClaudeUnifiedTerminalContext['agentRuntime']['sessionHooks'];
+        transcripts: Readonly<{
+            fileFollow: ClaudeUnifiedTerminalContext['agentRuntime']['transcripts']['fileFollow'];
+        }>;
+        accountUsage: ClaudeUnifiedTerminalContext['agentRuntime']['accountUsage'];
+    }>;
+    sessions: ClaudeUnifiedTerminalContext['sessions'];
+}>;
+
+type ProviderEventMessage = ClaudeProviderEvent;
 type ClaudeProviderFailureEvidence = Readonly<{
     code: string;
-    source: SessionRuntimeIssueSourceV1;
+    source: ClaudeSessionRuntimeIssueSource;
     preview: string | null;
 }>;
 type ClaudeSubscriptionRuntimeAuthSelection =
@@ -83,6 +131,7 @@ type ClaudeSubscriptionRuntimeAuthSelection =
         kind: 'profile';
         serviceId: 'claude-subscription';
         profileId: string;
+        credentialRevision: ConnectedServiceCredentialRevisionV1;
     }>
     | Readonly<{
         kind: 'group';
@@ -91,6 +140,7 @@ type ClaudeSubscriptionRuntimeAuthSelection =
         activeProfileId: string;
         fallbackProfileId: string;
         generation: number;
+        credentialRevision: ConnectedServiceCredentialRevisionV1;
         policy?: unknown;
     }>;
 
@@ -121,6 +171,36 @@ function isSdkResultMessage(message: SDKMessage): message is SDKResultMessage {
     return message.type === 'result';
 }
 
+function readSdkAssistantModelId(message: SDKMessage): string | null {
+    if (!isSdkAssistantMessage(message)) return null;
+    return readString((message.message as Readonly<Record<string, unknown>>).model);
+}
+
+function readSdkAssistantUsage(message: SDKMessage): ClaudeTokenUsage | null {
+    if (!isSdkAssistantMessage(message)) return null;
+    const rawUsage = (message.message as Readonly<Record<string, unknown>>).usage;
+    const usage = isRecord(rawUsage) ? rawUsage : null;
+    if (!usage) return null;
+    const inputTokens = readNonnegativeInteger(usage.input_tokens);
+    const outputTokens = readNonnegativeInteger(usage.output_tokens);
+    const cacheCreationTokens = readNonnegativeInteger(usage.cache_creation_input_tokens);
+    const cacheReadTokens = readNonnegativeInteger(usage.cache_read_input_tokens);
+    if (
+        inputTokens === null
+        && outputTokens === null
+        && cacheCreationTokens === null
+        && cacheReadTokens === null
+    ) return null;
+    return {
+        ...(inputTokens !== null ? { input_tokens: inputTokens } : {}),
+        ...(outputTokens !== null ? { output_tokens: outputTokens } : {}),
+        ...(cacheCreationTokens !== null
+            ? { cache_creation_input_tokens: cacheCreationTokens }
+            : {}),
+        ...(cacheReadTokens !== null ? { cache_read_input_tokens: cacheReadTokens } : {}),
+    };
+}
+
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
@@ -133,9 +213,16 @@ function readNonnegativeInteger(value: unknown): number | null {
 
 function readClaudeSubscriptionSelection(value: unknown): ClaudeSubscriptionRuntimeAuthSelection | null {
     if (!isRecord(value) || value.serviceId !== 'claude-subscription') return null;
+    const credentialRevision = ConnectedServiceCredentialRevisionV1Schema.safeParse(value.credentialRevision);
+    if (!credentialRevision.success) return null;
     if (value.kind === 'profile') {
         const profileId = readString(value.profileId);
-        return profileId ? { kind: 'profile', serviceId: 'claude-subscription', profileId } : null;
+        return profileId ? {
+            kind: 'profile',
+            serviceId: 'claude-subscription',
+            profileId,
+            credentialRevision: credentialRevision.data,
+        } : null;
     }
     if (value.kind !== 'group') return null;
     const groupId = readString(value.groupId);
@@ -150,6 +237,7 @@ function readClaudeSubscriptionSelection(value: unknown): ClaudeSubscriptionRunt
         activeProfileId,
         fallbackProfileId,
         generation,
+        credentialRevision: credentialRevision.data,
         ...(Object.prototype.hasOwnProperty.call(value, 'policy') ? { policy: value.policy } : {}),
     };
 }
@@ -230,7 +318,7 @@ function normalizeProviderErrorCode(value: string | null): string {
 function classifyFailureSource(params: Readonly<{
     code: string;
     preview: string | null;
-}>): SessionRuntimeIssueSourceV1 {
+}>): ClaudeSessionRuntimeIssueSource {
     if (
         params.code === 'claude_authentication_failed'
         || params.preview?.match(/\b(not logged in|login|auth(?:entication)? failed|unauthorized)\b/iu)
@@ -331,8 +419,11 @@ function readRuntimeConfigString(value: unknown): string | null {
 const readEffortFromRuntimeConfigUpdate = readClaudeRuntimeConfigEffortUpdate;
 const readUltracodeFromRuntimeConfigUpdate = readClaudeRuntimeConfigUltracodeUpdate;
 
-function resolvePromptInput(prompt: string, policy: ClaudeAgentSdkToolPermissionPolicy | null): string | AsyncIterable<SDKUserMessage> {
-    return policy === 'read_only' ? prompt : createPromptStream(prompt);
+function resolvePromptInput(
+    prompt: string,
+    _policy: ClaudeAgentSdkToolPermissionPolicy | null,
+): AsyncIterable<SDKUserMessage> {
+    return createPromptStream(prompt);
 }
 
 async function* createPromptStream(prompt: string): AsyncIterable<SDKUserMessage> {
@@ -366,9 +457,9 @@ function mapSdkRuntimeEvent(params: Readonly<{
     sessionId: string;
     turnId: string;
     providerFailure?: ClaudeProviderFailureEvidence | null;
-}>): RuntimeEventMessage | null {
+}>): ProviderEventMessage | null {
     if (params.message.type === 'assistant') {
-        return RuntimeEventV1Schema.parse({
+        return ClaudeProviderEventSchema.parse({
             sessionId: params.sessionId,
             emittedAtMs: Date.now(),
             kind: 'message-delta',
@@ -380,7 +471,7 @@ function mapSdkRuntimeEvent(params: Readonly<{
         });
     }
     if (isSdkResultMessage(params.message) && params.message.subtype === 'success' && params.message.is_error !== true) {
-        return RuntimeEventV1Schema.parse({
+        return ClaudeProviderEventSchema.parse({
             sessionId: params.sessionId,
             emittedAtMs: Date.now(),
             kind: 'turn-complete',
@@ -393,12 +484,12 @@ function mapSdkRuntimeEvent(params: Readonly<{
     }
     if (isSdkResultMessage(params.message)) {
         const failure = buildResultFailureEvidence(params.message, params.providerFailure ?? null);
-        return RuntimeEventV1Schema.parse({
+        return ClaudeProviderEventSchema.parse({
             sessionId: params.sessionId,
             emittedAtMs: Date.now(),
             kind: 'turn-failed',
             turnId: params.turnId,
-            issue: buildSessionRuntimeIssueV1({
+            issue: buildClaudeSessionRuntimeIssue({
                 code: failure.code,
                 source: failure.source,
                 occurredAt: Date.now(),
@@ -407,19 +498,18 @@ function mapSdkRuntimeEvent(params: Readonly<{
             }),
         });
     }
-    const parsed = RuntimeEventV1Schema.safeParse(params.message);
-    return parsed.success ? parsed.data : null;
+    return readClaudeProviderEvent(params.message);
 }
 
 function mapSdkTranscriptEvent(params: Readonly<{
     message: SDKMessage;
     sessionId: string;
     sequence: number;
-}>): RuntimeEventMessage | null {
+}>): ProviderEventMessage | null {
     if (!isSdkAssistantMessage(params.message)) return null;
     const text = readAssistantText(params.message);
     if (!text) return null;
-    return RuntimeEventV1Schema.parse({
+    return ClaudeProviderEventSchema.parse({
         sessionId: params.sessionId,
         emittedAtMs: Date.now(),
         kind: 'transcript-agent-message-committed',
@@ -439,10 +529,10 @@ function mapResultTranscriptEvent(params: Readonly<{
     message: SDKResultMessage;
     sessionId: string;
     sequence: number;
-}>): RuntimeEventMessage | null {
+}>): ProviderEventMessage | null {
     const text = readString(params.message.result);
     if (!text) return null;
-    return RuntimeEventV1Schema.parse({
+    return ClaudeProviderEventSchema.parse({
         sessionId: params.sessionId,
         emittedAtMs: Date.now(),
         kind: 'transcript-agent-message-committed',
@@ -463,14 +553,14 @@ function mapSdkResultUsageTranscriptEvent(params: Readonly<{
     sessionId: string;
     sequence: number;
     modelId: string | null;
-}>): RuntimeEventMessage | null {
+}>): ProviderEventMessage | null {
     const usage = isRecord(params.message.usage) ? params.message.usage : null;
     const modelUsage = isRecord(params.message.modelUsage) ? params.message.modelUsage : null;
     const providerSessionId = readString(params.message.session_id);
     const subtype = readString(params.message.subtype);
     if (!usage || !modelUsage || !providerSessionId || !subtype) return null;
     const messageId = readMessageId(params.message, `result-${params.sequence}`);
-    return RuntimeEventV1Schema.parse({
+    return ClaudeProviderEventSchema.parse({
         sessionId: params.sessionId,
         emittedAtMs: Date.now(),
         kind: 'transcript-agent-message-committed',
@@ -497,11 +587,11 @@ function mapSdkToolRuntimeEvents(params: Readonly<{
     sessionId: string;
     turnId: string;
     toolNameByCallId: Map<string, string>;
-}>): RuntimeEventMessage[] {
-    const events: RuntimeEventMessage[] = [];
+}>): ProviderEventMessage[] {
+    const events: ProviderEventMessage[] = [];
     for (const block of extractToolUseBlocksFromSdkMessage(params.message)) {
         params.toolNameByCallId.set(block.id, block.name);
-        events.push(RuntimeEventV1Schema.parse({
+        events.push(ClaudeProviderEventSchema.parse({
             sessionId: params.sessionId,
             emittedAtMs: Date.now(),
             kind: 'tool-call',
@@ -513,7 +603,7 @@ function mapSdkToolRuntimeEvents(params: Readonly<{
     }
     for (const block of extractToolResultBlocksFromSdkMessage(params.message)) {
         const toolName = params.toolNameByCallId.get(block.toolUseId);
-        events.push(RuntimeEventV1Schema.parse({
+        events.push(ClaudeProviderEventSchema.parse({
             sessionId: params.sessionId,
             emittedAtMs: Date.now(),
             kind: 'tool-result',
@@ -527,15 +617,22 @@ function mapSdkToolRuntimeEvents(params: Readonly<{
     return events;
 }
 
-export function createClaudeAgentSdkTurnOperations(params: Readonly<{
-    ctx: PluginContextV1;
+export type ClaudeAgentSdkTurnOperationsParams = Readonly<{
+    ctx: ClaudeAgentSdkContext;
+    queryContext?: ClaudeSdkQueryContext;
+    permissionEngine?: ClaudePermissionEngine;
     directory: string;
     launchEnv: Readonly<Record<string, string>>;
+    advancedOptions?: ClaudeRemoteAdvancedOptions;
     permissionMode: string;
     happierSessionId?: string | null;
     toolPermissionPolicy?: ClaudeAgentSdkToolPermissionPolicy | null;
     abortSignal?: AbortSignal;
     initialModelId?: string | null;
+    initialEffort?: string | null;
+    initialUltracode?: boolean;
+    providerModel?: AgentSessionProviderBinding['model'];
+    initialProviderSessionId?: string | null;
     mcpServers?: Readonly<Record<string, unknown>> | null;
     publishSdkMessages?: boolean;
     publishTranscriptMessages?: boolean;
@@ -547,14 +644,37 @@ export function createClaudeAgentSdkTurnOperations(params: Readonly<{
      * file-only `goal_status` attachments. Execution runs leave it off (no session work-state).
      */
     enableSessionWorkState?: boolean;
-}>): ClaudePublicSessionRuntime {
-    const permissionEngine = createClaudePermissionEngine(params.ctx);
-    const listeners = new Set<(event: RuntimeEventV1) => void>();
+    /**
+     * Session-bound runtimes install authenticated Claude lifecycle hooks and only promote the
+     * native transcript after the submitted prompt is proven as provider-accepted and materialized.
+     * Execution runtimes intentionally leave this off because they do not own resumable sessions.
+     */
+    enableSessionResumability?: boolean;
+    /** Native AgentRuntime work-state projection; omitting it preserves the legacy metadata owner. */
+    publishGoalWorkState?: (snapshot: SessionWorkStateV1) => void;
+}>;
+
+export type ClaudeAgentSdkNativeOperations = ClaudeRuntimeTurnOperations & Readonly<{
+    subscribeCanonicalAgentSessionEvents: ReturnType<typeof createClaudeRuntimeActivityPublisher>['subscribe'];
+    subscribeEffectiveModel: ClaudeEffectiveModelEvidenceSubscription;
+    subscribeUsageObservation: ClaudeUsageObservationSubscription;
+    setOnPromptDeliveryOutcome(handler: ClaudeProviderPromptDeliveryOutcomeCallback | null): void;
+}>;
+
+export function createClaudeAgentSdkTurnOperations(
+    params: ClaudeAgentSdkTurnOperationsParams,
+): ClaudeAgentSdkNativeOperations {
+    const permissionEngine = params.permissionEngine ?? createClaudePermissionEngine(params.ctx);
+    const listeners = new Set<(event: ClaudeProviderEvent) => void>();
+    const effectiveModelListeners = new Set<(evidence: ClaudeEffectiveModelEvidence) => void>();
+    const usageObservationListeners = new Set<(observation: ClaudeUsageObservation) => void>();
     let providerSessionId: string | null = null;
-    const providerSessionPublicationState = { publishedProviderSessionId: null as string | null };
-    let pendingResumeProviderSessionId: string | null = null;
+    let resumableProviderSessionId: string | null = null;
+    let pendingResumeProviderSessionId: string | null = readString(params.initialProviderSessionId);
     let activeQuery: ClaudeSdkQuery | null = null;
     let disposeQuery: ClaudeSdkQuery | null = null;
+    let activeProviderTaskId: string | null = null;
+    const cancelledQueries = new WeakMap<ClaudeSdkQuery, string>();
     let activeCompletion: DeferredCompletion | null = null;
     let lastTurnCompletionFailure: Error | null = null;
     const backgroundQueries = new Set<ClaudeSdkQuery>();
@@ -563,43 +683,24 @@ export function createClaudeAgentSdkTurnOperations(params: Readonly<{
     let currentTurnId: string | null = null;
     let currentPermissionMode = params.permissionMode;
     let currentModelId: string | null = readString(params.initialModelId);
+    let currentProviderModel = params.providerModel;
     let currentFallbackModel: string | null = null;
-    let currentEffort: string | null = null;
-    let currentUltracode = false;
+    let currentEffort: string | null = readString(params.initialEffort);
+    let currentUltracode = params.initialUltracode === true;
     let contextUsageRefreshPromise: Promise<boolean> | null = null;
     const toolPermissionPolicy = params.toolPermissionPolicy ?? null;
     const sessionWorkStateEnabled = params.enableSessionWorkState === true;
-    const providerActivityLedger = createClaudeProviderActivityLedger({
-        // W-3 backstop: a stale provider task whose terminal event was dropped expires after the TTL.
-        // Reconcile so its runtime-activity source is cleared and the session stops looking "working".
-        // (The target function is a hoisted declaration below; the arrow only runs at expiry.)
-        onActiveTasksExpired: () => { reconcileProviderTaskRuntimeActivityForCurrentQuery('provider-task-ttl-expired'); },
+    const happierSessionId = readString(params.happierSessionId);
+    let promotedTranscriptPath: string | null = null;
+    let sessionHookServer: AgentSessionHookServerHandle | null = null;
+    let sessionHookPluginDir: string | null = null;
+    let sessionHookSetupPromise: Promise<string | null> | null = null;
+    let runtimeDisposed = false;
+    let runtimeDisposePromise: Promise<void> | null = null;
+    const providerActivityLedger = createClaudeProviderActivityLedger();
+    const runtimeActivityPublisher = createClaudeRuntimeActivityPublisher({
+        sessionId: happierSessionId ?? 'claude-agent-sdk',
     });
-    const runtimeActivityPublisher = createSessionRuntimeActivityPublisher({
-        session: params.ctx.sessions.current,
-    });
-    const liveProviderTaskIds = new Set<string>();
-    const providerTaskRuntimeActivitySourceIds = new Set<string>();
-
-    function publishRuntimeActivityUpdate(promise: Promise<void>, reason: string): void {
-        publishClaudeRuntimeActivityUpdate({
-            logger: params.ctx.logger,
-            logPrefix: '[ClaudeAgentSdk]',
-            promise,
-            reason,
-        });
-    }
-
-    function clearRuntimeActivitySources(reason: string): void {
-        providerTaskRuntimeActivitySourceIds.clear();
-        clearClaudeRuntimeActivitySources({
-            logger: params.ctx.logger,
-            logPrefix: '[ClaudeAgentSdk]',
-            runtimeActivityPublisher,
-            reason,
-        });
-    }
-
     // Centralized Dynamic Workflow ACTIVITY runtime (mirrors the unified runner). Turns the
     // `Workflow`/`Task`/`task_*`/`workflow_progress` events on the live SDK stream into durable
     // `activity/workflow_run.v1` records (record-FIRST via the host `writeSystemRecord` capability,
@@ -626,7 +727,15 @@ export function createClaudeAgentSdkTurnOperations(params: Readonly<{
                 : {}),
             writeMetadata: async (request) => { await params.ctx.sessions.current.writeMetadata(request); },
             fileFollow: params.ctx.agentRuntime.transcripts.fileFollow,
-            runtimeActivityPublisher,
+            onProviderTaskActivity: (activity) => {
+                applyProviderTaskActivity(activity);
+                if (activity.type === 'terminal' && activeProviderTaskId === activity.taskId) {
+                    const remaining = providerActivityLedger.getActiveProviderTasks();
+                    activeProviderTaskId = remaining.length > 0
+                        ? remaining[remaining.length - 1]!.taskId
+                        : null;
+                }
+            },
             logError: (message, error) => { params.ctx.logger.debug(`[ClaudeAgentSdk] ${message}`, { error }); },
         })
         : null;
@@ -635,7 +744,7 @@ export function createClaudeAgentSdkTurnOperations(params: Readonly<{
     // top-level task/todo rows.
     const disposeWorkflowOwnedToolUseIdsRegistration = workflowRuntime
         ? registerClaudeWorkflowOwnedToolUseIds(
-            readString(params.happierSessionId) ?? 'claude-agent-sdk',
+            happierSessionId ?? 'claude-agent-sdk',
             () => workflowRuntime.getWorkflowOwnedAgentToolUseIds(),
         )
         : null;
@@ -647,23 +756,57 @@ export function createClaudeAgentSdkTurnOperations(params: Readonly<{
             backendId: 'claude',
             agentId: 'claude',
             getCurrentClaudeSessionId: () => providerSessionId,
-            writeMetadataUpdate: async (request) => { await params.ctx.sessions.current.writeMetadata(request); },
-            injectGoalCommand: async (message) => { await operations.sendTurnPrompt(message); },
+            ...(params.publishGoalWorkState
+                ? { publishWorkStateSnapshot: params.publishGoalWorkState }
+                : { writeMetadataUpdate: async (request) => { await params.ctx.sessions.current.writeMetadata(request); } }),
+            injectGoalCommand: async (message) => { await operations.sendProviderTurnPrompt(message); },
             logError: (message, error) => { params.ctx.logger.debug(`[ClaudeAgentSdk] ${message}`, { error }); },
         })
         : null;
     let goalStatusTail: ClaudeAgentSdkGoalStatusTail | null = null;
+    const retiringGoalStatusTails = new Set<Promise<void>>();
+    let lastEffectiveModelEvidenceKey: string | null = null;
+
+    function publishEffectiveModel(evidence: ClaudeEffectiveModelEvidence): void {
+        const modelId = readString(evidence.modelId);
+        if (!modelId) return;
+        const contextWindowTokens = readNonnegativeInteger(evidence.contextWindowTokens);
+        const key = `${modelId}|${contextWindowTokens ?? ''}`;
+        if (key === lastEffectiveModelEvidenceKey) return;
+        lastEffectiveModelEvidenceKey = key;
+        const published = Object.freeze({
+            modelId,
+            ...(contextWindowTokens && contextWindowTokens > 0 ? { contextWindowTokens } : {}),
+        });
+        for (const listener of effectiveModelListeners) listener(published);
+    }
+
+    function retireGoalStatusTail(tail: ClaudeAgentSdkGoalStatusTail): Promise<void> {
+        const retirement = tail.dispose().catch(() => undefined).finally(() => {
+            retiringGoalStatusTails.delete(retirement);
+        });
+        retiringGoalStatusTails.add(retirement);
+        return retirement;
+    }
 
     // Narrow side-follow of the persisted transcript JSONL for the file-only `goal_status`
-    // attachments (not present on the live SDK stream). Started lazily once the Claude session id
-    // is known, since the transcript path is `<projectPath>/<providerSessionId>.jsonl`.
+    // attachments (not present on the live SDK stream). The path is admitted only after the
+    // authenticated SessionStart candidate has exact accepted-prompt materialization proof.
     function ensureGoalStatusTail(): void {
-        if (!goalRuntime || goalStatusTail || !providerSessionId) return;
-        const goalSource = goalRuntime.source;
-        const transcriptPath = join(
-            getClaudeProjectPath(params.directory, resolveClaudeConfigDirOverride({ ...params.launchEnv })),
-            `${providerSessionId}.jsonl`,
+        if (!goalRuntime || goalStatusTail) return;
+        const transcriptPath = promotedTranscriptPath ?? (
+            params.enableSessionResumability !== true && providerSessionId
+                ? join(
+                    getClaudeProjectPath(
+                        params.directory,
+                        resolveClaudeConfigDirOverride({ ...params.launchEnv }),
+                    ),
+                    `${providerSessionId}.jsonl`,
+                )
+                : null
         );
+        if (!transcriptPath) return;
+        const goalSource = goalRuntime.source;
         goalStatusTail = createClaudeAgentSdkGoalStatusTail({
             ctx: params.ctx,
             transcriptPath,
@@ -671,18 +814,103 @@ export function createClaudeAgentSdkTurnOperations(params: Readonly<{
         });
     }
 
+    const resumeIdentityOwner = params.enableSessionResumability === true && happierSessionId
+        ? createClaudeAgentSdkResumeIdentityOwner({
+            ctx: params.ctx,
+            onProviderSessionId: observeProviderSessionId,
+            onTranscriptCandidateActivated: ({ transcriptPath }) => {
+                if (promotedTranscriptPath === null || promotedTranscriptPath === transcriptPath) return;
+                resumableProviderSessionId = null;
+                pendingResumeProviderSessionId = null;
+                clearPromotedTranscriptForRekey();
+            },
+            onTranscriptPromoted: async ({ providerSessionId: provenProviderSessionId, transcriptPath, isCurrent }) => {
+                if (!isCurrent() || providerSessionId !== provenProviderSessionId) return;
+                if (!isCurrent() || providerSessionId !== provenProviderSessionId) return;
+                resumableProviderSessionId = provenProviderSessionId;
+                pendingResumeProviderSessionId = null;
+                if (promotedTranscriptPath !== transcriptPath) {
+                    const previousGoalStatusTail = goalStatusTail;
+                    goalStatusTail = null;
+                    if (previousGoalStatusTail) {
+                        await retireGoalStatusTail(previousGoalStatusTail);
+                    }
+                }
+                if (!isCurrent() || providerSessionId !== provenProviderSessionId) return;
+                promotedTranscriptPath = transcriptPath;
+                ensureGoalStatusTail();
+            },
+        })
+        : null;
+
+    async function ensureSessionHookPluginDir(): Promise<string | null> {
+        if (!happierSessionId) return null;
+        if (sessionHookPluginDir) return sessionHookPluginDir;
+        if (sessionHookSetupPromise) return await sessionHookSetupPromise;
+
+        sessionHookSetupPromise = (async () => {
+            const sessionHookSecret = randomUUID();
+            const server = await params.ctx.agentRuntime.sessionHooks.startServer({
+                providerId: 'claude',
+                sessionId: happierSessionId,
+                lifecycle: { kind: 'session', sessionId: happierSessionId },
+                sessionHookSecret,
+                onSessionHook: async (providerSessionId, payload) => {
+                    observeProviderTaskActivity(payload, providerSessionId);
+                    await resumeIdentityOwner?.observeSessionHook(providerSessionId, payload);
+                },
+            });
+            sessionHookServer = server;
+            try {
+                const assets = await params.ctx.agentRuntime.sessionHooks.resolveForwarderAssets();
+                const hooks = buildClaudeHookPluginHooks({
+                    port: server.port,
+                    nodeExecutable: assets.nodeExecutable,
+                    sessionForwarderScript: assets.sessionForwarderScript,
+                    ...(server.sessionHookSecretFile
+                        ? { sessionHookSecretFile: server.sessionHookSecretFile }
+                        : {}),
+                });
+                const manifest = buildClaudeHookPluginManifest({ instanceId: happierSessionId });
+                sessionHookPluginDir = await params.ctx.agentRuntime.sessionHooks.createPluginDir({
+                    providerId: 'claude',
+                    lifecycle: { kind: 'session', sessionId: happierSessionId },
+                    files: [
+                        { path: '.claude-plugin/plugin.json', json: manifest },
+                        { path: 'hooks/hooks.json', json: hooks },
+                    ],
+                });
+                return sessionHookPluginDir;
+            } catch (error) {
+                sessionHookServer = null;
+                await server.dispose().catch(() => undefined);
+                throw error;
+            }
+        })().finally(() => {
+            sessionHookSetupPromise = null;
+        });
+        return await sessionHookSetupPromise;
+    }
+
     function observeSessionWorkStateMessage(message: SDKMessage): void {
         if (!sessionWorkStateEnabled) return;
         // ONE live channel, two provider-clean sources: workflow activity + goal capability.
-        workflowRuntime?.observeTranscriptMessage(message);
+        workflowRuntime?.observeTranscriptMessage(message, {
+            historicalReplay: isReplayClaudeAgentSdkMessage(message),
+        });
         goalRuntime?.source.observeTranscriptMessage(message);
     }
 
-    function publishRuntimeEvent(event: RuntimeEventV1 | null): void {
+    function publishRuntimeEvent(event: ClaudeProviderEvent | null): void {
         if (!event) return;
         for (const listener of Array.from(listeners)) {
             listener(event);
         }
+    }
+
+    function publishUsageObservation(observation: ClaudeUsageObservation | null): void {
+        if (!observation) return;
+        for (const listener of usageObservationListeners) listener(observation);
     }
 
     async function requestAndPublishContextUsage(turnQuery: ClaudeSdkQuery): Promise<boolean> {
@@ -697,7 +925,7 @@ export function createClaudeAgentSdkTurnOperations(params: Readonly<{
                 observedAtMs: Date.now(),
             });
             if (!snapshot) return false;
-            publishRuntimeEvent(RuntimeEventV1Schema.parse({
+            publishRuntimeEvent(ClaudeProviderEventSchema.parse({
                 sessionId: readRuntimeEventSessionId(),
                 emittedAtMs: snapshot.observedAtMs,
                 kind: 'transcript-agent-message-committed',
@@ -725,18 +953,26 @@ export function createClaudeAgentSdkTurnOperations(params: Readonly<{
     async function requestContextUsageOnDemand(): Promise<boolean> {
         const reusableQuery = activeQuery;
         if (reusableQuery) return await requestAndPublishContextUsage(reusableQuery);
-        if (!providerSessionId) return false;
+        const contextUsageProviderSessionId = params.enableSessionResumability === true
+            ? resumableProviderSessionId ?? pendingResumeProviderSessionId
+            : providerSessionId;
+        if (!contextUsageProviderSessionId) return false;
 
+        const hookPluginDir = await ensureSessionHookPluginDir();
         const idleController = new AbortController();
-        const transientQuery = query(params.ctx, {
+        const transientQuery = queryWithContext(params.queryContext ?? params.ctx.agentRuntime.exec, {
             prompt: createIdlePromptStream(idleController.signal),
             options: {
                 cwd: params.directory,
                 env: params.launchEnv,
                 abort: params.abortSignal,
-                resume: providerSessionId,
+                resume: contextUsageProviderSessionId,
                 ...(currentModelId ? { model: currentModelId } : {}),
-                extraArgs: buildClaudeMcpConfigArgs(params.mcpServers),
+                extraArgs: [
+                    ...(hookPluginDir ? ['--plugin-dir', hookPluginDir, '--include-hook-events'] : []),
+                    ...buildClaudeMcpConfigArgs(params.mcpServers),
+                ],
+                ...params.advancedOptions,
             },
         });
         try {
@@ -747,48 +983,49 @@ export function createClaudeAgentSdkTurnOperations(params: Readonly<{
         }
     }
 
-    function observeProviderTaskActivity(message: SDKMessage): boolean {
-        return observeClaudeProviderTaskActivity({
-            row: message,
+    function applyProviderTaskActivity(activity: ClaudeProviderTaskActivity): void {
+        applyClaudeProviderTaskActivity({
+            activity,
             ledger: providerActivityLedger,
             runtimeActivityPublisher,
             logger: params.ctx.logger,
             logPrefix: '[ClaudeAgentSdk]',
-            onLiveProviderTaskEvidence(taskId) {
-                liveProviderTaskIds.add(taskId);
-            },
-            onProviderTaskSourceActive(sourceId) {
-                providerTaskRuntimeActivitySourceIds.add(sourceId);
-            },
-            onProviderTaskSourceCleared(sourceId) {
-                providerTaskRuntimeActivitySourceIds.delete(sourceId);
-            },
         });
     }
 
-    function reconcileProviderTaskRuntimeActivityForCurrentQuery(reason: string): void {
-        const liveSourceIds = new Set<string>();
-        for (const taskId of providerActivityLedger.getActiveProviderTaskIds()) {
-            if (!liveProviderTaskIds.has(taskId)) continue;
-            const sourceId = buildClaudeProviderTaskRuntimeActivitySourceId(taskId);
-            if (sourceId) liveSourceIds.add(sourceId);
+    function observeProviderTaskActivity(message: unknown, contextualSessionId?: string): boolean {
+        const event = normalizeClaudeProviderTaskEvent(
+            message,
+            contextualSessionId ?? providerSessionId ?? undefined,
+        );
+        let didObserveActivity = false;
+        if (event.activity) {
+            didObserveActivity = true;
+            applyProviderTaskActivity(event.activity);
         }
 
-        const updates: Promise<void>[] = [];
-        for (const sourceId of [...providerTaskRuntimeActivitySourceIds]) {
-            if (liveSourceIds.has(sourceId)) continue;
-            providerTaskRuntimeActivitySourceIds.delete(sourceId);
-            updates.push(runtimeActivityPublisher.clearSource(sourceId));
+        if (event.interruptTarget?.type === 'active') {
+            activeProviderTaskId = event.interruptTarget.taskId;
+        } else if (
+            event.interruptTarget?.type === 'terminal'
+            && activeProviderTaskId === event.interruptTarget.taskId
+        ) {
+            const remaining = providerActivityLedger.getActiveProviderTasks();
+            activeProviderTaskId = remaining.length > 0
+                ? remaining[remaining.length - 1]!.taskId
+                : null;
         }
-        for (const sourceId of liveSourceIds) {
-            providerTaskRuntimeActivitySourceIds.add(sourceId);
-            updates.push(runtimeActivityPublisher.markSourceActive({
-                sourceId,
-                sourceKind: 'provider_detached_task',
-            }));
-        }
-        if (updates.length === 0) return;
-        publishRuntimeActivityUpdate(Promise.all(updates).then(() => undefined), reason);
+        return didObserveActivity;
+    }
+
+    function reconcileProviderTaskRuntimeActivityForCurrentQuery(reason: string): void {
+        publishClaudeProviderTaskInventory({
+            ledger: providerActivityLedger,
+            runtimeActivityPublisher,
+            logger: params.ctx.logger,
+            logPrefix: '[ClaudeAgentSdk]',
+            reason,
+        });
     }
 
     type SuccessfulTurn = Readonly<{
@@ -800,7 +1037,10 @@ export function createClaudeAgentSdkTurnOperations(params: Readonly<{
         turnQuery: ClaudeSdkQuery;
     }>;
 
-    function completeSuccessfulTurn(turn: SuccessfulTurn): void {
+    function completeSuccessfulTurn(
+        turn: SuccessfulTurn,
+        publishTerminal: (event: ClaudeProviderEvent) => void,
+    ): void {
         if (activeQuery === turn.turnQuery) activeQuery = null;
         if (activeCompletion === turn.completion) {
             activeCompletion = null;
@@ -815,6 +1055,11 @@ export function createClaudeAgentSdkTurnOperations(params: Readonly<{
                 modelId: currentModelId,
             }));
         }
+        publishUsageObservation(buildClaudeSdkResultUsageObservation({
+            modelId: currentModelId ?? currentProviderModel?.id ?? 'unknown',
+            ...(currentProviderModel ? { modelSource: 'provider' } : {}),
+            result: turn.message,
+        }));
         if (params.publishTranscriptMessages === true && !turn.publishedTranscriptText) {
             const resultTranscriptEvent = mapResultTranscriptEvent({
                 message: turn.message,
@@ -823,44 +1068,56 @@ export function createClaudeAgentSdkTurnOperations(params: Readonly<{
             });
             if (resultTranscriptEvent) publishRuntimeEvent(resultTranscriptEvent);
         }
-        if (params.publishSdkMessages === true || params.publishTranscriptMessages === true) {
-            publishRuntimeEvent(mapSdkRuntimeEvent({
-                message: turn.message,
-                sessionId: params.publishTranscriptMessages === true
-                    ? readString(params.happierSessionId) ?? providerSessionId ?? 'claude-agent-sdk'
-                    : providerSessionId ?? readString(params.happierSessionId) ?? 'claude-agent-sdk',
-                turnId: currentTurnId ?? 'claude-agent-sdk-turn',
-                providerFailure: turn.providerFailure,
-            }));
-        }
+        publishTerminal(mapSdkRuntimeEvent({
+            message: turn.message,
+            sessionId: readRuntimeEventSessionId(),
+            turnId: currentTurnId ?? 'claude-agent-sdk-turn',
+            providerFailure: turn.providerFailure,
+        })!);
         reconcileProviderTaskRuntimeActivityForCurrentQuery('foreground-result');
         turn.completion.resolve();
     }
 
     function completeProviderBackgroundObservation(turnQuery: ClaudeSdkQuery): void {
         backgroundQueries.delete(turnQuery);
-        if (backgroundQueries.size === 0 && !providerActivityLedger.hasActiveProviderTasks()) {
-            providerActivityLedger.clearProviderTasks();
-            clearRuntimeActivitySources('background-observation-complete');
+        if (backgroundQueries.size === 0) {
+            reconcileProviderTaskRuntimeActivityForCurrentQuery('background-observation-complete');
         }
     }
 
     function publishProviderSessionId(nextSessionId: string): void {
-        publishClaudeProviderSessionId({
-            ctx: params.ctx,
-            state: providerSessionPublicationState,
-            nextSessionId,
-            reason: 'claude-agent-sdk-session-id',
-            logPrefix: '[ClaudeAgentSdk]',
-        });
+        publishRuntimeEvent(ClaudeProviderEventSchema.parse({
+            sessionId: readString(params.happierSessionId) ?? nextSessionId,
+            emittedAtMs: Date.now(),
+            kind: 'session-id-publish',
+            publishedSessionId: nextSessionId,
+            source: 'claude-agent-sdk',
+        }));
+    }
+
+    function clearPromotedTranscriptForRekey(): void {
+        const previousTranscriptPath = promotedTranscriptPath;
+        if (!previousTranscriptPath) return;
+        promotedTranscriptPath = null;
+        const previousGoalStatusTail = goalStatusTail;
+        goalStatusTail = null;
+        if (previousGoalStatusTail) void retireGoalStatusTail(previousGoalStatusTail);
     }
 
     function observeProviderSessionId(value: unknown): void {
         const nextSessionId = readString(value);
         if (!nextSessionId) return;
+        const identityChanged = providerSessionId !== nextSessionId;
+        if (identityChanged) {
+            resumableProviderSessionId = null;
+            if (pendingResumeProviderSessionId !== nextSessionId) {
+                pendingResumeProviderSessionId = null;
+            }
+        }
         providerSessionId = nextSessionId;
+        if (identityChanged) clearPromotedTranscriptForRekey();
         publishProviderSessionId(nextSessionId);
-        ensureGoalStatusTail();
+        if (params.enableSessionResumability !== true) ensureGoalStatusTail();
     }
 
     function readRuntimeEventSessionId(): string {
@@ -892,42 +1149,103 @@ export function createClaudeAgentSdkTurnOperations(params: Readonly<{
     const claudeSubscriptionRuntimeAuthSelection = readClaudeSubscriptionSelectionFromEnv(params.launchEnv);
     const refreshRuntimeAuth = params.ctx.sessions.current.auth?.services?.refreshRuntimeAuth;
     let lastClaudeSdkOAuthTokenFingerprint: string | null = null;
+    let pendingClaudeSdkOAuthRefreshAttempt: Readonly<{
+        expectedCredentialRevision: ConnectedServiceCredentialRevisionV1;
+        refreshAttemptId: string;
+    }> | null = null;
     const getClaudeSdkOAuthToken = (
         claudeSubscriptionRuntimeAuthSelection && typeof refreshRuntimeAuth === 'function'
     )
         ? async (options: { signal: AbortSignal }): Promise<string | null> => {
             // The SDK calls this again after a delivered token fails; carry only the previous
             // token fingerprint so the daemon can adopt a newer stored token before forcing rotation.
+            const expectedCredentialRevision = claudeSubscriptionRuntimeAuthSelection.credentialRevision;
+            const refreshAttempt = pendingClaudeSdkOAuthRefreshAttempt?.expectedCredentialRevision === expectedCredentialRevision
+                ? pendingClaudeSdkOAuthRefreshAttempt
+                : Object.freeze({
+                    expectedCredentialRevision,
+                    refreshAttemptId: `claude-auth-refresh-${randomUUID()}`,
+                });
+            pendingClaudeSdkOAuthRefreshAttempt = refreshAttempt;
             const refreshRequest = {
                 agentId: 'claude',
                 serviceId: 'claude-subscription',
+                refreshAttemptId: refreshAttempt.refreshAttemptId,
                 targetId: readString(params.happierSessionId),
                 env: params.launchEnv,
                 selection: claudeSubscriptionRuntimeAuthSelection,
+                expectedCredentialRevision,
                 reason: 'claude_agent_sdk_oauth_token_refresh',
                 failingAccessTokenFingerprint: lastClaudeSdkOAuthTokenFingerprint,
             };
             const result = await refreshRuntimeAuth(refreshRequest, { signal: options.signal });
             const accessToken = readRefreshedAccessToken(result);
-            lastClaudeSdkOAuthTokenFingerprint = computeClaudeSubscriptionAccessTokenFingerprint(accessToken);
+            if (accessToken) {
+                pendingClaudeSdkOAuthRefreshAttempt = null;
+                lastClaudeSdkOAuthTokenFingerprint = computeClaudeSubscriptionAccessTokenFingerprint(accessToken);
+            }
             return accessToken;
         }
         : null;
 
     async function consumeTurnMessages(turnQuery: ClaudeSdkQuery, completion: DeferredCompletion): Promise<void> {
         let sawResult = false;
+        let terminalPublished = false;
         let messageSequence = 0;
         let publishedTranscriptText = false;
         let providerFailure: ClaudeProviderFailureEvidence | null = null;
         let foregroundCompleted = false;
         const toolNameByCallId = new Map<string, string>();
+        const publishTerminal = (event: ClaudeProviderEvent): void => {
+            if (terminalPublished) return;
+            terminalPublished = true;
+            publishRuntimeEvent(event);
+        };
+        const publishFailedTerminal = (
+            error: Error,
+            source: ClaudeSessionRuntimeIssueSource,
+            code: string,
+        ): void => {
+            publishTerminal(ClaudeProviderEventSchema.parse({
+                sessionId: readRuntimeEventSessionId(),
+                emittedAtMs: Date.now(),
+                kind: 'turn-failed',
+                turnId: currentTurnId ?? 'claude-agent-sdk-turn',
+                issue: buildClaudeSessionRuntimeIssue({
+                    code,
+                    source,
+                    occurredAt: Date.now(),
+                    agentId: 'claude',
+                    sanitizedPreview: sanitizeProviderErrorPreview(error.message),
+                }),
+            }));
+        };
+        const publishCancelledTerminal = (reason: string): void => {
+            publishTerminal(ClaudeProviderEventSchema.parse({
+                sessionId: readRuntimeEventSessionId(),
+                emittedAtMs: Date.now(),
+                kind: 'turn-cancelled',
+                turnId: currentTurnId ?? 'claude-agent-sdk-turn',
+                reason,
+            }));
+        };
         try {
             for await (const message of turnQuery) {
                 messageSequence += 1;
-                if (isSdkSystemMessage(message)) {
+                const assistantModelId = readSdkAssistantModelId(message);
+                if (assistantModelId) publishEffectiveModel({ modelId: assistantModelId });
+                if (isClaudeProviderActivityHookObservationLoss(message, providerSessionId)) {
+                    providerActivityLedger.noteObservationLost();
+                    reconcileProviderTaskRuntimeActivityForCurrentQuery('hook-response-observation-lost');
+                }
+                if (
+                    params.enableSessionResumability !== true
+                    && isSdkSystemMessage(message)
+                    && message.subtype !== 'hook_response'
+                ) {
                     observeProviderSessionId(message.session_id);
                 }
-                if (isSdkResultMessage(message)) {
+                if (params.enableSessionResumability !== true && isSdkResultMessage(message)) {
                     observeProviderSessionId(message.session_id);
                 }
                 const nextProviderFailure = readProviderFailureEvidence(message);
@@ -946,7 +1264,7 @@ export function createClaudeAgentSdkTurnOperations(params: Readonly<{
                 const isSuccessfulResultMessage = isSdkResultMessage(message)
                     && message.subtype === 'success'
                     && message.is_error !== true;
-                if (params.publishSdkMessages === true && !isSuccessfulResultMessage) {
+                if (params.publishSdkMessages === true && !isSdkResultMessage(message)) {
                     const runtimeEvent = mapSdkRuntimeEvent({
                         message,
                         sessionId: providerSessionId ?? readString(params.happierSessionId) ?? 'claude-agent-sdk',
@@ -966,6 +1284,14 @@ export function createClaudeAgentSdkTurnOperations(params: Readonly<{
                         publishRuntimeEvent(transcriptEvent);
                     }
                 }
+                if (isSdkAssistantMessage(message)) {
+                    const usage = readSdkAssistantUsage(message);
+                    publishUsageObservation(buildClaudeAssistantUsageObservation({
+                        modelId: currentModelId,
+                        ...(currentProviderModel ? { modelSource: 'provider' } : {}),
+                        usage: usage ?? {},
+                    }));
+                }
                 if (params.publishSdkMessages === true || params.publishTranscriptMessages === true) {
                     for (const runtimeEvent of mapSdkToolRuntimeEvents({
                         message,
@@ -977,6 +1303,22 @@ export function createClaudeAgentSdkTurnOperations(params: Readonly<{
                     }
                 }
                 if (!isSdkResultMessage(message)) continue;
+                const modelUsage = isRecord(message.modelUsage) ? message.modelUsage : null;
+                if (modelUsage) {
+                    const modelIds = Object.keys(modelUsage)
+                        .map(readString)
+                        .filter((value): value is string => value !== null);
+                    const effectiveModelId = currentModelId && modelIds.includes(currentModelId)
+                        ? currentModelId
+                        : modelIds.length === 1 ? modelIds[0]! : null;
+                    if (effectiveModelId) {
+                        const usage = isRecord(modelUsage[effectiveModelId]) ? modelUsage[effectiveModelId] : null;
+                        publishEffectiveModel({
+                            modelId: effectiveModelId,
+                            contextWindowTokens: readNonnegativeInteger(usage?.contextWindow),
+                        });
+                    }
+                }
                 sawResult = true;
                 // Drain any pending workflow activity at turn end so durable records + headline
                 // land promptly (best-effort; a publish failure must not affect turn completion).
@@ -1000,7 +1342,7 @@ export function createClaudeAgentSdkTurnOperations(params: Readonly<{
                             return false;
                         })
                         : null;
-                    completeSuccessfulTurn(successfulTurn);
+                    completeSuccessfulTurn(successfulTurn, publishTerminal);
                     foregroundCompleted = true;
                     if (shouldContinueForBackgroundTasks) {
                         backgroundQueries.add(turnQuery);
@@ -1016,47 +1358,53 @@ export function createClaudeAgentSdkTurnOperations(params: Readonly<{
                         activeCompletion = null;
                         turnInFlight = false;
                     }
-                    providerActivityLedger.clearProviderTasks();
-                    clearRuntimeActivitySources('result-error');
-                    if (params.publishTranscriptMessages === true) {
-                        publishRuntimeEvent(mapSdkRuntimeEvent({
-                            message,
-                            sessionId: readString(params.happierSessionId) ?? providerSessionId ?? 'claude-agent-sdk',
-                            turnId: currentTurnId ?? 'claude-agent-sdk-turn',
-                            providerFailure,
-                        }));
-                    }
+                    reconcileProviderTaskRuntimeActivityForCurrentQuery('result-error');
+                    publishTerminal(mapSdkRuntimeEvent({
+                        message,
+                        sessionId: readRuntimeEventSessionId(),
+                        turnId: currentTurnId ?? 'claude-agent-sdk-turn',
+                        providerFailure,
+                    })!);
                     const resultError = createResultError(message, providerFailure);
                     lastTurnCompletionFailure = resultError;
                     completion.reject(resultError);
                 }
                 return;
             }
+            if (!sawResult || providerActivityLedger.hasActiveProviderTasks()) {
+                providerActivityLedger.noteObservationLost();
+                reconcileProviderTaskRuntimeActivityForCurrentQuery('query-observation-lost');
+            }
             if (!sawResult) {
                 const noResultError = createClaudeSdkNoResultError(turnQuery.readExitResult());
+                const cancellationReason = cancelledQueries.get(turnQuery);
+                if (cancellationReason) publishCancelledTerminal(cancellationReason);
+                else publishFailedTerminal(noResultError, 'agent_process_exit', 'claude_sdk_no_result');
                 lastTurnCompletionFailure = noResultError;
                 completion.reject(noResultError);
             }
         } catch (error) {
+            providerActivityLedger.noteObservationLost();
+            reconcileProviderTaskRuntimeActivityForCurrentQuery('query-error-observation-lost');
             if (foregroundCompleted) {
                 backgroundQueries.delete(turnQuery);
                 if (backgroundQueries.size === 0) {
-                    providerActivityLedger.clearProviderTasks();
-                    clearRuntimeActivitySources('background-query-error');
+                    reconcileProviderTaskRuntimeActivityForCurrentQuery('background-query-error');
                 }
                 return;
             }
-            providerActivityLedger.clearProviderTasks();
-            clearRuntimeActivitySources('turn-error');
+            reconcileProviderTaskRuntimeActivityForCurrentQuery('turn-error');
             const turnError = error instanceof Error ? error : new Error(String(error));
+            const cancellationReason = cancelledQueries.get(turnQuery);
+            if (cancellationReason) publishCancelledTerminal(cancellationReason);
+            else publishFailedTerminal(turnError, 'stream_error', 'claude_sdk_stream_error');
             lastTurnCompletionFailure = turnError;
             completion.reject(turnError);
         } finally {
             if (backgroundQueries.has(turnQuery)) {
                 backgroundQueries.delete(turnQuery);
                 if (backgroundQueries.size === 0 && !turnInFlight) {
-                    providerActivityLedger.clearProviderTasks();
-                    clearRuntimeActivitySources('turn-finally');
+                    reconcileProviderTaskRuntimeActivityForCurrentQuery('turn-finally');
                 }
             }
             if (activeQuery === turnQuery) activeQuery = null;
@@ -1067,100 +1415,233 @@ export function createClaudeAgentSdkTurnOperations(params: Readonly<{
         }
     }
 
-    const operations: ClaudeRuntimeTurnOperations = {
-        beginTurnLifecycle() {
+    let onPromptDeliveryOutcome: ClaudeProviderPromptDeliveryOutcomeCallback | null = null;
+    const operations: ClaudeRuntimeTurnOperations & Readonly<{
+        subscribeCanonicalAgentSessionEvents: typeof runtimeActivityPublisher.subscribe;
+        subscribeEffectiveModel: ClaudeEffectiveModelEvidenceSubscription;
+        subscribeUsageObservation: ClaudeUsageObservationSubscription;
+        setOnPromptDeliveryOutcome(handler: ClaudeProviderPromptDeliveryOutcomeCallback | null): void;
+    }> = {
+        subscribeCanonicalAgentSessionEvents: runtimeActivityPublisher.subscribe,
+        subscribeEffectiveModel(listener) {
+            effectiveModelListeners.add(listener);
+            return () => effectiveModelListeners.delete(listener);
+        },
+        subscribeUsageObservation(listener) {
+            usageObservationListeners.add(listener);
+            return () => usageObservationListeners.delete(listener);
+        },
+        beginProviderTurn() {
             turnSequence += 1;
             currentTurnId = `claude-agent-sdk-turn-${turnSequence}`;
         },
-        async startOrLoadSession(opts) {
+        async startProviderSession(opts) {
             const requestedResumeId = readString(opts?.resumeId);
             if (requestedResumeId && providerSessionId === null) pendingResumeProviderSessionId = requestedResumeId;
             return providerSessionId;
         },
-        async sendTurnPrompt(prompt) {
+        async sendProviderTurnPrompt(prompt, meta) {
+            if (runtimeDisposed) {
+                return {
+                    kind: 'rejected_before_effect',
+                    reason: 'Claude Agent SDK runtime is disposed.',
+                };
+            }
             if (turnInFlight) {
-                throw new Error('Claude Agent SDK turn is already running.');
+                return {
+                    kind: 'rejected_before_effect',
+                    reason: 'Claude Agent SDK turn is already running.',
+                };
             }
-            lastTurnCompletionFailure = null;
-            liveProviderTaskIds.clear();
-            if (backgroundQueries.size === 0) {
-                providerActivityLedger.clearProviderTasks();
-                clearRuntimeActivitySources('new-turn-no-background-query');
-            }
-            const completion = createDeferred();
-            completion.promise.catch(() => undefined);
-            const turnQuery = query(params.ctx, {
-                prompt: resolvePromptInput(prompt, toolPermissionPolicy),
-                options: {
-                    cwd: params.directory,
-                    env: params.launchEnv,
-                    abort: params.abortSignal,
-                    ...(toolPermissionPolicy
-                        ? {}
-                        : {
-                            permissionMode: resolveClaudePermissionModeFromRuntimeMode({
-                                permissionMode: currentPermissionMode,
-                            }),
-                        }),
-                    ...(currentModelId ? { model: currentModelId } : {}),
-                    ...(currentFallbackModel ? { fallbackModel: currentFallbackModel } : {}),
-                    ...(currentEffort ? { effort: currentEffort } : {}),
-                    ...(providerSessionId ?? pendingResumeProviderSessionId
-                        ? { resume: providerSessionId ?? pendingResumeProviderSessionId ?? undefined }
-                        : {}),
-                    extraArgs: buildClaudeMcpConfigArgs(params.mcpServers),
-                    // Ultracode rides the single inline --settings overlay; an unhonorable
-                    // request resolves to OFF (gate = xhigh capability, [1m]-tolerant).
-                    ...(currentUltracode && isClaudeUltracodeSupportedModelId(currentModelId)
-                        ? { settingsJson: JSON.stringify({ ultracode: true }) }
-                        : {}),
-                    ...(toolPermissionPolicy === 'read_only'
-                        ? {}
-                        : { canCallTool: resolvePermission }),
-                    ...(getClaudeSdkOAuthToken ? { getOAuthToken: getClaudeSdkOAuthToken } : {}),
-                },
-                onMessageReceived(message) {
-                    void recordClaudeRuntimeProviderAccountUsageSnapshot({
-                        ctx: params.ctx,
-                        evidence: message,
-                        sessionId: readString(params.happierSessionId) ?? providerSessionId ?? 'claude-agent-sdk',
-                        launchEnv: params.launchEnv,
-                    });
-                },
-            });
-            activeCompletion = completion;
-            activeQuery = turnQuery;
-            disposeQuery = turnQuery;
             turnInFlight = true;
-            void consumeTurnMessages(turnQuery, completion);
+            try {
+                lastTurnCompletionFailure = null;
+                reconcileProviderTaskRuntimeActivityForCurrentQuery('new-turn');
+                const completion = createDeferred();
+                completion.promise.catch(() => undefined);
+                const hookPluginDir = await ensureSessionHookPluginDir();
+                if (runtimeDisposed) {
+                    throw new Error('Claude Agent SDK runtime is disposed.');
+                }
+                await resumeIdentityOwner?.settleCurrentCandidate();
+                if (runtimeDisposed) {
+                    throw new Error('Claude Agent SDK runtime is disposed.');
+                }
+                resumeIdentityOwner?.recordSubmittedPrompt(prompt);
+                const resumeProviderSessionId = params.enableSessionResumability === true
+                    ? resumableProviderSessionId ?? pendingResumeProviderSessionId
+                    : providerSessionId ?? pendingResumeProviderSessionId;
+                const publishTransportOutcome = (
+                    outcome: ClaudeRuntimePromptSubmissionOutcome,
+                ): void => {
+                    const localIds = [
+                        ...(readClaudePendingLocalId(meta?.localId)
+                            ? [readClaudePendingLocalId(meta?.localId)!]
+                            : []),
+                        ...(meta?.localIds ?? [])
+                            .map(readClaudePendingLocalId)
+                            .filter((value): value is string => value !== null),
+                    ].filter((value, index, values) => values.indexOf(value) === index);
+                    if (localIds.length !== 1) return;
+                    const userMessageSeq = Number.isSafeInteger(meta?.userMessageSeq) && meta!.userMessageSeq! >= 0
+                        ? meta!.userMessageSeq!
+                        : null;
+                    const userMessageSeqs = (meta?.userMessageSeqs ?? [])
+                        .filter((seq, index, values) => Number.isSafeInteger(seq) && seq >= 0 && values.indexOf(seq) === index);
+                    const identity = {
+                        localInputId: localIds[0]!,
+                        userMessageSeq,
+                        ...(userMessageSeqs.length === 0 ? {} : { userMessageSeqs }),
+                    };
+                    if (outcome.kind === 'accepted') {
+                        onPromptDeliveryOutcome?.({
+                            type: 'input-accepted',
+                            ...identity,
+                            delivery: { kind: 'newTurn', turnId: currentTurnId ?? 'claude-agent-sdk-turn' },
+                        });
+                    } else if (outcome.kind === 'rejected_before_effect') {
+                        const message = sanitizeProviderErrorPreview(outcome.reason);
+                        onPromptDeliveryOutcome?.({
+                            type: 'input-rejected',
+                            ...identity,
+                            diagnostic: {
+                                code: 'claude_sdk_prompt_rejected_before_transport',
+                                severity: 'error',
+                                ...(message ? { message } : {}),
+                            },
+                            retryable: true,
+                        });
+                    } else if (outcome.kind === 'effect_may_have_occurred') {
+                        const message = sanitizeProviderErrorPreview(outcome.reason);
+                        onPromptDeliveryOutcome?.({
+                            type: 'input-custody-unknown',
+                            ...identity,
+                            issue: {
+                                code: 'claude_sdk_prompt_transport_ambiguous',
+                                severity: 'error',
+                                ...(message ? { message } : {}),
+                            },
+                        });
+                    }
+                };
+                const turnQuery = queryWithContext(params.queryContext ?? params.ctx.agentRuntime.exec, {
+                    prompt: resolvePromptInput(prompt, toolPermissionPolicy),
+                    options: {
+                        cwd: params.directory,
+                        env: params.launchEnv,
+                        abort: params.abortSignal,
+                        ...(toolPermissionPolicy
+                            ? {}
+                            : {
+                                permissionMode: resolveClaudePermissionModeFromRuntimeMode({
+                                    permissionMode: currentPermissionMode,
+                                }),
+                            }),
+                        ...(currentModelId ? { model: currentModelId } : {}),
+                        ...(currentFallbackModel ? { fallbackModel: currentFallbackModel } : {}),
+                        ...(currentEffort ? { effort: currentEffort } : {}),
+                        ...(resumeProviderSessionId ? { resume: resumeProviderSessionId } : {}),
+                        extraArgs: [
+                            ...(hookPluginDir ? ['--plugin-dir', hookPluginDir, '--include-hook-events'] : []),
+                            ...buildClaudeMcpConfigArgs(params.mcpServers),
+                        ],
+                        // Ultracode rides the single inline --settings overlay; an unhonorable
+                        // request resolves to OFF (gate = xhigh capability, [1m]-tolerant).
+                        ...(currentUltracode && isClaudeUltracodeSupportedModelId(currentModelId, currentProviderModel)
+                            ? { settingsJson: JSON.stringify({ ultracode: true }) }
+                            : {}),
+                        ...(toolPermissionPolicy === 'read_only'
+                            ? {}
+                            : { canCallTool: resolvePermission }),
+                        ...(getClaudeSdkOAuthToken ? { getOAuthToken: getClaudeSdkOAuthToken } : {}),
+                        ...params.advancedOptions,
+                    },
+                    onMessageReceived(message) {
+                        void recordClaudeRuntimeProviderAccountUsageSnapshot({
+                            ctx: params.ctx,
+                            evidence: message,
+                            sessionId: readString(params.happierSessionId) ?? providerSessionId ?? 'claude-agent-sdk',
+                            launchEnv: params.launchEnv,
+                        });
+                    },
+                });
+                activeCompletion = completion;
+                activeQuery = turnQuery;
+                disposeQuery = turnQuery;
+                void consumeTurnMessages(turnQuery, completion);
+                const transportOutcome = await turnQuery.promptTransportOutcome;
+                const outcome: ClaudeRuntimePromptSubmissionOutcome = transportOutcome.kind === 'accepted'
+                    ? transportOutcome
+                    : {
+                        kind: transportOutcome.kind,
+                        reason: sanitizeProviderErrorPreview(transportOutcome.error.message)
+                            ?? 'Claude SDK prompt transport failed.',
+                    };
+                publishTransportOutcome(outcome);
+                return outcome;
+            } catch (error) {
+                turnInFlight = false;
+                const outcome: ClaudeRuntimePromptSubmissionOutcome = {
+                    kind: 'rejected_before_effect',
+                    reason: sanitizeProviderErrorPreview(
+                        error instanceof Error ? error.message : String(error),
+                    ) ?? 'Claude SDK prompt setup failed.',
+                };
+                return outcome;
+            }
         },
-        async steerInFlightTurn(message, meta) {
-            await operations.sendTurnPrompt(message, meta);
+        async steerProviderTurn(message, meta) {
+            return await operations.sendProviderTurnPrompt(message, meta);
         },
-        async waitForTurnCompletion(opts) {
+        async waitForProviderTurnCompletion(opts) {
             const timeoutMs = readTimeoutMs(opts);
             if (!activeCompletion && lastTurnCompletionFailure) throw lastTurnCompletionFailure;
             await withTimeout(activeCompletion?.promise ?? Promise.resolve(), timeoutMs);
         },
-        subscribeRuntimeEvents(handler) {
+        subscribeProviderEvents(handler) {
             listeners.add(handler);
             return () => {
                 listeners.delete(handler);
             };
         },
-        async respondToPermission(requestId, approved) {
+        setOnPromptDeliveryOutcome(handler) {
+            onPromptDeliveryOutcome = handler;
+        },
+        async respondToProviderPermission(requestId, approved) {
             return respondToClaudePermission({ ctx: params.ctx, provider: 'claude', requestId, approved });
         },
-        async cancelTurn() {
-            const turnQuery = activeQuery;
+        async cancelProviderTurn() {
+            const turnQuery = activeQuery
+                ?? (activeProviderTaskId
+                    ? Array.from(backgroundQueries).at(-1) ?? disposeQuery
+                    : null);
             if (!turnQuery) return;
+            cancelledQueries.set(turnQuery, 'user_request');
+            const providerTaskId = activeProviderTaskId;
+            if (providerTaskId) {
+                try {
+                    await turnQuery.stopTask(providerTaskId);
+                    if (activeProviderTaskId === providerTaskId) activeProviderTaskId = null;
+                    if (activeQuery === turnQuery) activeQuery = null;
+                    backgroundQueries.delete(turnQuery);
+                    await turnQuery.dispose();
+                    return;
+                } catch (error) {
+                    params.ctx.logger.debug(
+                        '[ClaudeAgentSdk] Targeted provider task cancellation failed; interrupting query',
+                        { error },
+                    );
+                }
+            }
             await turnQuery.interrupt();
+            if (activeQuery === turnQuery) activeQuery = null;
+            backgroundQueries.delete(turnQuery);
             await turnQuery.dispose();
         },
-        readSessionIdentity() {
+        readProviderIdentity() {
             return { sessionId: providerSessionId };
         },
-        async updateSessionRuntimeConfig(update) {
+        async updateProviderConfiguration(update) {
             const configOption = isRecord(update.configOption) ? update.configOption : null;
             if (readString(configOption?.id) === CLAUDE_CONTEXT_USAGE_REFRESH_CONFIG_OPTION_ID) {
                 try {
@@ -1176,6 +1657,9 @@ export function createClaudeAgentSdkTurnOperations(params: Readonly<{
                     return { status: 'failed' as const, reason: 'context_usage_refresh_failed' };
                 }
             }
+            const nextProviderModel = update.providerBinding === undefined
+                ? undefined
+                : update.providerBinding.model;
             const permissionMode = readRuntimeConfigString(update.permissionMode);
             if (permissionMode) {
                 currentPermissionMode = permissionMode;
@@ -1206,55 +1690,59 @@ export function createClaudeAgentSdkTurnOperations(params: Readonly<{
             if (ultracode !== undefined) {
                 currentUltracode = ultracode;
             }
+            if (nextProviderModel) {
+                currentProviderModel = nextProviderModel;
+            }
         },
-        async resetOrDisposeRuntime() {
-            const queriesToDispose = new Set<ClaudeSdkQuery>();
-            if (activeQuery) queriesToDispose.add(activeQuery);
-            if (disposeQuery) queriesToDispose.add(disposeQuery);
-            for (const queryToDispose of backgroundQueries) {
-                queriesToDispose.add(queryToDispose);
-            }
-            activeQuery = null;
-            disposeQuery = null;
-            activeCompletion = null;
-            lastTurnCompletionFailure = null;
-            backgroundQueries.clear();
-            providerActivityLedger.clearProviderTasks();
-            clearRuntimeActivitySources('runtime-dispose');
-            turnInFlight = false;
-            if (workflowRuntime) {
-                await workflowRuntime.flush().catch(() => undefined);
-                workflowRuntime.dispose();
-            }
-            disposeWorkflowOwnedToolUseIdsRegistration?.();
-            const tail = goalStatusTail;
-            goalStatusTail = null;
-            if (tail) await tail.dispose().catch(() => undefined);
-            await Promise.all(Array.from(queriesToDispose, async (queryToDispose) => {
-                await queryToDispose.dispose().catch(() => undefined);
-            }));
+        async disposeProviderSession() {
+            if (runtimeDisposePromise) return await runtimeDisposePromise;
+            runtimeDisposed = true;
+            runtimeDisposePromise = (async () => {
+                const queriesToDispose = new Set<ClaudeSdkQuery>();
+                if (activeQuery) {
+                    cancelledQueries.set(activeQuery, 'runtime_disposed');
+                    queriesToDispose.add(activeQuery);
+                }
+                if (disposeQuery) queriesToDispose.add(disposeQuery);
+                for (const queryToDispose of backgroundQueries) {
+                    queriesToDispose.add(queryToDispose);
+                }
+                activeQuery = null;
+                disposeQuery = null;
+                activeProviderTaskId = null;
+                activeCompletion = null;
+                lastTurnCompletionFailure = null;
+                backgroundQueries.clear();
+                reconcileProviderTaskRuntimeActivityForCurrentQuery('runtime-dispose');
+                turnInFlight = false;
+                await sessionHookSetupPromise?.catch(() => undefined);
+                if (workflowRuntime) {
+                    await workflowRuntime.flush().catch(() => undefined);
+                    workflowRuntime.dispose();
+                }
+                disposeWorkflowOwnedToolUseIdsRegistration?.();
+                await resumeIdentityOwner?.dispose().catch(() => undefined);
+                const tail = goalStatusTail;
+                goalStatusTail = null;
+                if (tail) await retireGoalStatusTail(tail);
+                await Promise.all(Array.from(retiringGoalStatusTails));
+                const hookPluginDir = sessionHookPluginDir;
+                sessionHookPluginDir = null;
+                if (hookPluginDir) {
+                    await params.ctx.agentRuntime.sessionHooks.disposePluginDir(hookPluginDir).catch(() => undefined);
+                }
+                const hookServer = sessionHookServer;
+                sessionHookServer = null;
+                if (hookServer) await hookServer.dispose().catch(() => undefined);
+                await Promise.all(Array.from(queriesToDispose, async (queryToDispose) => {
+                    await queryToDispose.dispose().catch(() => undefined);
+                }));
+                effectiveModelListeners.clear();
+                usageObservationListeners.clear();
+            })();
+            await runtimeDisposePromise;
         },
     };
 
-    return createClaudePublicSessionRuntime(operations);
-}
-
-export async function bindClaudeAgentSdkFallbackSession(params: Readonly<{
-    ctx: PluginContextV1;
-    sessionParams: CreateSessionRuntimeParamsV1;
-}>): Promise<SessionRuntimeCreateResultV1> {
-    const directory = readClaudeRuntimeDirectory(params.sessionParams);
-    const launchEnv = readClaudeRuntimeEnv(params.sessionParams);
-    const initialPermissionMode = readString(params.sessionParams.permissionMode) ?? 'default';
-
-    return createClaudeAgentSdkTurnOperations({
-        ctx: params.ctx,
-        directory,
-        launchEnv,
-        permissionMode: initialPermissionMode,
-        happierSessionId: readString(params.sessionParams.sessionId),
-        mcpServers: params.sessionParams.mcpServers,
-        publishTranscriptMessages: true,
-        enableSessionWorkState: true,
-    });
+    return operations;
 }

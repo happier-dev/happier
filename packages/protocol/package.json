@@ -15,60 +15,77 @@
       "default": "./dist/tools/v2/index.js"
     },
     "./spawnSession": {
-      "types": "./dist/spawnSession.d.ts",
-      "default": "./dist/spawnSession.js"
+      "types": "./dist/sessions/spawnSession.d.ts",
+      "default": "./dist/sessions/spawnSession.js"
     },
     "./rpc": {
-      "types": "./dist/rpc.d.ts",
-      "default": "./dist/rpc.js"
+      "types": "./dist/rpc/index.d.ts",
+      "default": "./dist/rpc/index.js"
+    },
+    "./marketplace/internal": {
+      "types": "./dist/marketplace/internal.d.ts",
+      "default": "./dist/marketplace/internal.js"
     },
     "./actions": {
       "types": "./dist/actions/index.d.ts",
       "default": "./dist/actions/index.js"
+    },
+    "./actions/permissionPrivilege": {
+      "types": "./dist/actions/permissionPrivilege.d.ts",
+      "default": "./dist/actions/permissionPrivilege.js"
     },
     "./actions/actionSpecs": {
       "types": "./dist/actions/actionSpecs.d.ts",
       "default": "./dist/actions/actionSpecs.js"
     },
     "./rpcErrors": {
-      "types": "./dist/rpcErrors.d.ts",
-      "default": "./dist/rpcErrors.js"
+      "types": "./dist/rpc/errors.d.ts",
+      "default": "./dist/rpc/errors.js"
     },
     "./checklists": {
-      "types": "./dist/checklists.d.ts",
-      "default": "./dist/checklists.js"
+      "types": "./dist/checklists/index.d.ts",
+      "default": "./dist/checklists/index.js"
     },
     "./installables": {
-      "types": "./dist/installables.d.ts",
-      "default": "./dist/installables.js"
+      "types": "./dist/installables/index.d.ts",
+      "default": "./dist/installables/index.js"
     },
     "./installablesPolicy": {
-      "types": "./dist/installablesPolicy.d.ts",
-      "default": "./dist/installablesPolicy.js"
+      "types": "./dist/installables/policy.d.ts",
+      "default": "./dist/installables/policy.js"
+    },
+    "./testing/accountScopedCipherFixtures": {
+      "types": "./dist/testing/accountScopedCipherFixtures.d.ts",
+      "default": "./dist/testing/accountScopedCipherFixtures.js"
+    },
+    "./host/legacyConnectedServiceQuotaCompatibility": {
+      "types": "./dist/host/legacyConnectedServiceQuotaCompatibility.d.ts",
+      "default": "./dist/host/legacyConnectedServiceQuotaCompatibility.js"
     },
     "./capabilities": {
-      "types": "./dist/capabilities.d.ts",
-      "default": "./dist/capabilities.js"
+      "types": "./dist/capabilities/index.d.ts",
+      "default": "./dist/capabilities/index.js"
     },
     "./socketRpc": {
-      "types": "./dist/socketRpc.d.ts",
-      "default": "./dist/socketRpc.js"
+      "types": "./dist/rpc/socket.d.ts",
+      "import": "./dist/rpc/socket.js",
+      "default": "./dist/rpc/socket.js"
     },
     "./changes": {
-      "types": "./dist/changes.d.ts",
-      "default": "./dist/changes.js"
+      "types": "./dist/changes/index.d.ts",
+      "default": "./dist/changes/index.js"
     },
     "./transferRelayV2": {
-      "types": "./dist/transferRelayV2/index.d.ts",
-      "default": "./dist/transferRelayV2/index.js"
+      "types": "./dist/transfers/relay/v2/index.d.ts",
+      "default": "./dist/transfers/relay/v2/index.js"
     },
     "./transferSessions": {
-      "types": "./dist/transferSessions/index.d.ts",
-      "default": "./dist/transferSessions/index.js"
+      "types": "./dist/transfers/sessions/index.d.ts",
+      "default": "./dist/transfers/sessions/index.js"
     },
     "./updates": {
-      "types": "./dist/updates.d.ts",
-      "default": "./dist/updates.js"
+      "types": "./dist/updates/index.d.ts",
+      "default": "./dist/updates/index.js"
     },
     "./workspaces": {
       "types": "./dist/workspaces/index.d.ts",
@@ -78,17 +95,17 @@
       "types": "./dist/sessions/index.d.ts",
       "default": "./dist/sessions/index.js"
     },
-    "./sessionFolders": {
-      "types": "./dist/sessionFolders/index.d.ts",
-      "default": "./dist/sessionFolders/index.js"
-    },
     "./runtime": {
       "types": "./dist/runtime/index.d.ts",
       "default": "./dist/runtime/index.js"
     },
-    "./providers/runtimeDescriptorContributionsV1": {
-      "types": "./dist/providers/runtimeDescriptorContributionsV1.d.ts",
-      "default": "./dist/providers/runtimeDescriptorContributionsV1.js"
+    "./filesystem/portablePathSegment": {
+      "types": "./dist/filesystem/portablePathSegment.d.ts",
+      "default": "./dist/filesystem/portablePathSegment.js"
+    },
+    "./agents/runtimeDescriptorContributionsV1": {
+      "types": "./dist/agents/runtimeDescriptorContributionsV1.d.ts",
+      "default": "./dist/agents/runtimeDescriptorContributionsV1.js"
     },
     "./backends": {
       "types": "./dist/backends/index.d.ts",
@@ -101,6 +118,22 @@
     "./plugins/ui": {
       "types": "./dist/plugins/ui/index.d.ts",
       "default": "./dist/plugins/ui/index.js"
+    },
+    "./plugins/hooks": {
+      "types": "./dist/plugins/hooks/catalog.d.ts",
+      "default": "./dist/plugins/hooks/catalog.js"
+    },
+    "./plugins/contributions/browser": {
+      "types": "./dist/plugins/contributions/browser/index.d.ts",
+      "default": "./dist/plugins/contributions/browser/index.js"
+    },
+    "./plugins/contributions/ui": {
+      "types": "./dist/plugins/contributions/ui/index.d.ts",
+      "default": "./dist/plugins/contributions/ui/index.js"
+    },
+    "./voice/modelPacks/contributionV1": {
+      "types": "./dist/voice/modelPacks/contributionV1.d.ts",
+      "default": "./dist/voice/modelPacks/contributionV1.js"
     }
   },
   "files": [
@@ -109,7 +142,8 @@
     "README.md"
   ],
   "scripts": {
-    "build": "node -e \"const fs=require('node:fs');fs.rmSync('dist', { recursive: true, force: true });fs.rmSync('.tsbuildinfo', { force: true });\" && node scripts/generate-embedded-feature-policies.mjs && node ../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.json",
+    "tsc": "node ../../scripts/workspaces/runTypeScriptCli.mjs",
+    "build": "node scripts/generate-embedded-feature-policies.mjs && node ../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
     "test": "node ../../node_modules/vitest/vitest.mjs run --config ../../vitest.config.ts",
     "pretypecheck": "node scripts/generate-embedded-feature-policies.mjs",
     "postinstall:real": "yarn -s build",
@@ -118,9 +152,11 @@
   },
   "dependencies": {
     "@noble/hashes": "^1.8.0",
+    "ajv": "^8.17.1",
     "base64-js": "^1.5.1",
     "tweetnacl": "^1.0.3",
     "zod": "4.3.6",
+    "semver": "^7.7.3",
     "zod-to-json-schema": "3.25.1"
   },
   "devDependencies": {

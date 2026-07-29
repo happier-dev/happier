@@ -88,6 +88,35 @@ export const AgentProviderRequirementsV1Schema = z.object({
 });
 export type AgentProviderRequirementsV1 = z.infer<typeof AgentProviderRequirementsV1Schema>;
 
+export const PROVIDER_COMPATIBILITY_REASON_CODES_V1 = [
+  'no_compatible_protocol',
+  'no_auth_unsupported',
+  'credential_transport_unavailable',
+  'optional_credential_no_auth_unsupported',
+  'capability_streaming_unsupported',
+  'capability_streaming_unknown',
+  'capability_toolRoundTrips_unsupported',
+  'capability_toolRoundTrips_unknown',
+  'capability_statefulResponses_unsupported',
+  'capability_statefulResponses_unknown',
+  'capability_reasoningControls_unsupported',
+  'capability_reasoningControls_unknown',
+  'model_required_for_capability_resolution',
+  'model_capability_toolRoundTrips_unsupported',
+  'model_capability_toolRoundTrips_unknown',
+  'model_capability_reasoningControls_unsupported',
+  'model_capability_reasoningControls_unknown',
+  'compatibility_override_incompatible',
+  'compatibility_override_experimental',
+  'compatibility_evidence_missing',
+  'model_capability_evidence_required',
+  'agent_external_providers_unsupported',
+  'adapter_contract_invalid',
+] as const;
+
+export const ProviderCompatibilityReasonCodeV1Schema = z.enum(PROVIDER_COMPATIBILITY_REASON_CODES_V1);
+export type ProviderCompatibilityReasonCodeV1 = z.infer<typeof ProviderCompatibilityReasonCodeV1Schema>;
+
 export const ProviderBindingCompatibilityV1Schema = z.discriminatedUnion('status', [
   z.object({
     status: z.literal('verified'),
@@ -97,7 +126,7 @@ export const ProviderBindingCompatibilityV1Schema = z.discriminatedUnion('status
   z.object({
     status: z.literal('experimental'),
     selectedProtocol: ProviderWireProtocolSchema,
-    reasons: z.array(z.string().trim().min(1)).min(1),
+    reasons: z.array(ProviderCompatibilityReasonCodeV1Schema).min(1),
     confirmationScope: z.discriminatedUnion('kind', [
       z.object({ kind: z.literal('connection') }).strict(),
       z.object({ kind: z.literal('model'), modelId: z.string().trim().min(1).max(512) }).strict(),
@@ -106,7 +135,7 @@ export const ProviderBindingCompatibilityV1Schema = z.discriminatedUnion('status
   }).strict(),
   z.object({
     status: z.literal('incompatible'),
-    reasons: z.array(z.string().trim().min(1)).min(1),
+    reasons: z.array(ProviderCompatibilityReasonCodeV1Schema).min(1),
   }).strict(),
 ]);
 export type ProviderBindingCompatibilityV1 = z.infer<typeof ProviderBindingCompatibilityV1Schema>;

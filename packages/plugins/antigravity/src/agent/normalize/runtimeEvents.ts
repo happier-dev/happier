@@ -1,4 +1,4 @@
-import type { RuntimeEventV1 } from '@happier-dev/plugin-sdk';
+import type { RuntimeEventV1 } from '@happier-dev/protocol/runtime';
 
 import type { AntigravityStep } from './types.js';
 

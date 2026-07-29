@@ -57,22 +57,16 @@ const FEATURE_CATALOG_DEFINITION = {
     dependencies: ['voice.agent'],
     representation: 'client',
   },
-  connectedServices: {
-    description: 'Connected services token sink and subscription/OAuth surfaces.',
-    defaultFailMode: 'fail_closed',
-    dependencies: [],
-    representation: 'server',
-  },
   'connectedServices.quotas': {
     description: 'Connected services quota snapshots (informational usage meters) surfaces and runtime.',
     defaultFailMode: 'fail_closed',
-    dependencies: ['connectedServices'],
+    dependencies: [],
     representation: 'server',
   },
   'connectedServices.accountGroups': {
     description: 'Connected service account groups and member management APIs.',
     defaultFailMode: 'fail_closed',
-    dependencies: ['connectedServices'],
+    dependencies: [],
     representation: 'server',
   },
   'connectedServices.accountFallback': {
@@ -391,22 +385,6 @@ const FEATURE_CATALOG_DEFINITION = {
   },
   'plugins.ui.hostedWeb': {
     description: 'Hosted web plugin UI surfaces embedded through host-owned preview frames and bridges.',
-    defaultFailMode: 'fail_closed',
-    dependencies: ['plugins.ui'],
-    representation: 'server',
-  },
-  // RN-WEB-LOADER / LEDGER DEC-6: embeddedWeb is RETIRED from the public
-  // authoring story (superseded by reactNative mode, which now also renders
-  // on web) — this gate stays live only to fail-closed-govern any residual
-  // ALREADY-INSTALLED embeddedWeb artifact's runtime rendering path; no new
-  // embeddedWeb contribution can be authored (`defineSurfaceContribution`'s
-  // `embeddedWeb` arm was removed). No `.devHotReload` child gate exists for
-  // it — that leaf was built then retired before it ever had a runtime
-  // consumer (RN-SCAFFOLD landed the SDK/protocol foundation; DEC-6 retired
-  // the authoring surface before the CLI-projection/host-loader half was
-  // built), so there is nothing to keep enabled here.
-  'plugins.ui.embeddedWebBundles': {
-    description: 'Retired (LEDGER DEC-6): governs only already-installed embeddedWeb plugin UI bundle rendering, not new authoring.',
     defaultFailMode: 'fail_closed',
     dependencies: ['plugins.ui'],
     representation: 'server',

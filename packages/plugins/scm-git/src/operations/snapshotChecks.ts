@@ -1,4 +1,4 @@
-import type { ScmWorkingSnapshot } from '@happier-dev/plugin-sdk/scm';
+import type { ScmWorkingSnapshot } from '@happier-dev/plugin-sdk/experimental/scm';
 import type { ScmBackendContext } from '../types.js';
 
 import { getGitSnapshot } from '../repository.js';

@@ -1,50 +1,36 @@
-import { definePluginManifest, type PluginManifestV2, type ScmBackendContribution } from '@happier-dev/plugin-sdk';
+import type { PluginManifest } from '@happier-dev/plugin-sdk/manifest';
+import type { ScmBackendContribution } from '@happier-dev/plugin-sdk/experimental/manifest/scmBackends';
 
 import { SAPLING_INSTALLABLE_DEP_ID, SAPLING_INSTALLABLE_DESCRIPTOR } from './installables/saplingInstallable.js';
 import { SAPLING_SCM_BACKEND_ID } from './backend.js';
-import { SAPLING_SCM_BACKEND_CAPABILITIES } from './capabilities.js';
 
-export const SAPLING_SCM_BACKEND_CONTRIBUTION = {
+export const SAPLING_SCM_BACKEND_CONTRIBUTION = Object.freeze({
     id: SAPLING_SCM_BACKEND_ID,
-    displayName: 'Sapling',
+    title: 'Sapling',
     description: 'Sapling local source control backend.',
-    repoModes: ['.sl', '.git'],
-    detection: {
-        rootMarkers: ['.sl'],
-    },
-    capabilities: SAPLING_SCM_BACKEND_CAPABILITIES,
-    installableDependencies: [SAPLING_INSTALLABLE_DEP_ID],
-    tooling: {
-        commands: [{ installableKey: SAPLING_INSTALLABLE_DEP_ID, command: 'sl' }],
-        systemFirst: true,
-        managedFallback: false,
-    },
-    safetyConstraints: {
-        mutatesWorkingTree: true,
-        requiresUserConfirmationForDestructiveWrites: true,
-    },
-} satisfies ScmBackendContribution;
+    kind: 'sapling',
+    capabilities: ['detect', 'fetch', 'status', 'diff', 'commit', 'push'],
+} satisfies ScmBackendContribution);
 
-export const PLUGIN_MANIFEST = definePluginManifest({
+export const PLUGIN_MANIFEST = {
     schemaVersion: 2,
     id: 'happier.scm.backend.sapling',
     version: '0.0.0',
     displayName: 'Sapling SCM backend',
     description: 'Provides the first-party local Sapling SCM backend with audited limited capabilities.',
-    source: {
-        kind: 'package',
-        locator: '@happier-dev/plugins-scm-sapling',
-        trustPolicy: 'local_trusted',
-        installPolicy: 'link',
-        resolvedVersion: '0.0.0',
+    engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
+    entrypoints: { daemon: './dist/index.js' },
+    hostAccess: {
+        required: [{
+            id: 'sapling-process',
+            capability: 'process',
+            reason: 'Run the declared Sapling executable for local source-control operations.',
+            scope: { executables: [{ kind: 'managedDependency', id: SAPLING_INSTALLABLE_DEP_ID }] },
+        }],
+        optional: [],
     },
-    engines: { happier: '^0.0.0' },
-    activationEvents: ['onScmProvider:sapling'],
-    uses: ['scmBackends', 'managedDependencies'],
-    entrypoints: { main: './dist/index.js' },
-    permissions: { required: [], optional: [] },
     contributes: {
         managedDependencies: [SAPLING_INSTALLABLE_DESCRIPTOR],
         scmBackends: [SAPLING_SCM_BACKEND_CONTRIBUTION],
     },
-} satisfies PluginManifestV2);
+} satisfies PluginManifest;

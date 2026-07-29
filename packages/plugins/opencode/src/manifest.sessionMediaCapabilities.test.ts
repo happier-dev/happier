@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { PluginBackendCapabilitiesV1Schema } from '@happier-dev/plugin-sdk/manifest';
+import { PluginBackendCapabilitiesV1Schema } from '@happier-dev/plugin-sdk/experimental/manifest/agents';
 
 import { PLUGIN_MANIFEST } from './manifest.js';
 

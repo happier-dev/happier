@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 
-import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/plugin-sdk/sessions';
+import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/plugin-sdk/experimental/sessions';
 
 type SessionHeader = Readonly<{
   type: 'session';
@@ -22,6 +22,7 @@ type SessionEntry = Readonly<{
 export type OhMyPiSessionSnapshot = Readonly<{
   items: readonly ExternalSessionTranscriptRawMessageV1[];
   tailCursor: string;
+  leafEntryId: string | null;
   title: string | null;
   workingDirectory: string | null;
   createdAtMs: number | null;
@@ -180,7 +181,7 @@ function projectAssistantMessage(params: Readonly<{
       continue;
     }
 
-    if (blockType === 'tool_use' && typeof block.id === 'string' && typeof block.name === 'string') {
+    if ((blockType === 'toolCall' || blockType === 'tool_use') && typeof block.id === 'string' && typeof block.name === 'string') {
       out.push({
         id: stableId,
         localId: stableId,
@@ -190,7 +191,13 @@ function projectAssistantMessage(params: Readonly<{
           content: {
             type: 'acp',
             agentId: 'ohMyPi',
-            data: { type: 'tool-call', callId: block.id, id: stableId, name: block.name, input: block.input ?? {} },
+            data: {
+              type: 'tool-call',
+              callId: block.id,
+              id: stableId,
+              name: block.name,
+              input: blockType === 'toolCall' ? block.arguments ?? {} : block.input ?? {},
+            },
           },
         },
       });
@@ -220,6 +227,36 @@ function projectAssistantMessage(params: Readonly<{
     }
   }
   return out;
+}
+
+function projectToolResultMessage(params: Readonly<{
+  sessionFilePath: string;
+  entryId: string;
+  createdAtMs: number;
+  message: Record<string, unknown>;
+}>): ExternalSessionTranscriptRawMessageV1[] {
+  const toolCallId = asString(params.message.toolCallId);
+  if (!toolCallId) return [];
+  const stableId = buildStableId(params.sessionFilePath, params.entryId, 'toolResult');
+  return [{
+    id: stableId,
+    localId: stableId,
+    createdAtMs: params.createdAtMs,
+    raw: {
+      role: 'agent',
+      content: {
+        type: 'acp',
+        agentId: 'ohMyPi',
+        data: {
+          type: 'tool-result',
+          callId: toolCallId,
+          id: stableId,
+          output: params.message.content ?? [],
+          ...(typeof params.message.isError === 'boolean' ? { isError: params.message.isError } : {}),
+        },
+      },
+    },
+  }];
 }
 
 export function encodeOhMyPiTranscriptCursor(index: number): string {
@@ -266,13 +303,18 @@ export function projectOhMyPiSessionSnapshotToDirectMessages(params: Readonly<{
   sessionId: string;
   lines: readonly unknown[];
 }>): ProjectedSnapshot {
-  const header = (asRecord(params.lines[0]) ?? null) as SessionHeader | null;
-  const title = asString(header?.title) ?? null;
+  const records = params.lines.map((line) => asRecord(line));
+  const headerIndex = records.findIndex((record) => record?.type === 'session');
+  const header = (headerIndex >= 0 ? records[headerIndex] : null) as SessionHeader | null;
+  const titleSlot = records
+    .slice(0, Math.max(0, headerIndex))
+    .find((record) => record?.type === 'title');
+  const title = asString(titleSlot?.title) ?? asString(header?.title) ?? null;
   const workingDirectory = asString(header?.cwd) ?? null;
   const createdAtMs = parseTimestampMs(header?.timestamp);
 
   const entries: SessionEntry[] = params.lines
-    .slice(1)
+    .slice(headerIndex >= 0 ? headerIndex + 1 : params.lines.length)
     .map((line) => (asRecord(line) ?? {}) as SessionEntry)
     .filter((line) => typeof line.type === 'string' && typeof line.id === 'string');
   const byId = new Map<string, SessionEntry>();
@@ -311,6 +353,10 @@ export function projectOhMyPiSessionSnapshotToDirectMessages(params: Readonly<{
       }
       if (role === 'assistant') {
         items.push(...projectAssistantMessage({ sessionFilePath: params.sessionFilePath, entryId, createdAtMs: entryCreatedAtMs, message }));
+        continue;
+      }
+      if (role === 'toolResult') {
+        items.push(...projectToolResultMessage({ sessionFilePath: params.sessionFilePath, entryId, createdAtMs: entryCreatedAtMs, message }));
       }
       continue;
     }
@@ -339,6 +385,7 @@ export function projectOhMyPiSessionSnapshotToDirectMessages(params: Readonly<{
 
   return {
     items,
+    leafEntryId: typeof leaf?.id === 'string' ? leaf.id : null,
     title,
     workingDirectory,
     createdAtMs: createdAtMs > 0 ? createdAtMs : null,

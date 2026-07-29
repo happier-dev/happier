@@ -1,35 +1,30 @@
 import { isSidechainSessionHook } from '../../../hooks/sidechain.js';
 import type {
-  PluginContextV1,
-  SessionProviderTranscriptPublishRequestV1,
-  TranscriptFileFollowHandleV1,
-  TranscriptFileFollowStartAtV1,
-} from '@happier-dev/plugin-sdk';
+  AgentSessionHooksService,
+  AgentTranscriptFileFollowInput,
+  AgentTranscriptFileFollowHandle,
+  AgentTranscriptFileFollowService,
+} from '@happier-dev/plugin-sdk/agent-runtime';
 
+import {
+  classifyClaudeNativeTranscriptRow,
+  type ClaudeNativeTranscriptRowClassification,
+} from '../../../transcripts/nativeSemanticProjection.js';
 import { parseRawJsonLinesLine } from '../../../transcripts/parseRawJsonLines.js';
 import { createClaudeJsonlResetReplaySuppressor } from '../../../transcripts/jsonlReplaySuppression.js';
 import type { RawJSONLines } from '../../../transcripts/rawJsonLines.js';
-import {
-  isClaudeInternalTranscriptMessage,
-  readClaudeVisibleCompactSummaryText,
-  readClaudeVisibleLocalCommandOutputText,
-  readClaudeVisibleSlashCommandText,
-} from '../../../transcripts/visibility.js';
-import { CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID } from './constants.js';
+import type { ClaudeRuntimeLogger } from '../../dependencies.js';
 
 export const CLAUDE_UNIFIED_TRANSCRIPT_FINAL_DRAIN_TIMEOUT_MS = 750;
 
-const STOP_HOOK_FEEDBACK_PREFIX = 'Stop hook feedback:\n';
-const CLAUDE_SYNTHETIC_NO_RESPONSE_TEXT = 'No response requested.';
-
 type ProviderTranscriptContext = Readonly<{
   agentRuntime: Readonly<{
-    sessionHooks: Pick<PluginContextV1['agentRuntime']['sessionHooks'], 'publishProviderTranscript'>;
+    sessionHooks: Pick<AgentSessionHooksService, 'publishProviderTranscript'>;
     transcripts: Readonly<{
-      fileFollow: Pick<PluginContextV1['agentRuntime']['transcripts']['fileFollow'], 'follow'>;
+      fileFollow: Pick<AgentTranscriptFileFollowService, 'follow'>;
     }>;
   }>;
-  logger: Pick<PluginContextV1['logger'], 'debug' | 'warn'>;
+  logger: Pick<ClaudeRuntimeLogger, 'debug' | 'warn'>;
 }>;
 
 export type ClaudeUnifiedProviderTranscriptPublisher = Readonly<{
@@ -44,7 +39,7 @@ export type ClaudeUnifiedProviderTranscriptPublisher = Readonly<{
 
 export type ClaudeUnifiedProviderTranscriptPublisherParams = Readonly<{
   ctx: ProviderTranscriptContext;
-  sessionId: string;
+  onPublishPayload?: (payload: ClaudeProviderTranscriptPayload) => void | Promise<void>;
   /**
    * Optional observer invoked for EVERY parsed raw transcript row, BEFORE the
    * visibility filter that drops `attachment`/`system` rows from the rendered
@@ -54,13 +49,48 @@ export type ClaudeUnifiedProviderTranscriptPublisherParams = Readonly<{
    * disturbing the lifecycle/message-commit channel. Must be allocation-light
    * and non-throwing; it runs inside the shared file-follow row callback.
    */
-  onObserveRow?: (row: RawJSONLines) => void;
+  onObserveRow?: (
+    row: RawJSONLines,
+    observation: Readonly<{
+      providerSessionId: string;
+      historicalReplay: boolean;
+    }>,
+  ) => void;
 }>;
 
 type TranscriptBinding = Readonly<{
   providerSessionId: string;
   transcriptPath: string;
+  queuedCommandEvidence: NativeQueuedCommandEvidenceState;
 }>;
+
+type NativeQueuedCommandOperation = Readonly<{
+  operation: 'enqueue' | 'remove';
+  content: string;
+  sessionId: string;
+  timestamp: string;
+  timestampMs: number;
+}>;
+
+type NativeQueuedCommandConsumption = Readonly<{
+  prompt: string;
+  sessionId: string;
+  transcriptKey: string;
+}>;
+
+type NativeQueuedCommandCustody = {
+  content: string;
+  enqueuedAtMs: number;
+  episodeOrder: number;
+  removedAtMs: number | null;
+  sessionId: string;
+};
+
+type NativeQueuedCommandEvidenceState = {
+  custodyEpisodes: NativeQueuedCommandCustody[];
+  consumedTranscriptKeys: Set<string>;
+  nextEpisodeOrder: number;
+};
 
 export type ClaudeUnifiedProviderTranscriptAcceptedBinding = Readonly<{
   providerSessionId: string;
@@ -73,7 +103,10 @@ export type ClaudeUnifiedProviderTranscriptBindResult =
   | Readonly<{ status: 'deferred'; binding: ClaudeUnifiedProviderTranscriptAcceptedBinding }>
   | Readonly<{ status: 'ignored' }>;
 
-type SessionProviderTranscriptEventPayloadV1 = SessionProviderTranscriptPublishRequestV1;
+export type ClaudeProviderTranscriptPayload = Parameters<
+  AgentSessionHooksService['publishProviderTranscript']
+>[0];
+type TranscriptFileFollowStartAtV1 = AgentTranscriptFileFollowInput['startAt'];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -111,41 +144,8 @@ function normalizeFinalDrainTimeoutMs(value: number | undefined): number {
   return Math.floor(value);
 }
 
-function readMessageRecord(row: RawJSONLines): Record<string, unknown> | null {
-  const message = isRecord(row.message) ? row.message : null;
-  return message;
-}
-
-function readTextContent(value: unknown): string | null {
+function readExactNonBlankString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value : null;
-}
-
-function readTextContentParts(value: unknown): string | null {
-  const directText = readTextContent(value);
-  if (directText !== null) return directText;
-  if (!Array.isArray(value)) return null;
-  const parts: string[] = [];
-  for (const item of value) {
-    if (!isRecord(item)) continue;
-    const text = readTextContent(item.text);
-    if (text) parts.push(text);
-  }
-  return parts.length > 0 ? parts.join('') : null;
-}
-
-function readSingleTextContentBlock(value: unknown): string | null {
-  if (!Array.isArray(value) || value.length !== 1) return null;
-  const block = value[0];
-  if (!isRecord(block) || block.type !== 'text') return null;
-  return typeof block.text === 'string' ? block.text : null;
-}
-
-function isClaudeSyntheticNoResponseRow(row: RawJSONLines): boolean {
-  if (row.type !== 'assistant') return false;
-  if (readString((row as Record<string, unknown>).model) !== '<synthetic>') return false;
-  const message = readMessageRecord(row);
-  if (!message) return false;
-  return readSingleTextContentBlock(message.content)?.trim() === CLAUDE_SYNTHETIC_NO_RESPONSE_TEXT;
 }
 
 function readTurnId(row: Readonly<Record<string, unknown>>): string | undefined {
@@ -157,14 +157,19 @@ function withOptionalTurnId<T extends Record<string, unknown>>(row: Readonly<Rec
   return turnId ? { ...payload, turnId } : payload;
 }
 
+function withNativeBoundaryTurnId<T extends Record<string, unknown>>(
+  classification: ClaudeNativeTranscriptRowClassification,
+  payload: T,
+): T & { turnId?: string } {
+  const turnId = classification.nativeBoundary?.id ?? undefined;
+  return turnId ? { ...payload, turnId } : payload;
+}
+
 function createBasePayload(params: Readonly<{
-  sessionId: string;
   providerSessionId: string;
   row: Readonly<Record<string, unknown>>;
-}>): Pick<SessionProviderTranscriptEventPayloadV1, 'providerId' | 'sessionId' | 'providerSessionId' | 'providerPayload'> {
+}>): Pick<ClaudeProviderTranscriptPayload, 'providerSessionId' | 'providerPayload'> {
   return {
-    providerId: CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID,
-    sessionId: params.sessionId,
     providerSessionId: params.providerSessionId,
     providerPayload: params.row,
   };
@@ -179,120 +184,212 @@ function parseJsonRecord(line: string): Record<string, unknown> | null {
   }
 }
 
-function readQueuedCommandPrompt(row: Readonly<Record<string, unknown>>): string | null {
-  if (row.type === 'queue-operation') {
-    if (readString(row.operation) !== 'enqueue') return null;
-    return readTextContent(row.content);
+function createNativeQueuedCommandEvidenceState(): NativeQueuedCommandEvidenceState {
+  return {
+    custodyEpisodes: [],
+    consumedTranscriptKeys: new Set(),
+    nextEpisodeOrder: 0,
+  };
+}
+
+function clearNativeQueuedCommandEvidence(state: NativeQueuedCommandEvidenceState): void {
+  state.custodyEpisodes.length = 0;
+  state.consumedTranscriptKeys.clear();
+  state.nextEpisodeOrder = 0;
+}
+
+function readNativeQueuedCommandOperation(
+  row: Readonly<Record<string, unknown>>,
+): NativeQueuedCommandOperation | null {
+  if (row.type !== 'queue-operation') return null;
+  const operation = row.operation;
+  if (operation !== 'enqueue' && operation !== 'remove') return null;
+  const content = readExactNonBlankString(row.content);
+  const sessionId = readExactNonBlankString(row.sessionId);
+  const timestamp = readExactNonBlankString(row.timestamp);
+  if (!content || !sessionId || !timestamp) return null;
+  const timestampMs = Date.parse(timestamp);
+  if (!Number.isFinite(timestampMs)) return null;
+  return { operation, content, sessionId, timestamp, timestampMs };
+}
+
+function readNativeQueuedCommandConsumption(
+  row: Readonly<Record<string, unknown>>,
+): NativeQueuedCommandConsumption | null {
+  if (row.type !== 'attachment' || row.isSidechain !== false) return null;
+  const attachment = isRecord(row.attachment) ? row.attachment : null;
+  const origin = isRecord(attachment?.origin) ? attachment.origin : null;
+  const prompt = readExactNonBlankString(attachment?.prompt);
+  const sessionId = readExactNonBlankString(row.sessionId);
+  const transcriptUuid = readExactNonBlankString(row.uuid);
+  const parentUuid = readExactNonBlankString(row.parentUuid);
+  const timestamp = readExactNonBlankString(row.timestamp);
+  if (
+    attachment?.type !== 'queued_command'
+    || attachment.commandMode !== 'prompt'
+    || origin?.kind !== 'human'
+    || !prompt
+    || !sessionId
+    || !transcriptUuid
+    || !parentUuid
+    || !timestamp
+    || !Number.isFinite(Date.parse(timestamp))
+  ) return null;
+  return {
+    prompt,
+    sessionId,
+    transcriptKey: `uuid:${transcriptUuid}`,
+  };
+}
+
+function observeNativeQueuedCommandOperation(params: Readonly<{
+  binding: TranscriptBinding;
+  operation: NativeQueuedCommandOperation;
+}>): void {
+  const { binding, operation } = params;
+  if (operation.sessionId !== binding.providerSessionId) return;
+  const evidence = binding.queuedCommandEvidence;
+  if (operation.operation === 'enqueue') {
+    evidence.custodyEpisodes.push({
+      content: operation.content,
+      enqueuedAtMs: operation.timestampMs,
+      episodeOrder: evidence.nextEpisodeOrder++,
+      removedAtMs: null,
+      sessionId: operation.sessionId,
+    });
+    return;
   }
 
-  if (row.type !== 'attachment') return null;
-  const attachment = isRecord(row.attachment) ? row.attachment : null;
-  if (!attachment || readString(attachment.type) !== 'queued_command') return null;
-  return readTextContent(attachment.prompt);
+  const candidate = evidence.custodyEpisodes
+    .filter((custody) => (
+      custody.removedAtMs === null
+      && custody.sessionId === operation.sessionId
+      && custody.content === operation.content
+    ))
+    .sort((left, right) => left.episodeOrder - right.episodeOrder)[0];
+  if (!candidate) return;
+  candidate.removedAtMs = operation.timestampMs;
 }
 
-function mapClaudeRawQueuedCommandRowToProviderTranscriptPayload(params: Readonly<{
-  sessionId: string;
-  providerSessionId: string;
+function prepareNativeQueuedCommandAcceptance(params: Readonly<{
+  binding: TranscriptBinding;
   row: Readonly<Record<string, unknown>>;
-}>): SessionProviderTranscriptEventPayloadV1 | null {
-  const text = readQueuedCommandPrompt(params.row);
-  if (!text) return null;
-  return withOptionalTurnId(params.row, {
-    ...createBasePayload(params),
-    kind: 'queued_command',
-    text,
-  });
+}>): Readonly<{
+  payload: ClaudeProviderTranscriptPayload;
+  markPublished(): void;
+}> | null {
+  const consumption = readNativeQueuedCommandConsumption(params.row);
+  if (!consumption || consumption.sessionId !== params.binding.providerSessionId) return null;
+  const evidence = params.binding.queuedCommandEvidence;
+  if (evidence.consumedTranscriptKeys.has(consumption.transcriptKey)) return null;
+  const custody = evidence.custodyEpisodes
+    .filter((candidate) => (
+      candidate.removedAtMs !== null
+      && candidate.content === consumption.prompt
+      && candidate.sessionId === consumption.sessionId
+    ))
+    .sort((left, right) => left.episodeOrder - right.episodeOrder)[0];
+  if (!custody) return null;
+  return {
+    payload: withOptionalTurnId(params.row, {
+      ...createBasePayload({
+        providerSessionId: params.binding.providerSessionId,
+        row: params.row,
+      }),
+      kind: 'queued_command',
+      text: consumption.prompt,
+    }),
+    markPublished() {
+      evidence.consumedTranscriptKeys.add(consumption.transcriptKey);
+      const custodyIndex = evidence.custodyEpisodes.indexOf(custody);
+      if (custodyIndex >= 0) evidence.custodyEpisodes.splice(custodyIndex, 1);
+    },
+  };
 }
 
-function mapClaudeJsonlRowToProviderTranscriptPayload(params: Readonly<{
-  sessionId: string;
+export function projectClaudeTranscriptRowToProviderPayload(params: Readonly<{
   providerSessionId: string;
   row: RawJSONLines;
   suppressPriorEraTurnClosure: boolean;
-}>): SessionProviderTranscriptEventPayloadV1 | null {
-  const base = createBasePayload(params);
+}>): ClaudeProviderTranscriptPayload | null {
+  const classification = classifyClaudeNativeTranscriptRow(params.row);
+  const normalizedRow = classification.row ?? params.row;
+  const base = createBasePayload({
+    providerSessionId: params.providerSessionId,
+    row: normalizedRow,
+  });
   const visibleBase = {
-    providerId: base.providerId,
-    sessionId: base.sessionId,
     ...(base.providerSessionId ? { providerSessionId: base.providerSessionId } : {}),
   };
-  const compactSummary = readClaudeVisibleCompactSummaryText(params.row);
-  if (compactSummary) {
-    return withOptionalTurnId(params.row, {
+  // Sidechain (subagent) rows are never parent provider-transcript evidence,
+  // including sanitized compact/command rows. External Sessions may still render
+  // those rows through its distinct direct-message contract.
+  if (classification.sidechain) return null;
+
+  if (classification.content.kind === 'compact_summary') {
+    return withOptionalTurnId(normalizedRow, {
       ...visibleBase,
       kind: 'compact_summary',
-      text: compactSummary,
+      text: classification.content.text,
     });
   }
-  const slashCommand = readClaudeVisibleSlashCommandText(params.row);
-  if (slashCommand) {
-    return withOptionalTurnId(params.row, {
+  if (classification.content.kind === 'slash_command') {
+    return withOptionalTurnId(normalizedRow, {
       ...visibleBase,
       kind: 'slash_command',
-      text: slashCommand,
+      text: classification.content.text,
     });
   }
-  const localCommandOutput = readClaudeVisibleLocalCommandOutputText(params.row);
-  if (localCommandOutput) {
-    return withOptionalTurnId(params.row, {
+  if (classification.content.kind === 'local_command_output') {
+    return withOptionalTurnId(normalizedRow, {
       ...visibleBase,
       kind: 'local_command_output',
-      text: localCommandOutput,
+      text: classification.content.text,
     });
   }
-  if (isClaudeInternalTranscriptMessage(params.row)) return null;
-  // Sidechain (subagent) rows are never parent-turn lifecycle evidence: a Task-tool
-  // subagent finishing with stop_reason 'end_turn' must not mint a parent completion
-  // candidate (premature parent turnCompleted), and sidechain prompts/feedback must
-  // not re-render as parent activity.
-  if (params.row.isSidechain === true) return null;
-  if (params.row.type === 'system') {
-    const subtype = readString((params.row as Record<string, unknown>).subtype);
-    if (subtype !== 'compact_boundary') return null;
+  if (classification.visibility !== 'visible') return null;
+
+  if (classification.lifecycle.kind === 'compact_boundary') {
     if (params.suppressPriorEraTurnClosure) return null;
-    return withOptionalTurnId(params.row, {
+    return withNativeBoundaryTurnId(classification, {
       ...base,
       kind: 'compact_boundary',
     });
   }
 
-  if (params.row.type === 'assistant') {
-    if (isClaudeSyntheticNoResponseRow(params.row)) return null;
-    if ((params.row as Readonly<Record<string, unknown>>).isApiErrorMessage === true) {
-      if (params.suppressPriorEraTurnClosure) return null;
-      return withOptionalTurnId(params.row, {
-        ...base,
-        kind: 'assistant_api_error',
-      });
-    }
-    const stopReason = readString(readMessageRecord(params.row)?.stop_reason);
-    if (!stopReason) return null;
+  if (classification.lifecycle.kind === 'assistant_api_error') {
     if (params.suppressPriorEraTurnClosure) return null;
-    return withOptionalTurnId(params.row, {
+    return withNativeBoundaryTurnId(classification, {
       ...base,
-      kind: 'assistant_stop',
-      stopReason,
+      kind: 'assistant_api_error',
     });
   }
 
-  if (params.row.type !== 'user') return null;
-  const text = readTextContentParts(readMessageRecord(params.row)?.content);
-  if (!text) return null;
+  if (classification.lifecycle.kind === 'assistant_stop') {
+    if (params.suppressPriorEraTurnClosure) return null;
+    return withNativeBoundaryTurnId(classification, {
+      ...base,
+      kind: 'assistant_stop',
+      stopReason: classification.lifecycle.stopReason,
+    });
+  }
 
-  if (params.row.isMeta === true && text.startsWith(STOP_HOOK_FEEDBACK_PREFIX)) {
-    return withOptionalTurnId(params.row, {
+  if (classification.lifecycle.kind === 'stop_hook_feedback') {
+    return withOptionalTurnId(normalizedRow, {
       ...base,
       kind: 'stop_hook_feedback',
     });
   }
-  if (params.row.isMeta === true) return null;
 
-  return withOptionalTurnId(params.row, {
-    ...base,
-    kind: 'text',
-    text,
-  });
+  if (classification.lifecycle.kind === 'text') {
+    return withOptionalTurnId(normalizedRow, {
+      ...base,
+      kind: 'text',
+      text: classification.lifecycle.text,
+    });
+  }
+
+  return null;
 }
 
 export function createClaudeUnifiedProviderTranscriptPublisher(
@@ -300,10 +397,11 @@ export function createClaudeUnifiedProviderTranscriptPublisher(
 ): ClaudeUnifiedProviderTranscriptPublisher {
   let binding: TranscriptBinding | null = null;
   let disposed = false;
-  let followHandle: TranscriptFileFollowHandleV1 | null = null;
+  let followHandle: AgentTranscriptFileFollowHandle | null = null;
   let drainInFlight: Promise<void> | null = null;
   const resetReplaySuppressor = createClaudeJsonlResetReplaySuppressor();
   const initialResumeCatchUpBindings = new WeakSet<object>();
+  const initialFileReplayBindings = new WeakSet<object>();
 
   function logDrainDeferred(error: unknown, activeBinding: TranscriptBinding | null = binding): void {
     params.ctx.logger.debug('[ClaudeUnifiedTerminal] transcript drain deferred', {
@@ -315,15 +413,19 @@ export function createClaudeUnifiedProviderTranscriptPublisher(
     });
   }
 
-  async function emitPayload(payload: SessionProviderTranscriptEventPayloadV1): Promise<void> {
+  async function emitPayload(payload: ClaudeProviderTranscriptPayload): Promise<void> {
     if (disposed) return;
+    await params.onPublishPayload?.(payload);
     await params.ctx.agentRuntime.sessionHooks.publishProviderTranscript(payload);
   }
 
-  function observeRawRow(row: RawJSONLines): void {
+  function observeRawRow(activeBinding: TranscriptBinding, row: RawJSONLines): void {
     if (!params.onObserveRow) return;
     try {
-      params.onObserveRow(row);
+      params.onObserveRow(row, {
+        providerSessionId: activeBinding.providerSessionId,
+        historicalReplay: initialFileReplayBindings.has(activeBinding),
+      });
     } catch (error) {
       params.ctx.logger.debug('[ClaudeUnifiedTerminal] transcript row observer failed (non-fatal)', { error });
     }
@@ -335,7 +437,9 @@ export function createClaudeUnifiedProviderTranscriptPublisher(
   }
 
   async function processLine(activeBinding: TranscriptBinding, rawLine: string): Promise<void> {
-    if (disposed) return;
+    // A closing file-follow may still deliver an already-buffered callback after a
+    // trusted primary SessionStart rotates Claude's native session identity.
+    if (disposed || binding !== activeBinding) return;
     const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
     if (!line.trim()) return;
     const rawRow = parseJsonRecord(line);
@@ -343,16 +447,32 @@ export function createClaudeUnifiedProviderTranscriptPublisher(
       return;
     }
     if (rawRow) {
-      const queuedCommandPayload = mapClaudeRawQueuedCommandRowToProviderTranscriptPayload({
-        sessionId: params.sessionId,
-        providerSessionId: activeBinding.providerSessionId,
-        row: rawRow,
-      });
-      if (queuedCommandPayload) {
+      const nativeQueuedCommandOperation = readNativeQueuedCommandOperation(rawRow);
+      const isQueuedCommandAttachment = rawRow.type === 'attachment'
+        && isRecord(rawRow.attachment)
+        && rawRow.attachment.type === 'queued_command';
+      if (nativeQueuedCommandOperation || isQueuedCommandAttachment) {
         if (shouldObserveRawRow(activeBinding, rawRow)) {
-          observeRawRow(rawRow as RawJSONLines);
+          observeRawRow(activeBinding, rawRow as RawJSONLines);
         }
-        await emitPayload(queuedCommandPayload);
+        // `follow({ startAt: 'beginning' })` may synchronously replay existing JSONL rows before
+        // returning its handle. Historical enqueue/remove/attachment triples are observation-only:
+        // only rows appended after the binding is live may establish provider acceptance.
+        if (initialFileReplayBindings.has(activeBinding)) return;
+        if (nativeQueuedCommandOperation) {
+          observeNativeQueuedCommandOperation({
+            binding: activeBinding,
+            operation: nativeQueuedCommandOperation,
+          });
+          return;
+        }
+        const acceptance = prepareNativeQueuedCommandAcceptance({
+          binding: activeBinding,
+          row: rawRow,
+        });
+        if (!acceptance) return;
+        await emitPayload(acceptance.payload);
+        acceptance.markPublished();
         return;
       }
     }
@@ -367,10 +487,9 @@ export function createClaudeUnifiedProviderTranscriptPublisher(
     // Single shared raw-row seam: derived work-state sources observe every parsed
     // row (incl. `attachment`/`system`) before the visibility filter drops them.
     if (shouldObserveRawRow(activeBinding, row)) {
-      observeRawRow(row);
+      observeRawRow(activeBinding, row);
     }
-    const payload = mapClaudeJsonlRowToProviderTranscriptPayload({
-      sessionId: params.sessionId,
+    const payload = projectClaudeTranscriptRowToProviderPayload({
       providerSessionId: activeBinding.providerSessionId,
       row,
       suppressPriorEraTurnClosure: initialResumeCatchUpBindings.has(activeBinding),
@@ -379,8 +498,8 @@ export function createClaudeUnifiedProviderTranscriptPublisher(
   }
 
   async function closeFollowHandle(
-    handle: TranscriptFileFollowHandleV1,
-    options?: Parameters<TranscriptFileFollowHandleV1['close']>[0],
+    handle: AgentTranscriptFileFollowHandle,
+    options?: Parameters<AgentTranscriptFileFollowHandle['close']>[0],
     activeBinding: TranscriptBinding | null = binding,
   ): Promise<void> {
     try {
@@ -407,7 +526,7 @@ export function createClaudeUnifiedProviderTranscriptPublisher(
     activeBinding: TranscriptBinding,
     startAt: TranscriptFileFollowStartAtV1,
   ): Promise<boolean> {
-    let handle: TranscriptFileFollowHandleV1;
+    let handle: AgentTranscriptFileFollowHandle;
     try {
       handle = await params.ctx.agentRuntime.transcripts.fileFollow.follow({
         path: activeBinding.transcriptPath,
@@ -420,6 +539,7 @@ export function createClaudeUnifiedProviderTranscriptPublisher(
           logDrainDeferred(error, activeBinding);
         },
         onReset: () => {
+          clearNativeQueuedCommandEvidence(activeBinding.queuedCommandEvidence);
           resetReplaySuppressor.markReset();
         },
       });
@@ -441,6 +561,7 @@ export function createClaudeUnifiedProviderTranscriptPublisher(
       transcriptPath: string;
       startAt: TranscriptFileFollowStartAtV1;
       initialResumeCatchUp: boolean;
+      replaceExistingBinding: boolean;
     }>,
   ): Promise<ClaudeUnifiedProviderTranscriptBindResult> {
     const trustedProviderSessionId = readString(input.providerSessionId);
@@ -454,22 +575,43 @@ export function createClaudeUnifiedProviderTranscriptPublisher(
       ) {
         return { status: 'unchanged', binding: toAcceptedBinding(binding) };
       }
-      params.ctx.logger.warn('[ClaudeUnifiedTerminal] ignored conflicting transcript binding', {
-        existingProviderSessionId: binding.providerSessionId,
-        providerSessionId: trustedProviderSessionId,
-      });
-      return { status: 'ignored' };
+      if (!input.replaceExistingBinding) {
+        params.ctx.logger.warn('[ClaudeUnifiedTerminal] ignored conflicting transcript binding', {
+          existingProviderSessionId: binding.providerSessionId,
+          providerSessionId: trustedProviderSessionId,
+        });
+        return { status: 'ignored' };
+      }
+
+      const previousBinding = binding;
+      const previousHandle = followHandle;
+      followHandle = null;
+      if (previousHandle) {
+        await closeFollowHandle(previousHandle, {
+          finalDrain: true,
+          drainTimeoutMs: CLAUDE_UNIFIED_TRANSCRIPT_FINAL_DRAIN_TIMEOUT_MS,
+        }, previousBinding);
+      }
+      if (disposed || binding !== previousBinding) return { status: 'ignored' };
+      clearNativeQueuedCommandEvidence(previousBinding.queuedCommandEvidence);
+      binding = null;
+      resetReplaySuppressor.clear();
     }
 
     const activeBinding = {
       providerSessionId: trustedProviderSessionId,
       transcriptPath,
+      queuedCommandEvidence: createNativeQueuedCommandEvidenceState(),
     };
     binding = activeBinding;
     if (input.initialResumeCatchUp) {
       initialResumeCatchUpBindings.add(activeBinding);
     }
+    if (input.startAt === 'beginning') {
+      initialFileReplayBindings.add(activeBinding);
+    }
     const attached = await attachFileFollow(activeBinding, input.startAt);
+    initialFileReplayBindings.delete(activeBinding);
     initialResumeCatchUpBindings.delete(activeBinding);
     if (!attached && binding === activeBinding) {
       binding = null;
@@ -498,6 +640,7 @@ export function createClaudeUnifiedProviderTranscriptPublisher(
       providerSessionId: trustedProviderSessionId,
       transcriptPath,
       initialResumeCatchUp: readSessionStartSource(payload) === 'resume',
+      replaceExistingBinding: true,
       startAt: 'beginning',
     });
   }
@@ -510,6 +653,7 @@ export function createClaudeUnifiedProviderTranscriptPublisher(
       providerSessionId: input.providerSessionId,
       transcriptPath: input.transcriptPath,
       initialResumeCatchUp: false,
+      replaceExistingBinding: false,
       startAt: 'end',
     });
   }
@@ -525,6 +669,7 @@ export function createClaudeUnifiedProviderTranscriptPublisher(
       });
     }
     disposed = true;
+    if (binding) clearNativeQueuedCommandEvidence(binding.queuedCommandEvidence);
     binding = null;
     drainInFlight = null;
   }

@@ -1,17 +1,25 @@
 import {
     ConnectedServiceCredentialRecordV1Schema,
+    ConnectedServiceCredentialRevisionV1Schema,
     type ConnectedServiceCredentialRecordV1 as ProtocolConnectedServiceCredentialRecordV1,
+    type ConnectedServiceCredentialRevisionV1,
     type ConnectedServiceId as ProtocolConnectedServiceId,
 } from '@happier-dev/protocol';
 
 import type { FetchRuntimeServiceV1 } from '../fetch.js';
 
 export {
+    PROVIDER_LIMIT_EVIDENCE_CLASSIFIER_PROJECTION_V1,
     classifyProviderLimitEvidence,
+    type ProviderLimitEvidenceClassification,
+    type ProviderLimitEvidenceConfidence,
+    type ProviderLimitEvidenceContext,
+    type ProviderLimitEvidenceProvenance,
     type ProviderLimitCategory,
 } from './providerLimitEvidence.js';
 export {
     ConnectedServiceCredentialRecordV1Schema,
+    ConnectedServiceCredentialRevisionV1Schema,
 };
 
 export {
@@ -37,6 +45,7 @@ export type {
     AccountSettings,
     ConnectedServiceAuthGroupId,
     ConnectedServiceCredentialRecordV1,
+    ConnectedServiceCredentialRevisionV1,
     ConnectedServiceId,
     ConnectedServiceLimitCategoryV1,
     ConnectedServiceProfileId,

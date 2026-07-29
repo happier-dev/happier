@@ -1,0 +1,4 @@
+{"hook_event_name":"SessionStart","conversation_id":"auggie-fixture-session-2","workspace_roots":["/workspace/fixture-two"]}
+{"hook_event_name":"Stop","conversation_id":"auggie-fixture-session-2","workspace_roots":["/workspace/fixture-two"],"agent_stop_cause":"end_turn"}
+{"hook_event_name":"Stop","conversation_id":"auggie-fixture-session-2","workspace_roots":["/workspace/fixture-two"],"agent_stop_cause":"interrupted"}
+{"hook_event_name":"SessionEnd","conversation_id":"auggie-fixture-session-2","workspace_roots":["/workspace/fixture-two"]}

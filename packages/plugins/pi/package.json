@@ -10,6 +10,10 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./manifest": {
+      "types": "./dist/manifest.d.ts",
+      "default": "./dist/manifest.js"
+    },
     "./agent/contributions/runtime": {
       "types": "./dist/agent/contributions/runtime.d.ts",
       "default": "./dist/agent/contributions/runtime.js"
@@ -50,10 +54,10 @@
       "types": "./dist/agent/runtime/rpc/permissions.d.ts",
       "default": "./dist/agent/runtime/rpc/permissions.js"
     },
-    "./ui": {
-      "types": "./dist/ui/index.d.ts",
-      "react-native": "./dist/ui/index.js",
-      "default": "./dist/ui/index.js"
+    "./ui/behavior": {
+      "types": "./dist/ui/uiBehavior.d.ts",
+      "react-native": "./dist/ui/uiBehavior.js",
+      "default": "./dist/ui/uiBehavior.js"
     }
   },
   "files": [
@@ -62,14 +66,28 @@
   ],
   "scripts": {
     "tsc": "node ../../../scripts/workspaces/runTypeScriptCli.mjs",
-    "build": "node ../../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.json",
+    "build": "node ../../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
     "test": "vitest run",
+    "test:request-auth-composed": "vitest run src/agent/auth/services/requestAuth/source.composed.test.ts",
+    "test:request-auth-real-owners": "vitest run --config vitest.realOwners.config.ts",
+    "test:request-auth-spawned-real-owners": "vitest run --config vitest.spawnedRealOwners.config.ts",
     "typecheck": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@happier-dev/plugin-sdk": "0.0.0"
+    "@happier-dev/agents": "0.0.0",
+    "@happier-dev/plugin-sdk": "0.0.0",
+    "@happier-dev/protocol": "0.0.0"
   },
   "devDependencies": {
+    "@happier-dev/tests": "0.0.0",
+    "pi-ai-0810": "npm:@earendil-works/pi-ai@0.81.0",
+    "pi-ai-0811": "npm:@earendil-works/pi-ai@0.81.1",
+    "pi-ai-0820": "npm:@earendil-works/pi-ai@0.82.0",
+    "pi-ai-0821": "npm:@earendil-works/pi-ai@0.82.1",
+    "pi-coding-agent-0810": "npm:@earendil-works/pi-coding-agent@0.81.0",
+    "pi-coding-agent-0811": "npm:@earendil-works/pi-coding-agent@0.81.1",
+    "pi-coding-agent-0820": "npm:@earendil-works/pi-coding-agent@0.82.0",
+    "pi-coding-agent-0821": "npm:@earendil-works/pi-coding-agent@0.82.1",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"
   }

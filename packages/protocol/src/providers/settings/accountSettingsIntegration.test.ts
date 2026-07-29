@@ -9,7 +9,7 @@ import { readProviderSettingsFromAccountSettingsV1 } from './readFromAccountSett
 const connection = {
   v: 1,
   id: 'pc_1',
-  source: { kind: 'contribution', contributionKey: 'plugin:providers:p' },
+  source: { kind: 'contribution', contributionKey: 'plugin/p' },
   role: 'default',
   displayName: 'P',
   displayNameMode: 'automatic',

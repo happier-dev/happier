@@ -1,4 +1,4 @@
-import type { ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm';
+import type { ScmHostingProviderRef } from '@happier-dev/plugin-sdk/experimental/scm';
 import { describe, expect, it } from 'vitest';
 
 import { createGitlabCliAdapter } from './gitlabCliAdapter.js';
@@ -91,6 +91,52 @@ describe('GitLab CLI merge request adapter', () => {
         timeoutMs: expect.any(Number),
       },
     ]);
+  });
+
+  it('uses the operation-scoped GitLab CLI executable service', async () => {
+    const calls: Array<Readonly<{
+      executable: Readonly<{ kind: 'systemTool'; id: string }>;
+      args: readonly string[];
+    }>> = [];
+    const adapter = createGitlabCliAdapter();
+
+    await expect(adapter.listPullRequests({
+      provider,
+      head: 'feature/runtime-cli',
+      state: 'open',
+      runtimeServices: {
+        executeCommand: async (request: Readonly<{
+          executable: Readonly<{ kind: 'systemTool'; id: string }>;
+          args: readonly string[];
+        }>) => {
+          calls.push(request);
+          if (request.args[0] === 'auth') {
+            return { ok: true, stdout: '', stderr: '', exitCode: 0 };
+          }
+          return {
+            ok: true,
+            stdout: JSON.stringify([{
+              iid: 13,
+              title: 'Runtime GitLab MR',
+              web_url: 'https://code.internal.test/platform/happier/app/-/merge_requests/13',
+              state: 'opened',
+              source_branch: 'feature/runtime-cli',
+              target_branch: 'main',
+            }]),
+            stderr: '',
+            exitCode: 0,
+          };
+        },
+      },
+    })).resolves.toEqual([
+      expect.objectContaining({ number: 13, title: 'Runtime GitLab MR' }),
+    ]);
+
+    expect(calls.map((call) => call.args.slice(0, 4))).toEqual([
+      ['auth', 'status', '--hostname', 'code.internal.test'],
+      ['mr', 'list', '--repo', 'https://code.internal.test/platform/happier/app'],
+    ]);
+    expect(calls[0]?.executable).toEqual({ kind: 'systemTool', id: 'gitlab-cli' });
   });
 
   it('gets a merge request detail by iid and preserves description only from view output', async () => {

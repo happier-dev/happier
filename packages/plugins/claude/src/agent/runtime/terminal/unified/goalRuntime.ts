@@ -97,11 +97,20 @@ export function createClaudeUnifiedGoalRuntime(params: Readonly<{
   backendId: string;
   agentId?: string;
   getCurrentClaudeSessionId: () => string | null;
-  writeMetadataUpdate: ClaudeGoalMetadataUpdate;
+  writeMetadataUpdate?: ClaudeGoalMetadataUpdate;
+  publishWorkStateSnapshot?: (snapshot: SessionWorkStateV1) => void;
   injectGoalCommand: ClaudeGoalCommandInjector;
   logError?: (message: string, error: unknown) => void;
 }>): ClaudeUnifiedGoalRuntime {
   const publishWorkStateSnapshot = (snapshot: SessionWorkStateV1): void => {
+    if (params.publishWorkStateSnapshot) {
+      params.publishWorkStateSnapshot(snapshot);
+      return;
+    }
+    if (!params.writeMetadataUpdate) {
+      params.logError?.('failed to publish Claude goal work-state snapshot (non-fatal)', new Error('goal work-state publisher unavailable'));
+      return;
+    }
     void params.writeMetadataUpdate({
       kind: 'update',
       // The merge chokepoint resolves `primaryItemId` canonically over the MERGED

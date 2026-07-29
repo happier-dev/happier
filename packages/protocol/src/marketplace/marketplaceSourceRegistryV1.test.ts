@@ -12,6 +12,10 @@ import {
 } from './marketplaceSourceRegistryV1.js';
 
 describe('marketplaceSourceRegistryV1 schemas', () => {
+  it('bounds configured sources', () => {
+    expect(MarketplaceSourceRegistryV1Schema.safeParse({ sources: Array.from({ length: 65 }, (_, index) => ({ id: `source-${index}`, title: `Source ${index}`, sourceUrl: `https://source-${index}.example/index.json`, enabled: true, origin: 'user' })) }).success).toBe(false);
+  });
+
   it('defaults the registry to an empty source list', () => {
     expect(MarketplaceSourceRegistryV1Schema.parse({})).toEqual({
       t: 'happier_marketplace_source_registry_v1',
@@ -20,7 +24,23 @@ describe('marketplaceSourceRegistryV1 schemas', () => {
     });
   });
 
-  it('parses persisted marketplace sources with curated origin metadata', () => {
+  it('persists an opaque host-owned registry profile binding while accepting predecessor records without one', () => {
+    const legacy = MarketplaceSourceV1Schema.parse({
+      id: 'marketplace:legacy',
+      title: 'Legacy',
+      sourceUrl: 'https://marketplace.example.test/catalog.json',
+      enabled: true,
+      origin: 'user',
+    });
+    expect(legacy.registryProfileId).toBeUndefined();
+
+    expect(createMarketplaceSourceV1({
+      sourceUrl: legacy.sourceUrl,
+      registryProfileId: 'registry_private',
+    }, legacy)).toMatchObject({ registryProfileId: 'registry_private' });
+  });
+
+  it('parses persisted marketplace sources with curated origin metadata without retaining unknown fields', () => {
     const source = MarketplaceSourceV1Schema.parse({
       id: 'marketplace:featured',
       title: 'Happier curated marketplace',
@@ -43,11 +63,11 @@ describe('marketplaceSourceRegistryV1 schemas', () => {
       addedAtMs: 1,
       updatedAtMs: 2,
     });
-    expect((source as any).futureSourceFlag).toBe('keep-me');
+    expect(source).not.toHaveProperty('futureSourceFlag');
     expect(MarketplaceSourceOriginV1Schema.parse('user')).toBe('user');
   });
 
-  it('preserves additive fields on marketplace source registries', () => {
+  it('does not persist unknown source-registry fields that could carry secrets or authority', () => {
     const parsed = MarketplaceSourceRegistryV1Schema.parse({
       schemaVersion: 1,
       t: 'happier_marketplace_source_registry_v1',
@@ -65,8 +85,23 @@ describe('marketplaceSourceRegistryV1 schemas', () => {
     });
 
     expect(parsed.sources).toHaveLength(1);
-    expect((parsed as any).futureRegistryFlag).toBe('keep-me');
-    expect((parsed.sources[0] as any).futureSourceFlag).toBe('keep-me');
+    expect(parsed).not.toHaveProperty('futureRegistryFlag');
+    expect(parsed.sources[0]).not.toHaveProperty('futureSourceFlag');
+  });
+
+  it.each([
+    'http://catalog.example/index.json',
+    'https://token@catalog.example/index.json',
+    'https://catalog.example/index.json#secret',
+  ])('rejects unsafe persisted source URL %s', (sourceUrl) => {
+    expect(() => createMarketplaceSourceV1({ sourceUrl, title: 'Unsafe' })).toThrow(/credential-free HTTPS/i);
+    expect(MarketplaceSourceV1Schema.safeParse({ id: 'unsafe', title: 'Unsafe', sourceUrl, enabled: true, origin: 'user' }).success).toBe(false);
+  });
+
+  it('rejects duplicate configured source ids and canonical URLs', () => {
+    const source = { id: 'source-a', title: 'Source A', sourceUrl: 'https://catalog.example/index.json', enabled: true, origin: 'user' as const };
+    expect(MarketplaceSourceRegistryV1Schema.safeParse({ sources: [source, { ...source, title: 'Duplicate' }] }).success).toBe(false);
+    expect(MarketplaceSourceRegistryV1Schema.safeParse({ sources: [source, { ...source, id: 'source-b' }] }).success).toBe(false);
   });
 
   it('prefers enabled curated sources when selecting a default marketplace source', () => {

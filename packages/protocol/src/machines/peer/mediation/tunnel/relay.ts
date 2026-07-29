@@ -38,9 +38,12 @@ export const PeerTcpTunnelRelayEnvelopeV1Schema = z
   });
 export type PeerTcpTunnelRelayEnvelopeV1 = z.infer<typeof PeerTcpTunnelRelayEnvelopeV1Schema>;
 
-const Uint8ArrayPayloadSchema = z.custom<Uint8Array>(
-  (value) => value instanceof Uint8Array,
-  'Expected a binary tunnel frame payload',
+const Uint8ArrayPayloadSchema = z.preprocess(
+  (value) => value instanceof ArrayBuffer ? new Uint8Array(value) : value,
+  z.custom<Uint8Array>(
+    (value) => value instanceof Uint8Array,
+    'Expected a binary tunnel frame payload',
+  ),
 );
 
 export const PeerTcpTunnelRelayBinaryEnvelopeV2Schema = z

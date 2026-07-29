@@ -1,37 +1,11 @@
-import type { AcpBackendSpecV1 } from '@happier-dev/plugin-sdk/experimental/acp';
+import type { AgentAcpRuntimeOptions } from '@happier-dev/plugin-sdk/agent-runtime';
 
-import { buildAuggieAcpArgv } from './callbacks.js';
 import { AUGGIE_ACP_TIMEOUTS, AUGGIE_STDERR_RULES, AUGGIE_TOOL_NAME_INFERENCE } from './transport.js';
 
-export const AUGGIE_ACP_BACKEND_SPEC = Object.freeze({
-  backendId: 'auggie',
-  transport: {
-    kind: 'stdio',
-    launch: {
-      kind: 'agent-cli',
-      agentId: 'auggie',
-      args: ['--acp'],
-    },
-    timeouts: AUGGIE_ACP_TIMEOUTS,
-  },
-  ux: {
-    name: 'auggie',
-    title: 'Auggie',
-    defaultMode: 'default',
-  },
-  capabilities: {
-    supportsStreaming: true,
-    supportsToolUse: true,
-    supportsPermissionRequests: true,
-    supportsPromptImages: false,
-  },
-  sessionIdHeaderName: 'auggieSessionId',
+export const AUGGIE_ACP_RUNTIME_DEFINITION = Object.freeze({
+  modelConfigOptionId: 'model',
+  timeouts: AUGGIE_ACP_TIMEOUTS,
   toolNameInference: AUGGIE_TOOL_NAME_INFERENCE,
   stderrRules: AUGGIE_STDERR_RULES,
-  mcp: {
-    policy: 'pass_through',
-  },
-  callbacks: {
-    argvBuilder: buildAuggieAcpArgv,
-  },
-} satisfies AcpBackendSpecV1);
+  mcp: { policy: 'pass_through' },
+} satisfies NonNullable<AgentAcpRuntimeOptions['definition']>);

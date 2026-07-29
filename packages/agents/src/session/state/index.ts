@@ -53,6 +53,23 @@ export {
   publishSessionStateFieldToMetadata,
 } from './bindings/publishField.js';
 export {
+  readExternalAgentObservationSessionState,
+  writeExternalAgentObservationSessionState,
+} from './bindings/externalAgent.js';
+export {
+  readExternalSessionOperationState,
+  writeExternalSessionOperationState,
+} from './bindings/externalSessionOperation.js';
+export {
+  reduceExternalAgentObservationEvidenceV1,
+  type ExternalAgentObservationBoundaryV1,
+  type ExternalAgentObservationReductionV1,
+  type ExternalAgentObservationEvidenceV1,
+  type ExternalAgentObservationSnapshotV1,
+  type ExternalAgentObservationStatusV1,
+  type ExternalAgentObservationTargetV1,
+} from './externalAgentObservationReducer.js';
+export {
   readRuntimeDescriptorSessionState,
   writeRuntimeDescriptorSessionState,
 } from './bindings/runtimeDescriptor.js';

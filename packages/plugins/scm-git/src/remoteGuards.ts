@@ -1,11 +1,11 @@
-import type { ScmWorkingSnapshot } from '@happier-dev/plugin-sdk/scm';
+import type { ScmWorkingSnapshot } from '@happier-dev/plugin-sdk/experimental/scm';
 import {
   evaluateScmRemoteMutationPreconditions as evaluateSharedRemoteMutationPreconditions,
   SCM_OPERATION_ERROR_CODES,
   type ScmRemoteMutationGuardResult,
   type ScmRemoteMutationKind,
   type ScmRemoteMutationReason,
-} from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm';
 
 type RemoteMutationKind = 'push' | 'pull';
 

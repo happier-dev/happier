@@ -24,20 +24,63 @@ describe('buildClaudeAssistantUsageObservation', () => {
                 total: 40,
                 input: 11,
                 output: 22,
-                cache_creation: 4,
-                cache_read: 3,
+                reasoning: 0,
+                cacheWrite: 4,
+                cacheRead: 3,
             },
             cost: {
                 estimatedUsd: expect.any(Number),
-                total: expect.any(Number),
-                input: expect.any(Number),
-                output: expect.any(Number),
+                reportedUsd: 0,
+                breakdown: { cacheSavingsUsd: expect.any(Number) },
                 billingContext: 'unknown',
                 costSource: 'pricing_estimate',
+                currency: 'USD',
             },
             contextUsedTokens: null,
             contextWindowTokens: null,
         });
-        expect(observation?.cost?.total).toBeGreaterThan(0);
+        expect(observation?.cost?.estimatedUsd).toBeGreaterThan(0);
+    });
+
+    it('emits cache savings from known provider pricing', () => {
+        const observation = buildClaudeAssistantUsageObservation({
+            modelId: 'claude-4.5-sonnet',
+            usage: { input_tokens: 1_000_000, cache_read_input_tokens: 100_000 },
+        });
+
+        expect(observation?.cost?.breakdown).toEqual({ cacheSavingsUsd: 0.27 });
+    });
+
+    it('keeps Provider-bound token telemetry but leaves cost unavailable', () => {
+        const observation = buildClaudeAssistantUsageObservation({
+            modelId: 'deepseek-ai/DeepSeek-V3.1',
+            modelSource: 'provider',
+            usage: {
+                input_tokens: 1_000_000,
+                output_tokens: 100_000,
+            },
+        });
+
+        expect(observation).toMatchObject({
+            modelId: 'deepseek-ai/DeepSeek-V3.1',
+            tokens: {
+                total: 1_100_000,
+                input: 1_000_000,
+                output: 100_000,
+                reasoning: 0,
+                cacheRead: 0,
+                cacheWrite: 0,
+            },
+            cost: null,
+        });
+    });
+
+    it('does not assign default Sonnet pricing to an unknown native model id', () => {
+        const observation = buildClaudeAssistantUsageObservation({
+            modelId: 'future-model-without-pricing',
+            usage: { input_tokens: 1_000_000 },
+        });
+
+        expect(observation?.cost).toBeNull();
     });
 });

@@ -2,64 +2,29 @@ import { describe, expect, it } from 'vitest';
 
 import { PLUGIN_MANIFEST } from './manifest.js';
 
-function requireQwenBackend() {
-  const backend = PLUGIN_MANIFEST.contributes?.agents?.find((entry) => entry.id === 'qwen');
-  if (!backend) {
-    throw new Error('Expected Qwen plugin manifest to declare qwen backend contribution');
-  }
-  return backend;
-}
-
 describe('Qwen plugin manifest', () => {
-  it('declares a plugin-owned ACP backend contribution', () => {
-    const backend = requireQwenBackend();
-
-    expect(PLUGIN_MANIFEST.id).toBe('happier.agent.qwen');
-    expect(PLUGIN_MANIFEST.uses).toContain('agents');
-    expect(backend).toMatchObject({
-      kindVersion: 1,
-      id: 'qwen',
-      runtime: {
-        kind: 'acp',
-        transport: {
-          kind: 'stdio',
-          launch: {
-            kind: 'agent-cli',
-            agentId: 'qwen',
-            args: ['--acp'],
-          },
-        },
-        sessionIdHeaderName: 'qwenSessionId',
-        mcp: { policy: 'pass_through' },
+  it('uses the strict target manifest and declares its custom ACP handoff', () => {
+    expect(PLUGIN_MANIFEST).not.toHaveProperty('uses');
+    expect(PLUGIN_MANIFEST).not.toHaveProperty('permissions');
+    expect(PLUGIN_MANIFEST).not.toHaveProperty('activationEvents');
+    expect(PLUGIN_MANIFEST).toMatchObject({ entrypoints: { daemon: './dist/index.js' } });
+    expect(PLUGIN_MANIFEST).not.toHaveProperty('activation');
+    expect(PLUGIN_MANIFEST).toMatchObject({
+      hostAccess: {
+        required: [{
+          id: 'qwen-process',
+          capability: 'process',
+          scope: { executables: [{ kind: 'systemTool', id: 'qwen-cli' }] },
+        }],
+        optional: [],
       },
-      capabilities: {
-        executionRun: { supported: true },
-        session: {
-          media: {
-            acceptsImageInput: { supported: false },
-            emitsSessionMedia: { supported: false },
-            nativeImageGeneration: { supported: false },
-          },
-        },
-      },
-    });
-    expect(backend.runtime).not.toHaveProperty('callbacks');
-  });
-
-  it('preserves Qwen approval-mode omission for default permission modes', () => {
-    const backend = requireQwenBackend();
-
-    expect(backend.runtime).toMatchObject({
-      permissionModeArgv: {
-        flag: '--approval-mode',
-        map: {
-          default: null,
-          plan: 'plan',
-          'read-only': 'plan',
-          'safe-yolo': 'auto-edit',
-          yolo: 'yolo',
-          bypassPermissions: 'yolo',
-        },
+      contributes: {
+        agents: [{
+          id: 'qwen', title: 'Qwen Code', primary: 'sessions',
+          runtime: { kind: 'custom' },
+          capabilities: { sessions: { open: ['create', 'resume'], delivery: ['newTurn', 'steer', 'followUp'], cancel: true } },
+        }],
+        systemTools: [{ id: 'qwen-cli', executableNames: ['qwen'] }],
       },
     });
   });

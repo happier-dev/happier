@@ -1,69 +1,22 @@
 import { z } from 'zod';
+import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
+import { PluginAvailabilityDescriptorV2Schema, PluginJsonValueV2Schema } from '../contributions/publicTypes.js';
 
-export const PluginRequestInterceptorScopeV1Schema = z.enum(['plugin-fetch']);
-export type PluginRequestInterceptorScopeV1 = z.infer<typeof PluginRequestInterceptorScopeV1Schema>;
-
-function isValidRequestInterceptorUrlOrigin(value: string): boolean {
-  if (value === '*') {
-    return true;
-  }
+const PluginRequestInterceptorOriginV1Schema = z.string().superRefine((value, ctx) => {
   try {
-    const parsed = new URL(value);
-    return parsed.origin === value
-      && parsed.origin !== 'null'
-      && (parsed.protocol === 'http:' || parsed.protocol === 'https:');
+    const url = new URL(value);
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.origin !== value) throw new Error();
   } catch {
-    return false;
+    ctx.addIssue({ code: 'custom', message: 'Expected a canonical HTTP(S) origin.' });
   }
-}
-
-export const PluginRequestInterceptorUrlOriginV1Schema = z.string().trim().min(1).refine(
-  isValidRequestInterceptorUrlOrigin,
-  'urlOrigins entries must be "*" or an absolute HTTP(S) origin, for example https://api.example.com',
-);
-export type PluginRequestInterceptorUrlOriginV1 = z.infer<typeof PluginRequestInterceptorUrlOriginV1Schema>;
-
-export const PluginRequestInterceptorTargetV1Schema = z.object({
-  scope: PluginRequestInterceptorScopeV1Schema,
-  urlOrigins: z.array(PluginRequestInterceptorUrlOriginV1Schema).optional(),
-}).strict();
-export type PluginRequestInterceptorTargetV1 = z.infer<typeof PluginRequestInterceptorTargetV1Schema>;
+});
 
 export const PluginRequestInterceptorContributionV1Schema = z.object({
-  id: z.string().trim().min(1),
-  order: z.number().int().optional(),
-  targets: z.array(PluginRequestInterceptorTargetV1Schema).min(1),
+  id: PluginContributionLocalIdSchema,
+  origins: z.array(PluginRequestInterceptorOriginV1Schema).min(1),
+  methods: z.array(z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'])).optional(),
+  priority: z.number().int().optional(),
+  availability: PluginAvailabilityDescriptorV2Schema.optional(),
+  metadata: z.record(z.string(), PluginJsonValueV2Schema).optional(),
 }).strict();
 export type PluginRequestInterceptorContributionV1 = z.infer<typeof PluginRequestInterceptorContributionV1Schema>;
-
-export type RequestInterceptorHeaderPatchV1 = Readonly<{
-  remove?: readonly string[];
-  set?: Readonly<Record<string, string>>;
-}>;
-
-export type RequestInterceptorRequestPatchV1 = Readonly<{
-  url?: string;
-  method?: string;
-  headers?: RequestInterceptorHeaderPatchV1;
-  metadata?: Readonly<Record<string, unknown>>;
-}>;
-
-export type RequestPolicyResultV1 =
-  | Readonly<{
-      kind: 'allow';
-      request?: RequestInterceptorRequestPatchV1;
-      auditMetadata?: Readonly<Record<string, unknown>>;
-    }>
-  | Readonly<{
-      kind: 'deny';
-      code: string;
-      reason?: string;
-      auditMetadata?: Readonly<Record<string, unknown>>;
-    }>
-  | Readonly<{
-      kind: 'error';
-      code: string;
-      reason?: string;
-      retryable?: boolean;
-      auditMetadata?: Readonly<Record<string, unknown>>;
-    }>;

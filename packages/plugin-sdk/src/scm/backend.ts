@@ -3,6 +3,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import type {
     ScmBackendDescribeRequest,
     ScmBackendDescribeResponse,
+    ScmBackendCapabilities,
     ScmBranchCheckoutRequest,
     ScmBranchCheckoutResponse,
     ScmBranchCreateRequest,
@@ -102,6 +103,8 @@ export type ScmBackendRuntimeDetection = Readonly<{
 export type ScmBackendRuntimeHandlerInput<TRequest> = Readonly<{
     context: ScmBackendRuntimeContext;
     request: TRequest;
+    /** Operation-scoped cancellation; plugin code must forward it across external awaits. */
+    signal: AbortSignal;
 }>;
 
 export type ScmWorkspaceIntegrationCheckoutMaterializationRequest = Readonly<{
@@ -345,6 +348,14 @@ export type ScmBackendRuntimeHandlers = Readonly<{
 
 export type ScmBackendRuntimeRegistration = Readonly<{
     id: string;
+    runtime?: Readonly<{
+        repoModes: readonly ScmRepoMode[];
+        capabilities: ScmBackendCapabilities;
+        commands: readonly Readonly<{
+            installableKey: string;
+            command: string;
+        }>[];
+    }>;
     handlers: ScmBackendRuntimeHandlers;
 }>;
 

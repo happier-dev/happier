@@ -933,13 +933,37 @@ describe('createActionExecutor (inventory/discovery)', () => {
     const res = await executor.execute('session.user_action.answer', {
       sessionId: 's1',
       requestId: 'req_1',
-      answers: [{ question: 'What next?', answer: 'Proceed' }],
+      answers: [{
+        question: 'Where should this run?',
+        values: ['Washington, D.C.', 'Virginia', 'A custom, exact answer'],
+      }],
     });
     expect(res.ok).toBe(true);
     expect(deps.sessionUserActionAnswer).toHaveBeenCalledWith({
       sessionId: 's1',
       requestId: 'req_1',
+      answers: [{
+        question: 'Where should this run?',
+        values: ['Washington, D.C.', 'Virginia', 'A custom, exact answer'],
+      }],
+    });
+  });
+
+  it('normalizes the released scalar session.user_action.answer shape at the ActionSpec boundary', async () => {
+    const deps = createDeps();
+    const executor = createActionExecutor(deps);
+
+    const res = await executor.execute('session.user_action.answer', {
+      sessionId: 's1',
+      requestId: 'req_legacy',
       answers: [{ question: 'What next?', answer: 'Proceed' }],
+    });
+
+    expect(res.ok).toBe(true);
+    expect(deps.sessionUserActionAnswer).toHaveBeenCalledWith({
+      sessionId: 's1',
+      requestId: 'req_legacy',
+      answers: [{ question: 'What next?', values: ['Proceed'] }],
     });
   });
 

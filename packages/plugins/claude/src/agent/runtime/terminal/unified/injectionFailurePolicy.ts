@@ -1,15 +1,14 @@
-import type { TerminalInputInjectionResult } from '@happier-dev/plugin-sdk/experimental/runtime/session';
+import type { TerminalInputInjectionResult } from '@happier-dev/agents';
 
 export type ClaudeUnifiedInjectionFailureAction =
   | Readonly<{ kind: 'retry'; retryAfterMs: number }>
-  | Readonly<{ kind: 'await_provider_confirmation'; timeoutMs: number }>
+  | Readonly<{ kind: 'await_provider_confirmation' }>
   | Readonly<{ kind: 'terminal_failure' }>;
 
 export type ClaudeUnifiedInjectionFailurePolicyOptions = Readonly<{
   retryAttempt: number;
   retryLimit: number;
   retryBaseDelayMs: number;
-  providerAcceptanceTimeoutMs: number;
 }>;
 
 function nonNegativeInteger(value: number): number {
@@ -26,10 +25,7 @@ export function classifyClaudeUnifiedInjectionFailure(
   }
 
   if (failure.duplicateRisk !== 'none' || failure.reason === 'ambiguous_provider_acceptance') {
-    return {
-      kind: 'await_provider_confirmation',
-      timeoutMs: nonNegativeInteger(options.providerAcceptanceTimeoutMs),
-    };
+    return { kind: 'await_provider_confirmation' };
   }
 
   const retryAttempt = nonNegativeInteger(options.retryAttempt);

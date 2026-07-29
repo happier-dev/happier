@@ -3,7 +3,7 @@ import type {
     PluginUiHostApiResponseEnvelopeV1,
     PluginUiResourceSubscriptionEventV1,
     PluginUiSurfaceContextV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/ui';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -57,7 +57,7 @@ describe('plugin UI host API SDK client', () => {
             surface,
             method: 'requestSessionResource',
             kind: 'error',
-            payload: { code: 'denied' },
+            payload: { code: 'denied', diagnostics: [] },
         } satisfies PluginUiHostApiResponseEnvelopeV1);
 
         client.handleMessage({
@@ -75,7 +75,7 @@ describe('plugin UI host API SDK client', () => {
             surface,
             method: 'requestSessionResource',
             kind: 'error',
-            payload: { code: 'internal_error' },
+            payload: { code: 'internal_error', diagnostics: [] },
         } satisfies PluginUiHostApiResponseEnvelopeV1);
 
         await expect(promise).resolves.toEqual({
@@ -142,6 +142,7 @@ describe('plugin UI host API SDK client', () => {
                 state: 'available',
                 capturedAtMs: 1,
                 payload: { status: 'ready' },
+                diagnostics: [],
             },
         } satisfies PluginUiResourceSubscriptionEventV1);
         subscription.unsubscribe();
@@ -149,6 +150,7 @@ describe('plugin UI host API SDK client', () => {
             version: 1,
             subscriptionId: 'sub-1',
             kind: 'complete',
+            diagnostics: [],
         } satisfies PluginUiResourceSubscriptionEventV1);
 
         expect(events).toHaveLength(1);

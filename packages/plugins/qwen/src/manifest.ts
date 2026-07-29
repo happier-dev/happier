@@ -1,53 +1,58 @@
-import {
-  definePluginManifest,
-  type PluginAgentContributionV2,
-  type PluginManifestV2,
-} from '@happier-dev/plugin-sdk';
+import type { PluginManifest } from '@happier-dev/plugin-sdk/manifest';
 
-import { QWEN_ACP_BACKEND_SPEC } from './agent/acp/definition.js';
-
-type QwenPluginManifestV2 = Omit<PluginManifestV2, 'contributes'> & Readonly<{
-  contributes: Readonly<{
-    agents: ReadonlyArray<PluginAgentContributionV2>;
-  }>;
-}>;
-
-export const PLUGIN_MANIFEST = definePluginManifest({
+export const PLUGIN_MANIFEST = {
   schemaVersion: 2,
   id: 'happier.agent.qwen',
   version: '0.0.0',
-  displayName: 'qwen',
-  description: undefined,
-  engines: { happier: '^0.0.0' },
-  activationEvents: ['onAgent:qwen'],
-  uses: ['agents'],
-  entrypoints: { main: './dist/index.js' },
-  permissions: { required: [], optional: [] },
+  displayName: 'Qwen Code',
+  engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
+  entrypoints: { daemon: './dist/index.js' },
+  hostAccess: {
+    required: [{
+      id: 'qwen-process',
+      capability: 'process',
+      reason: 'Run the declared Qwen CLI executable.',
+      scope: { executables: [{ kind: 'systemTool', id: 'qwen-cli' }] },
+    }],
+    optional: [],
+  },
   contributes: {
-    agents: [
-      {
-        kindVersion: 1,
-        id: 'qwen',
-        runtime: {
-          kind: 'acp',
-          transport: QWEN_ACP_BACKEND_SPEC.transport,
-          ux: QWEN_ACP_BACKEND_SPEC.ux,
-          capabilities: QWEN_ACP_BACKEND_SPEC.capabilities,
-          permissionModeArgv: QWEN_ACP_BACKEND_SPEC.permissionModeArgv,
-          sessionIdHeaderName: QWEN_ACP_BACKEND_SPEC.sessionIdHeaderName,
-          mcp: QWEN_ACP_BACKEND_SPEC.mcp,
+    agents: [{
+      id: 'qwen',
+      title: 'Qwen Code',
+      runtime: { kind: 'custom' },
+      cli: {
+        displayName: 'Qwen CLI',
+        executable: {
+          binaryName: 'qwen',
+          knownUserBinDirSuffixes: null,
+          sourcePreference: 'system-first',
         },
-        capabilities: {
-          executionRun: { supported: true },
-          session: {
-            media: {
-              acceptsImageInput: { supported: false },
-              emitsSessionMedia: { supported: false },
-              nativeImageGeneration: { supported: false },
-            },
+        install: {
+          managed: {
+            kind: 'managed_package',
+            packageName: '@qwen-code/qwen-code',
+            binaryName: 'qwen',
           },
+          manual: { kind: 'command' },
+          guideUrl: 'https://qwenlm.github.io/qwen-code-docs/',
+          docsUrl: null,
+        },
+        auth: {
+          support: 'login_terminal',
+          probe: { parser: 'unknown', backgroundChecks: 'safe', statusArgs: null },
+          loginLaunches: [{ kind: 'primary', args: [], initialInput: '/auth\r' }],
         },
       },
-    ],
+      primary: 'sessions',
+      capabilities: {
+        sessions: {
+          open: ['create', 'resume'],
+          delivery: ['newTurn', 'steer', 'followUp'],
+          cancel: true,
+        },
+      },
+    }],
+    systemTools: [{ id: 'qwen-cli', title: 'Qwen Code CLI', executableNames: ['qwen'] }],
   },
-} satisfies QwenPluginManifestV2);
+} satisfies PluginManifest;

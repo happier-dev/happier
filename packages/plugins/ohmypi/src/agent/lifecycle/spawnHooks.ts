@@ -1,4 +1,5 @@
 import { buildOhMyPiPreflightModelsFromListModelsOutput } from '../preflight/models.js';
+import { OH_MY_PI_SYSTEM_TOOL_ID } from '../systemTool.js';
 
 const OH_MY_PI_LIST_MODELS_ARGS = ['--list-models'] as const;
 const OH_MY_PI_PREFLIGHT_TIMEOUT_MS = 10_000;
@@ -35,11 +36,7 @@ type OhMyPiDaemonSpawnHookContext = Readonly<{
   tools?: Partial<OhMyPiDaemonSpawnToolContext>;
 }>;
 
-type OhMyPiDaemonSpawnPrerequisiteResult = Readonly<{
-  allowed: boolean;
-  reasonCode?: string;
-  errorMessage?: string;
-}>;
+type OhMyPiDaemonSpawnPrerequisiteResult = PluginHookDecisionResultV1;
 
 type OhMyPiDaemonHookEvent = Readonly<{
   payload?: unknown;
@@ -87,7 +84,7 @@ function firstDiagnosticLine(...outputs: readonly string[]): string | null {
 
 function denyOhMyPiSpawn(reasonCode: string, errorMessage: string): OhMyPiDaemonSpawnPrerequisiteResult {
   return {
-    allowed: false,
+    decision: 'deny',
     reasonCode,
     errorMessage,
   };
@@ -106,7 +103,7 @@ export async function resolveOhMyPiDaemonSpawnPrerequisites(
   }
 
   const result = await runSystemTool({
-    toolId: 'ohMyPi',
+    toolId: OH_MY_PI_SYSTEM_TOOL_ID,
     lookupNames: ['omp'],
     sourcePreference: 'system-first',
     args: OH_MY_PI_LIST_MODELS_ARGS,
@@ -125,7 +122,7 @@ export async function resolveOhMyPiDaemonSpawnPrerequisites(
   const models = buildOhMyPiPreflightModelsFromListModelsOutput(result.stdout)
     ?? buildOhMyPiPreflightModelsFromListModelsOutput(result.stderr);
   if (result.exitCode === 0 && models && models.length > 0) {
-    return { allowed: true };
+    return { decision: 'allow' };
   }
 
   const rawDiagnostic = firstDiagnosticLine(result.stdout, result.stderr);
@@ -135,3 +132,4 @@ export async function resolveOhMyPiDaemonSpawnPrerequisites(
     ?? 'OhMyPi has no available models. Set provider API keys before starting a session.';
   return denyOhMyPiSpawn('ohmypi_models_unavailable', diagnostic);
 }
+import type { PluginHookDecisionResultV1 } from '@happier-dev/plugin-sdk/experimental/hooks';

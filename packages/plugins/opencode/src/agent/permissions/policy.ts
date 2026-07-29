@@ -1,9 +1,9 @@
 import {
   resolveAcpToolPermissionPolicy,
-  type AcpToolPermissionValueV1,
-} from '@happier-dev/plugin-sdk/experimental/acp';
+} from '@happier-dev/agents';
 
-export type OpenCodePermissionValue = AcpToolPermissionValueV1;
+export type OpenCodePermissionValue =
+  ReturnType<typeof resolveAcpToolPermissionPolicy>[string];
 
 export function resolveOpenCodePermissionConfig(
   permissionMode: string | null | undefined,

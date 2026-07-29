@@ -1,25 +1,15 @@
-import {
-  buildAgentSettingsDefaults,
-  defineAgentSettingsContribution,
-  agentSettingsContributionToUiDescriptor,
-} from '@happier-dev/plugin-sdk/experimental/manifest/agentSettings';
+import type { PluginSettingsContribution } from '@happier-dev/plugin-sdk/manifest';
 
-export const KIRO_AGENT_SETTINGS_CONTRIBUTION = defineAgentSettingsContribution({
-  id: 'kiro.agentSettings.v1',
-  agentId: 'kiro',
+export const KIRO_AGENT_SETTINGS_CONTRIBUTION = {
+  id: 'agent-settings',
+  version: 1,
+  title: { key: 'settingsAgents.plugins.kiro.title', fallback: 'Kiro' },
+  target: { kind: 'agent', agent: 'kiro' },
+  scope: 'synced',
   fields: [],
-  ui: {
-    title: { key: 'settingsAgents.plugins.kiro.title' },
+  presentation: {
     icon: { ionName: 'flash-outline', color: { kind: 'theme', token: 'orange' } },
-    subagentSettingsSections: [],
+    subagentSections: [],
     sections: [],
   },
-});
-
-export const KIRO_AGENT_SETTINGS_DEFAULTS = buildAgentSettingsDefaults(
-  KIRO_AGENT_SETTINGS_CONTRIBUTION,
-);
-
-export const KIRO_AGENT_SETTINGS_DESCRIPTOR = agentSettingsContributionToUiDescriptor(
-  KIRO_AGENT_SETTINGS_CONTRIBUTION,
-);
+} satisfies PluginSettingsContribution;

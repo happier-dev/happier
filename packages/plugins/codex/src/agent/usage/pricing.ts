@@ -95,10 +95,12 @@ export function estimateCodexUsageCost(params: Readonly<{
     if (!pricing || !tokens) return null;
 
     const inputTokens = asFiniteNonNegativeNumber(tokens.input) ?? 0;
-    const cachedInputTokens = asFiniteNonNegativeNumber(tokens.cache_read) ?? 0;
+    const reportedCachedInputTokens = asFiniteNonNegativeNumber(tokens.cache_read) ?? 0;
+    const cachedInputTokens = Math.min(inputTokens, reportedCachedInputTokens);
     const outputTokens = asFiniteNonNegativeNumber(tokens.output) ?? 0;
+    const nonCachedInputTokens = inputTokens - cachedInputTokens;
 
-    const inputCost = (inputTokens / MILLION) * pricing.input;
+    const inputCost = (nonCachedInputTokens / MILLION) * pricing.input;
     const cachedInputCost = (cachedInputTokens / MILLION) * pricing.cachedInput;
     const cacheSavingsUsd = (cachedInputTokens / MILLION) * (pricing.input - pricing.cachedInput);
     const outputCost = (outputTokens / MILLION) * pricing.output;

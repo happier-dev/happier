@@ -1,4 +1,4 @@
-import type { ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm';
+import type { ScmHostingProviderRef } from '@happier-dev/plugin-sdk/experimental/scm';
 import { describe, expect, it } from 'vitest';
 
 const githubProvider: ScmHostingProviderRef = {

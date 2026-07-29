@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { registerSensitiveDiagnosticValues } from '@happier-dev/protocol';
 
 import {
     createCodexAppServerTurnFailure,
@@ -28,6 +27,7 @@ describe('createCodexAppServerTurnFailure', () => {
                 profileId: 'runtime-profile',
                 groupId: 'runtime-group',
                 generation: 42,
+                credentialRevision: 'csr_abcdefghijklmnopqrstuv',
             },
         });
 
@@ -39,12 +39,14 @@ describe('createCodexAppServerTurnFailure', () => {
             resetsAtMs: Date.parse('2026-05-17T15:30:00.000Z'),
             retryAfterMs: 90_000,
             planType: 'plus',
-            rateLimits: { primary: { used_percent: 100 } },
             source: 'structured_provider_error',
             sourceProviderAccountId: 'acct_source',
             sourceAccountLabel: 'source@example.test',
             groupGeneration: 42,
+            expectedCredentialRevision: 'csr_abcdefghijklmnopqrstuv',
         });
+        expect((failure as Error & { runtimeAuthClassification?: unknown }).runtimeAuthClassification)
+            .not.toHaveProperty('rateLimits');
     });
 
     it('uses failure-time runtime identity when separate auth context is unavailable', () => {
@@ -116,17 +118,21 @@ describe('createCodexAppServerTurnFailure', () => {
         expect(formatCodexAppServerErrorForUi(new Error('Error: provider failed'))).toBe('Error: provider failed');
     });
 
-    it('redacts an exact runtime provider credential from app-server failure diagnostics', () => {
-        const credential = 'codex provider credential with spaces !';
-        const lease = registerSensitiveDiagnosticValues([credential]);
-        try {
-            const failure = createCodexAppServerTurnFailure({
-                value: { error: { message: `provider rejected ${credential}` } },
-            });
+    it('does not expose provider failure prose through the terminal Error or UI formatter', () => {
+        const providerMessageSentinel = 'VOICE_PRIVATE_FAILURE_MESSAGE_SENTINEL';
+        const providerDetailsSentinel = 'VOICE_PRIVATE_FAILURE_DETAILS_SENTINEL';
+        const failure = createCodexAppServerTurnFailure({
+            value: {
+                error: {
+                    message: `provider rejected ${providerMessageSentinel}`,
+                    additional_details: providerDetailsSentinel,
+                },
+            },
+        });
 
-            expect(formatCodexAppServerErrorForUi(failure)).toBe('Error: provider rejected [REDACTED]');
-        } finally {
-            lease.close();
-        }
+        expect(failure.message).toBe('Codex app-server turn failed.');
+        expect(failure.stack ?? '').not.toContain(providerMessageSentinel);
+        expect(failure.stack ?? '').not.toContain(providerDetailsSentinel);
+        expect(formatCodexAppServerErrorForUi(failure)).toBe('Error: Codex app-server turn failed.');
     });
 });

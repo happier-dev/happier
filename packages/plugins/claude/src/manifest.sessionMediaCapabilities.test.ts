@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { PluginBackendCapabilitiesV1Schema } from '@happier-dev/plugin-sdk/manifest';
+import { PluginBackendCapabilitiesV1Schema } from '@happier-dev/plugin-sdk/experimental/manifest/agents';
 
 import { PLUGIN_MANIFEST } from './manifest.js';
 
@@ -10,45 +10,74 @@ function capabilitiesForBackend(id: string) {
   return PluginBackendCapabilitiesV1Schema.parse(backend.capabilities ?? {});
 }
 
-describe('Claude plugin session media capabilities', () => {
-  it('declares Claude as an agent contribution with final agent CLI runtime vocabulary', () => {
+describe('Claude plugin AgentRuntime capabilities', () => {
+  it('declares Claude as a native custom Agent contribution', () => {
     const agent = PLUGIN_MANIFEST.contributes?.agents?.find((entry) => entry.id === 'claude');
 
     expect(agent).toEqual(expect.objectContaining({
       id: 'claude',
-      ownedBackendIds: ['claude'],
-      agentCliRuntime: expect.objectContaining({
-        id: 'claude',
-        binaryName: 'claude',
+      runtime: { kind: 'custom' },
+      primary: 'sessions',
+      capabilities: expect.objectContaining({
+        surfaces: ['terminal', 'externalSessions'],
       }),
     }));
-    const legacyRuntimeKey = 'provider' + 'CliRuntime';
-    expect(agent && legacyRuntimeKey in agent).toBe(false);
+    expect(agent && 'ownedBackendIds' in agent).toBe(false);
+    expect(agent && 'agentCliRuntime' in agent).toBe(false);
   });
 
-  it('declares execution-run support explicitly in the backend manifest', () => {
-    const backend = PLUGIN_MANIFEST.contributes?.agents?.find((entry) => entry.id === 'claude');
+  it('declares native session and execution-run operations explicitly', () => {
+    const agent = PLUGIN_MANIFEST.contributes?.agents?.find((entry) => entry.id === 'claude');
 
-    expect(backend?.capabilities?.executionRun).toEqual({ supported: true });
+    expect(agent?.capabilities?.sessions).toEqual({
+      open: ['create', 'resume'],
+      delivery: ['newTurn', 'steer', 'followUp'],
+      cancel: true,
+      configuration: true,
+      goals: {
+        active: {
+          clear: true,
+          set: { fields: ['objective'] },
+        },
+        inactive: {
+          get: true,
+          clear: true,
+          set: { fields: ['objective'] },
+        },
+        source: 'goals',
+      },
+      runtimeActivitySnapshots: true,
+      workStateSources: [{ id: 'goals', itemKinds: ['goal'] }],
+    });
+    expect(agent?.capabilities?.executionRuns).toEqual({
+      open: ['create'],
+      checkpoint: true,
+      stop: true,
+    });
   });
 
-  it('declares terminal-host runtime control through manifest capabilities', () => {
-    expect(PLUGIN_MANIFEST.uses).toContain('terminalHost');
-    expect(PLUGIN_MANIFEST.permissions.required).toEqual(expect.arrayContaining([
-      expect.objectContaining({ capability: 'terminal.host.control' }),
-      expect.objectContaining({ capability: 'events.session.subscribe' }),
+  it('declares terminal and current-session host access through V2 hostAccess grants', () => {
+    expect(PLUGIN_MANIFEST.hostAccess.required).toEqual(expect.arrayContaining([
+      expect.objectContaining({ capability: 'terminal' }),
+      expect.objectContaining({ capability: 'sessions' }),
     ]));
+    expect(PLUGIN_MANIFEST.hostAccess.required.find((entry) => entry.capability === 'process')?.scope).toMatchObject({
+      envKeys: expect.arrayContaining([
+        'ANTHROPIC_API_KEY',
+        'ANTHROPIC_AUTH_TOKEN',
+        'CLAUDE_CONFIG_DIR',
+        'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS',
+        'CLAUDE_CODE_SDK_HAS_OAUTH_REFRESH',
+        'HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON',
+        'USER',
+      ]),
+    });
   });
 
-  it('declares only tool-output SDK image blocks without claiming native image generation', () => {
+  it('does not claim media emission or native image generation', () => {
     const capabilities = capabilitiesForBackend('claude');
 
-    expect(capabilities.session.media.emitsSessionMedia).toMatchObject({
-      supported: true,
-      mediaKinds: ['image'],
-      sources: ['tool-output'],
-      storage: 'session-media-file',
-    });
+    expect(capabilities.session.media.emitsSessionMedia.supported).toBe(false);
     expect(capabilities.session.media.nativeImageGeneration.supported).toBe(false);
   });
 });

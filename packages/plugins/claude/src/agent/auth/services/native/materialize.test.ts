@@ -2,7 +2,7 @@ import { lstat, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import type { ExecRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
+import type { PluginExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/runtime';
 import { buildConnectedServiceCredentialRecord } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -15,56 +15,53 @@ import {
 const ORIGINAL_PLATFORM_DESCRIPTOR = Object.getOwnPropertyDescriptor(process, 'platform');
 const PROVENANCE_FILE_NAME = '.happier-claude-connected-service-home.json';
 
-function createExecFixture(params: Readonly<{ exitCode?: number | null; stderr?: string }> = {}): ExecRuntimeServiceV1 {
+function createProcessResult(params: Readonly<{
+    stdout?: string;
+    stderr?: string;
+    exitCode?: number | null;
+}> = {}): PluginProcessResult {
+    const exitCode = params.exitCode ?? 0;
     return {
-        systemTools: {
-            resolve: vi.fn(async () => ({
-                grantId: 'grant-security',
-                toolId: 'claude.macos.security',
-                displayName: 'macOS Keychain security',
-                source: 'system',
-                executablePath: '/usr/bin/security',
-                launch: {
-                    kind: 'binary',
-                    executablePath: '/usr/bin/security',
-                    env: { PATH: '' },
-                },
-                expiresAt: null,
-            })),
+        termination: {
+            observed: exitCode === null
+                ? { kind: 'signal', signal: 'SIGTERM' }
+                : { kind: 'exit', exitCode },
+            requestedBy: { kind: 'none' },
         },
-        run: vi.fn(async () => ({
-            exitCode: params.exitCode ?? 0,
-            signal: null,
-            stdout: '',
-            stderr: params.stderr ?? '',
-        })),
-    } as unknown as ExecRuntimeServiceV1;
+        stdout: new TextEncoder().encode(params.stdout ?? ''),
+        stderr: new TextEncoder().encode(params.stderr ?? ''),
+        stdoutTruncated: false,
+        stderrTruncated: false,
+    };
 }
 
-function createKeychainSweepExecFixture(params: Readonly<{ dumpStdout: string }>): ExecRuntimeServiceV1 {
+function createExecFixture(params: Readonly<{ exitCode?: number | null; stderr?: string }> = {}): PluginExecService {
     return {
         systemTools: {
             resolve: vi.fn(async () => ({
-                grantId: 'grant-security',
-                toolId: 'claude.macos.security',
-                displayName: 'macOS Keychain security',
-                source: 'system',
+                executable: { kind: 'systemTool', id: 'macos-security' },
                 executablePath: '/usr/bin/security',
-                launch: {
-                    kind: 'binary',
-                    executablePath: '/usr/bin/security',
-                    env: { PATH: '' },
-                },
-                expiresAt: null,
+            })),
+        },
+        run: vi.fn(async () => createProcessResult(params)),
+    } as unknown as PluginExecService;
+}
+
+function createKeychainSweepExecFixture(params: Readonly<{ dumpStdout: string }>): PluginExecService {
+    return {
+        systemTools: {
+            resolve: vi.fn(async () => ({
+                executable: { kind: 'systemTool', id: 'macos-security' },
+                executablePath: '/usr/bin/security',
             })),
         },
         run: vi.fn(async (launch: { args?: readonly string[] }) => {
             if (launch.args?.includes('dump-keychain')) {
-                return { exitCode: 0, signal: null, stdout: params.dumpStdout, stderr: '' };
+                return createProcessResult({ stdout: params.dumpStdout });
             }
-            return { exitCode: 0, signal: null, stdout: '', stderr: '' };
+            return createProcessResult();
         }),
-    } as unknown as ExecRuntimeServiceV1;
+    } as unknown as PluginExecService;
 }
 
 describe('materializeClaudeCodeNativeAuth', () => {
@@ -128,6 +125,9 @@ describe('materializeClaudeCodeNativeAuth', () => {
         expect(JSON.stringify(provenance)).not.toContain('refresh-placeholder');
         expect(result.env).not.toHaveProperty('CLAUDE_CODE_OAUTH_TOKEN');
         expect(result.env).not.toHaveProperty('CLAUDE_CODE_SETUP_TOKEN');
+        expect(JSON.parse(await readFile(join(claudeConfigDir, '.claude.json'), 'utf8'))).toEqual({
+            hasCompletedOnboarding: true,
+        });
     });
 
     it('returns a safe reconnect diagnostic and does not write partial credentials when scopes are insufficient', async () => {
@@ -168,6 +168,7 @@ describe('materializeClaudeCodeNativeAuth', () => {
         ]);
         expect(JSON.stringify(result.diagnostics)).not.toContain('secret-placeholder');
         await expect(lstat(join(claudeConfigDir, '.credentials.json'))).rejects.toThrow();
+        await expect(lstat(join(claudeConfigDir, '.claude.json'))).rejects.toThrow();
     });
 
     it('returns a safe blocking diagnostic when credential file materialization fails', async () => {
@@ -235,14 +236,13 @@ describe('materializeClaudeCodeNativeAuth', () => {
 
         expect(result.status).toBe('materialized');
         expect(exec.systemTools.resolve).toHaveBeenCalledWith(expect.objectContaining({
-            toolId: 'claude.macos.security',
-            preferredCommand: 'security',
+            toolId: 'macos-security',
         }));
         expect(exec.run).toHaveBeenCalledWith(expect.objectContaining({
-            kind: 'binary',
-            executablePath: '/usr/bin/security',
+            executable: { kind: 'systemTool', id: 'macos-security' },
             args: expect.arrayContaining(['delete-generic-password', '-a', 'leeroy']),
-        }), expect.objectContaining({ timeoutMs: 10_000 }));
+            timeoutMs: 10_000,
+        }));
         expect(exec.run).not.toHaveBeenCalledWith(expect.objectContaining({
             args: expect.arrayContaining(['add-generic-password']),
         }));
@@ -291,14 +291,17 @@ describe('materializeClaudeCodeNativeAuth', () => {
         expect(result.status).toBe('materialized');
         expect(exec.run).not.toHaveBeenCalledWith(expect.objectContaining({
             args: ['dump-keychain'],
-        }), { timeoutMs: 10_000 });
+            timeoutMs: 10_000,
+        }));
         await new Promise((resolve) => setTimeout(resolve, 0));
         expect(exec.run).toHaveBeenCalledWith(expect.objectContaining({
             args: ['dump-keychain'],
-        }), { timeoutMs: 10_000 });
+            timeoutMs: 10_000,
+        }));
         expect(exec.run).toHaveBeenCalledWith(expect.objectContaining({
             args: ['delete-generic-password', '-a', 'tester', '-s', staleService],
-        }), { timeoutMs: 10_000 });
+            timeoutMs: 10_000,
+        }));
     });
 
     it('skips stable credential materialization and keychain work when provenance fingerprint matches', async () => {
@@ -393,10 +396,13 @@ describe('materializeClaudeCodeNativeAuth', () => {
         const claudeConfigDir = await mkdtemp(join(tmpdir(), 'happier-claude-native-auth-test-'));
         const previousCredentialPath = join(claudeConfigDir, '.credentials.json');
         const previousProvenancePath = join(claudeConfigDir, PROVENANCE_FILE_NAME);
+        const previousRootConfigPath = join(claudeConfigDir, '.claude.json');
         const previousCredential = '{"claudeAiOauth":{"accessToken":"previous-access","refreshToken":"previous-refresh","scopes":["user:inference","user:profile","user:sessions:claude_code"]}}\n';
         const previousProvenance = '{"v":1,"serviceId":"claude-subscription","credentialProfileId":"previous","credentialCreatedAt":1,"credentialFingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}\n';
+        const previousRootConfig = '{"oauthAccount":{"emailAddress":"previous@example.test"},"additionalModelOptionsCache":[{"description":"previous entitlement"}]}\n';
         await writeFile(previousCredentialPath, previousCredential, { mode: 0o600 });
         await writeFile(previousProvenancePath, previousProvenance, { mode: 0o600 });
+        await writeFile(previousRootConfigPath, previousRootConfig, { mode: 0o600 });
         const record = buildConnectedServiceCredentialRecord({
             now: 1000,
             serviceId: 'claude-subscription',
@@ -419,5 +425,6 @@ describe('materializeClaudeCodeNativeAuth', () => {
         expect(result.status).toBe('diagnostic');
         await expect(readFile(previousCredentialPath, 'utf8')).resolves.toBe(previousCredential);
         await expect(readFile(previousProvenancePath, 'utf8')).resolves.toBe(previousProvenance);
+        await expect(readFile(previousRootConfigPath, 'utf8')).resolves.toBe(previousRootConfig);
     });
 });

@@ -1,4 +1,4 @@
-import { redactBugReportSensitiveText } from '@happier-dev/protocol';
+import { redactBugReportSensitiveText } from '@happier-dev/plugin-sdk/experimental/diagnostics';
 
 const PROVIDER_PROMPT_ERROR_MAX_CHARS = 4_000;
 

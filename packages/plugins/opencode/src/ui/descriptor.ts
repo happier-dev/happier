@@ -1,4 +1,3 @@
-import { OPENCODE_AGENT_SETTINGS_DESCRIPTOR } from '../agentSettings/definition.js';
 
 export const OPENCODE_UI_DESCRIPTOR = Object.freeze({
   kind: 'plugin.ui.v1',
@@ -27,7 +26,7 @@ export const OPENCODE_UI_DESCRIPTOR = Object.freeze({
     picker: {
       iconName: 'code-slash-outline',
       iconScale: 0.9,
-      cliGlyphTokenId: 'agentGlyph.opencode',
+      cliGlyph: '</>',
       cliGlyphScale: 1.0,
       profileCompatibilityGlyphScale: 1.0,
     },
@@ -37,7 +36,6 @@ export const OPENCODE_UI_DESCRIPTOR = Object.freeze({
     },
     icon: { assetId: 'opencode' },
   },
-  settings: OPENCODE_AGENT_SETTINGS_DESCRIPTOR,
   behavior: {
     descriptorId: 'opencode.uiBehavior.v1',
     guidance: { includeInSessionGettingStartedCliExamples: true },

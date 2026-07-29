@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { AGENT_DEFINITION } from './definition.js';
+import { PLUGIN_MANIFEST } from '../manifest.js';
 
 describe('Gemini agent definition runtime contributions', () => {
   it('exports a plugin-owned provider catalog runtime contribution', () => {
@@ -20,25 +21,30 @@ describe('Gemini agent definition runtime contributions', () => {
       'gcloud ADC',
       'gemini auth',
     ];
-    const serializedDefinition = JSON.stringify(AGENT_DEFINITION);
+    const serializedDefinition = JSON.stringify({
+      definition: AGENT_DEFINITION,
+      manifest: PLUGIN_MANIFEST,
+    });
 
     for (const forbiddenFact of forbiddenFacts) {
       expect(serializedDefinition).not.toContain(forbiddenFact);
     }
-    expect(AGENT_DEFINITION.authProbeConfig.envVars).toEqual([
+    const cli = PLUGIN_MANIFEST.contributes.agents[0]?.cli;
+    expect(cli?.auth.probe.envVars).toEqual([
       'GEMINI_API_KEY',
       'GOOGLE_API_KEY',
       'GOOGLE_GENAI_USE_VERTEXAI',
       'GOOGLE_CLOUD_PROJECT',
       'GOOGLE_CLOUD_LOCATION',
     ]);
-    expect(AGENT_DEFINITION.authProbeConfig.parser).toBe('envOnly');
-    expect(AGENT_DEFINITION.authProbeConfig.credentialPaths ?? []).toEqual([]);
-    expect(AGENT_DEFINITION.localCli).toEqual(expect.objectContaining({
-      supportKind: 'unsupported',
-      loginLaunch: null,
+    expect(cli?.auth.probe.parser).toBe('envOnly');
+    expect(cli?.auth.probe.credentialPaths ?? []).toEqual([]);
+    expect(cli?.auth).toEqual(expect.objectContaining({
+      support: 'unsupported',
+      loginLaunches: [],
     }));
-    expect(AGENT_DEFINITION.localCli.machineLoginKey).not.toBe('gemini-cli');
+    expect(cli?.auth.machineLoginKey).not.toBe('gemini-cli');
+    expect(AGENT_DEFINITION).not.toHaveProperty('authProbeConfig');
   });
 
   it('constrains freeform Gemini model ids to Gemini resource names', () => {

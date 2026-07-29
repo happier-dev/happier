@@ -7,6 +7,7 @@ import {
   readAntigravityConnectedServiceId,
 } from '../connectedServices/index.js';
 import { ANTIGRAVITY_PREFLIGHT_SESSION_CONTROLS } from '../preflight/models.js';
+import { createAntigravityConnectedServiceRuntimeAuthAdapter } from '../connectedServices/runtimeAuthAdapter.js';
 
 export const ANTIGRAVITY_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
   agentId: 'antigravity',
@@ -22,8 +23,10 @@ export const ANTIGRAVITY_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
     createAuthMaterializationInput: createAntigravityAuthMaterializationInput,
     materializeAuthEnvironment: materializeAntigravityAuthEnvironment,
     stateSharingDescriptor: antigravityConnectedServiceStateSharingDescriptor,
+    runtimeAuthAdapter: createAntigravityConnectedServiceRuntimeAuthAdapter(),
     recoveryCapabilities: {
       predictiveSoftSwitch: { mode: 'unsupported' },
+      generationApplicationScope: 'per_session_runtime',
     },
     shouldRestartForServiceSwitch: (selection: unknown) => readAntigravityConnectedServiceId(selection) !== null,
     restartRematerializeRequiredReason: 'antigravity_auth_environment_rematerialization_required',

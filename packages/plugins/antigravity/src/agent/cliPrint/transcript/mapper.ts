@@ -3,6 +3,10 @@ import {
   normalizeAntigravityToolName,
   type AntigravityStep,
 } from '../../normalize/index.js';
+import type {
+  AgentExternalSessionLinkDataValue,
+  AgentExternalSessionTranscriptItem,
+} from '@happier-dev/plugin-sdk/experimental/sessions';
 
 type JsonRecord = Readonly<Record<string, unknown>>;
 
@@ -219,4 +223,133 @@ export function mapAntigravityTranscriptStepsToRuntimeEvents(params: Readonly<{
   steps: readonly AntigravityStep[];
 }>): ReturnType<typeof mapAntigravityStepsToRuntimeEvents> {
   return mapAntigravityStepsToRuntimeEvents(params);
+}
+
+export type AntigravityTranscriptRecordWithOffsets = Readonly<{
+  record: JsonRecord;
+  startOffsetBytes: number;
+  endOffsetBytes: number;
+}>;
+
+export type AntigravityExternalTranscriptItemGroup = Readonly<{
+  startOffsetBytes: number;
+  endOffsetBytes: number;
+  items: readonly AgentExternalSessionTranscriptItem[];
+}>;
+
+function readCreatedAtMs(record: JsonRecord): number {
+  const value = record.created_at ?? record.createdAt ?? record.timestamp ?? record.time;
+  const parsed = typeof value === 'number' ? value : typeof value === 'string' ? Date.parse(value) : Number.NaN;
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0;
+}
+
+function toLinkDataValue(value: unknown): AgentExternalSessionLinkDataValue {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (Array.isArray(value)) return value.map(toLinkDataValue);
+  if (isRecord(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, toLinkDataValue(entry)]),
+    );
+  }
+  return null;
+}
+
+function projectStep(params: Readonly<{
+  step: AntigravityStep;
+  fallbackId: string;
+  createdAtMs: number;
+}>): AgentExternalSessionTranscriptItem {
+  const id = params.step.id ?? params.fallbackId;
+  const localId = params.step.id;
+  const common = {
+    id,
+    createdAtMs: params.createdAtMs,
+    ...(localId ? { localId } : {}),
+  };
+  switch (params.step.kind) {
+    case 'user_message':
+      return { ...common, messageRole: 'user', raw: { type: 'text', text: params.step.text } };
+    case 'assistant_message':
+      return { ...common, messageRole: 'agent', raw: { type: 'text', text: params.step.text } };
+    case 'tool_call':
+      return {
+        ...common,
+        messageRole: 'event',
+        raw: {
+          type: 'tool-call',
+          callId: id,
+          name: params.step.toolName,
+          input: toLinkDataValue(params.step.input),
+          id,
+        },
+      };
+    case 'tool_result':
+      return {
+        ...common,
+        messageRole: 'event',
+        raw: {
+          type: 'tool-result',
+          callId: params.step.toolCallId,
+          output: toLinkDataValue(params.step.output),
+          id,
+          ...(params.step.isError !== undefined ? { isError: params.step.isError } : {}),
+        },
+      };
+    case 'checkpoint':
+      return {
+        ...common,
+        messageRole: 'event',
+        raw: {
+          type: 'antigravity_checkpoint',
+          ...(params.step.checkpointId ? { checkpointId: params.step.checkpointId } : {}),
+        },
+      };
+    case 'system_message':
+      return {
+        ...common,
+        messageRole: 'event',
+        raw: { type: 'antigravity_system', text: params.step.text },
+      };
+    case 'error':
+      return {
+        ...common,
+        messageRole: 'event',
+        raw: { type: 'antigravity_error', message: params.step.message },
+      };
+  }
+}
+
+export function projectAntigravityTranscriptRecordGroupsToExternalItems(params: Readonly<{
+  conversationId: string;
+  records: readonly AntigravityTranscriptRecordWithOffsets[];
+}>): readonly AntigravityExternalTranscriptItemGroup[] {
+  const pendingToolCallIds: string[] = [];
+  return params.records.map((entry) => {
+    let fallbackToolCallId = 0;
+    const namespace = `${params.conversationId}-byte-${entry.startOffsetBytes}`;
+    const steps = mapAntigravityTranscriptRecordToStepsWithContext(entry.record, {
+      pendingToolCallIds,
+      generatedIdNamespace: namespace,
+      nextFallbackToolCallId: () => `antigravity-turn-${namespace}-tool-${fallbackToolCallId += 1}`,
+    });
+    const createdAtMs = readCreatedAtMs(entry.record);
+    return {
+      startOffsetBytes: entry.startOffsetBytes,
+      endOffsetBytes: entry.endOffsetBytes,
+      items: steps.map((step, index) => projectStep({
+        step,
+        createdAtMs,
+        fallbackId: `antigravity-${params.conversationId}-byte-${entry.startOffsetBytes}-item-${index + 1}`,
+      })),
+    };
+  });
+}
+
+export function projectAntigravityTranscriptRecordsToExternalItems(params: Readonly<{
+  conversationId: string;
+  records: readonly AntigravityTranscriptRecordWithOffsets[];
+}>): readonly AgentExternalSessionTranscriptItem[] {
+  return projectAntigravityTranscriptRecordGroupsToExternalItems(params)
+    .flatMap((group) => group.items);
 }

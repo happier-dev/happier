@@ -1,11 +1,18 @@
-import type { AgentAuthProbeConfig } from '../auth.js';
-import type { AgentLocalCliConfig } from '../localCli.js';
 import type { AgentModelConfig } from '../models.js';
 import type { AgentSessionModeDescriptor, AgentSessionModesKind } from '../sessionModes.js';
 import type { AgentCore, AgentId } from '../types.js';
-import type { AgentCliRuntimeSpec } from '../cli/runtime.js';
-import type { AgentSettingsDefinition } from '../agentSettings/index.js';
+import type { PluginAgentCliMetadata } from '@happier-dev/protocol';
 import type { BuiltInAcpConfig } from '../acp.js';
+
+type DeepReadonly<T> = T extends (...args: never[]) => unknown
+  ? T
+  : T extends readonly unknown[]
+    ? { readonly [K in keyof T]: DeepReadonly<T[K]> }
+    : T extends object
+      ? { readonly [K in keyof T]: DeepReadonly<T[K]> }
+      : T;
+
+export type AgentDefinitionCliMetadata = DeepReadonly<PluginAgentCliMetadata>;
 
 /**
  * Canonical “agent definition” contract exported by bundled first-party extensions.
@@ -19,10 +26,7 @@ export type AgentDefinition = Readonly<{
   sessionModeDescriptor: AgentSessionModeDescriptor;
   sessionModesKind: AgentSessionModesKind;
   modelConfig: AgentModelConfig;
-  authProbeConfig: AgentAuthProbeConfig;
-  localCli: AgentLocalCliConfig;
-  agentCliRuntime: AgentCliRuntimeSpec;
+  cli: AgentDefinitionCliMetadata;
   builtInAcpConfig?: BuiltInAcpConfig | null;
-  agentSettings: AgentSettingsDefinition | null;
   runtimeContributions?: Readonly<Record<string, unknown>>;
 }>;

@@ -2,8 +2,7 @@ import type {
   TerminalInputInjectionResult,
   TerminalInputReadinessV1,
   TerminalPromptInput,
-} from '@happier-dev/plugin-sdk/experimental/runtime/session';
-import { resolveTerminalPromptProviderAcceptanceTimeoutMs } from '@happier-dev/plugin-sdk/experimental/runtime/session';
+} from '@happier-dev/agents';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createClaudeUnifiedInputArbiter } from './inputArbiter.js';
@@ -79,6 +78,101 @@ describe('createClaudeUnifiedInputArbiter', () => {
     expect(onPromptAccepted).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps an ordinary submitted prompt awaiting exact acceptance across compaction completion', async () => {
+    const input = promptInput('pending-through-compaction', {
+      localIds: ['pending-through-compaction'],
+    });
+    const injectPrompt = vi.fn(async () => injected());
+    const onPromptAccepted = vi.fn();
+    const arbiter = createClaudeUnifiedInputArbiter({
+      injectPrompt,
+      onPromptAccepted,
+    });
+
+    arbiter.enqueue(input);
+    arbiter.observeReadiness(readiness());
+    await arbiter.drain();
+
+    arbiter.observeCompaction({ phase: 'completed' });
+    await arbiter.drain();
+
+    expect(injectPrompt).toHaveBeenCalledTimes(1);
+    await expect(arbiter.confirmProviderAcceptance({
+      promptText: input.text,
+      exactPromptText: true,
+    })).resolves.toBe(true);
+    expect(onPromptAccepted).toHaveBeenCalledWith(input, expect.any(Object));
+
+    arbiter.dispose();
+  });
+
+  it('claims interrupt-and-run once for the exact native queued custody head while the turn is live', async () => {
+    const input = promptInput('interrupt-custody', {
+      localIds: ['queued-local'],
+    });
+    const arbiter = createClaudeUnifiedInputArbiter({
+      injectPrompt: vi.fn(async () => injected()),
+    });
+
+    arbiter.enqueue(input);
+    arbiter.observeReadiness(readiness({ activeTurnId: 'turn-live' }));
+    await arbiter.drain();
+    await expect(arbiter.observeTerminalPromptCustody(input)).resolves.toBe(true);
+
+    expect(arbiter.readPendingInputInterruptAndRunLocalId()).toBe('queued-local');
+    expect(arbiter.claimPendingInputInterruptAndRun('wrong-local')).toBe(false);
+    expect(arbiter.claimPendingInputInterruptAndRun('queued-local')).toBe(true);
+    expect(arbiter.claimPendingInputInterruptAndRun('queued-local')).toBe(false);
+    expect(arbiter.snapshot().terminalCustodyCount).toBe(1);
+
+    await expect(arbiter.confirmProviderAcceptance({
+      promptText: input.text,
+      exactPromptText: true,
+    })).resolves.toBe(true);
+    expect(arbiter.snapshot().terminalCustodyCount).toBe(0);
+  });
+
+  it('retains an ambiguous after-enter attempt until later exact provider confirmation', async () => {
+    const input = promptInput('late-exact-after-enter', {
+      localIds: ['late-exact-local'],
+    });
+    const onPromptAccepted = vi.fn();
+    const arbiter = createClaudeUnifiedInputArbiter({
+      injectPrompt: vi.fn(async () => ({
+        status: 'failed',
+        reason: 'ambiguous_provider_acceptance',
+        phase: 'after_enter_unknown',
+        recoverable: true,
+        duplicateRisk: 'possible',
+        observedAt: 1_100,
+      })),
+      onPromptAccepted,
+    });
+
+    arbiter.enqueue(input);
+    arbiter.observeReadiness(readiness());
+    await arbiter.drain();
+
+    expect(arbiter.snapshot()).toMatchObject({
+      queuedCount: 1,
+      pendingInjectionCount: 0,
+      providerAcceptancePendingCount: 1,
+      headInputState: 'awaiting_provider_acceptance',
+    });
+    await expect(arbiter.confirmProviderAcceptance({
+      promptText: input.text,
+      exactPromptText: true,
+    })).resolves.toBe(true);
+    expect(onPromptAccepted).toHaveBeenCalledWith(input, expect.any(Object));
+    expect(arbiter.snapshot()).toMatchObject({
+      queuedCount: 0,
+      providerAcceptancePendingCount: 0,
+      headInputState: 'submitted',
+    });
+
+    arbiter.dispose();
+  });
+
   it('wakes a prompt deferred by a user draft after the terminal composer is cleared', async () => {
     vi.useFakeTimers();
     const injectPrompt = vi.fn(async () => injected());
@@ -109,16 +203,23 @@ describe('createClaudeUnifiedInputArbiter', () => {
     });
   });
 
-  it('terminalizes a deferred canonical head with a typed durable blocker in the snapshot', async () => {
-    const input = promptInput('draft-blocked', {
-      localIds: ['pending-draft-local'],
+  it.each([
+    'terminal_composer_draft',
+    'runtime_config_blocked',
+    'provider_unavailable_before_acceptance',
+  ] as const)('retains a canonical head through reversible %s blocking and clears it once', async (reason) => {
+    vi.useFakeTimers();
+    const input = promptInput(reason, {
+      localIds: [`pending-${reason}`],
       userMessageSeq: null,
     });
     const terminallyRejected = vi.fn();
     const injectPrompt = vi.fn(async () => injected());
+    const onPromptAccepted = vi.fn();
     const arbiter = createClaudeUnifiedInputArbiter({
       injectPrompt,
       onPromptTerminallyRejectedBeforeProvider: terminallyRejected,
+      onPromptAccepted,
     });
 
     arbiter.enqueue(input);
@@ -134,57 +235,48 @@ describe('createClaudeUnifiedInputArbiter', () => {
       headDeliveryBlocker: { reason: 'terminal_composer_draft' },
     });
 
-    expect(arbiter.rejectHeadBeforeProvider({ deliveryBlockedReason: 'terminal_composer_draft' })).toBe(true);
+    expect(arbiter.blockHeadBeforeProvider({ deliveryBlockedReason: reason })).toBe(true);
 
     expect(terminallyRejected).toHaveBeenCalledWith(input, expect.objectContaining({
       status: 'failed',
-    }), { deliveryBlockedReason: 'terminal_composer_draft' });
+    }), { deliveryBlockedReason: reason });
     expect(injectPrompt).not.toHaveBeenCalled();
-    expect(arbiter.snapshot()).toMatchObject({
-      queuedCount: 0,
-      headInputState: 'failed_terminal',
-      headDeliveryBlocker: null,
-    });
-  });
-
-  it('terminalizes a provider-unavailable deferred canonical head with the provider-unavailable blocker', async () => {
-    const input = promptInput('provider-unavailable', {
-      localIds: ['pending-provider-unavailable'],
-      userMessageSeq: null,
-    });
-    const terminallyRejected = vi.fn();
-    const injectPrompt = vi.fn(async () => injected());
-    const arbiter = createClaudeUnifiedInputArbiter({
-      injectPrompt,
-      onPromptTerminallyRejectedBeforeProvider: terminallyRejected,
-    });
-
-    arbiter.enqueue(input);
-    arbiter.observeReadiness(readiness({
-      status: 'defer_provider_starting',
-      reason: 'provider_unavailable',
-    }));
-    await arbiter.drain();
-
     expect(arbiter.snapshot()).toMatchObject({
       queuedCount: 1,
       headInputState: 'waiting_for_readiness',
-      headDeliveryBlocker: { reason: 'provider_unavailable_before_acceptance' },
+      headDeliveryBlocker: { reason },
     });
 
-    expect(arbiter.rejectHeadBeforeProvider({
-      deliveryBlockedReason: 'provider_unavailable_before_acceptance',
+    arbiter.observeReadiness(readiness());
+    expect(arbiter.clearHeadBeforeProviderBlock(reason)).toBe(true);
+    expect(arbiter.clearHeadBeforeProviderBlock(reason)).toBe(false);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(injectPrompt).toHaveBeenCalledTimes(1);
+    await expect(arbiter.confirmProviderAcceptance()).resolves.toBe(true);
+    expect(onPromptAccepted).toHaveBeenCalledTimes(1);
+    expect(arbiter.snapshot()).toMatchObject({ queuedCount: 0, headInputState: 'submitted' });
+  });
+
+  it('does not replay a durably blocked retained head when the runtime is disposed', async () => {
+    const input = promptInput('blocked-runtime-replacement', {
+      localIds: ['pending-blocked-runtime-replacement'],
+      userMessageSeq: null,
+    });
+    const onUndeliverableInputs = vi.fn();
+    const arbiter = createClaudeUnifiedInputArbiter({
+      injectPrompt: vi.fn(async () => injected()),
+      onUndeliverableInputs,
+    });
+
+    arbiter.enqueue(input);
+    expect(arbiter.blockHeadBeforeProvider({
+      deliveryBlockedReason: 'runtime_config_blocked',
     })).toBe(true);
 
-    expect(terminallyRejected).toHaveBeenCalledWith(input, expect.objectContaining({
-      status: 'failed',
-    }), { deliveryBlockedReason: 'provider_unavailable_before_acceptance' });
-    expect(injectPrompt).not.toHaveBeenCalled();
-    expect(arbiter.snapshot()).toMatchObject({
-      queuedCount: 0,
-      headInputState: 'failed_terminal',
-      headDeliveryBlocker: null,
-    });
+    arbiter.dispose();
+
+    expect(onUndeliverableInputs).not.toHaveBeenCalled();
   });
 
   it('accepts provider confirmation when observed prompt text matches the queued prompt', async () => {
@@ -206,6 +298,30 @@ describe('createClaudeUnifiedInputArbiter', () => {
       queuedCount: 0,
       headInputState: 'submitted',
     });
+    expect(onPromptAccepted).toHaveBeenCalledTimes(1);
+  });
+
+  it('requires byte-exact prompt text for native queued-command acceptance evidence', async () => {
+    const onPromptAccepted = vi.fn();
+    const arbiter = createClaudeUnifiedInputArbiter({
+      injectPrompt: vi.fn(async () => injected()),
+      onPromptAccepted,
+    });
+
+    arbiter.enqueue(promptInput('exact'));
+    arbiter.observeReadiness(readiness());
+    await arbiter.drain();
+
+    await expect(arbiter.confirmProviderAcceptance({
+      promptText: ' prompt exact ',
+      exactPromptText: true,
+    })).resolves.toBe(false);
+    expect(onPromptAccepted).not.toHaveBeenCalled();
+
+    await expect(arbiter.confirmProviderAcceptance({
+      promptText: 'prompt exact',
+      exactPromptText: true,
+    })).resolves.toBe(true);
     expect(onPromptAccepted).toHaveBeenCalledTimes(1);
   });
 
@@ -252,11 +368,10 @@ describe('createClaudeUnifiedInputArbiter', () => {
     expect(onPromptAccepted).toHaveBeenCalledTimes(1);
   });
 
-  it('terminalizes deterministic invalid prompt text without handback or blocking later prompts', async () => {
+  it('terminalizes deterministic invalid prompt text without blocking later prompts', async () => {
     const invalidInput = promptInput('invalid');
     const validInput = promptInput('valid');
     const terminallyRejected = vi.fn();
-    const undeliverable: TerminalPromptInput[][] = [];
     const injectPrompt = vi
       .fn()
       .mockResolvedValueOnce({
@@ -271,7 +386,6 @@ describe('createClaudeUnifiedInputArbiter', () => {
     const arbiter = createClaudeUnifiedInputArbiter({
       injectPrompt,
       onPromptTerminallyRejectedBeforeProvider: terminallyRejected,
-      onUndeliverableInputs: (inputs) => undeliverable.push([...inputs]),
     });
 
     arbiter.enqueue(invalidInput);
@@ -290,404 +404,17 @@ describe('createClaudeUnifiedInputArbiter', () => {
     expect(injectPrompt).toHaveBeenCalledTimes(2);
 
     arbiter.dispose();
+  });;;;;;;;;;
 
-    expect(undeliverable).toEqual([[validInput]]);
-  });
-
-  it('retries one ambiguous provider-acceptance timeout and then terminalizes when still unaccepted', async () => {
+  it('keeps terminal queued-banner custody available for late exact acceptance after an ambiguous failed turn', async () => {
     vi.useFakeTimers();
     const injectPrompt = vi.fn(async () => injected());
     const onInjectionFailure = vi.fn();
-    const arbiter = createClaudeUnifiedInputArbiter({
-      injectPrompt,
-      onInjectionFailure,
-      providerAcceptanceTimeoutMs: 50,
-    });
-
-    arbiter.enqueue(promptInput('ambiguous'));
-    arbiter.observeReadiness(readiness());
-    await arbiter.drain();
-
-    expect(arbiter.snapshot()).toMatchObject({
-      queuedCount: 1,
-      headInputState: 'awaiting_provider_acceptance',
-    });
-
-    await vi.advanceTimersByTimeAsync(50);
-
-    expect(arbiter.snapshot()).toMatchObject({
-      queuedCount: 1,
-      headInputState: 'awaiting_provider_acceptance',
-      lastFailureReason: null,
-    });
-    expect(onInjectionFailure).toHaveBeenCalledWith(expect.objectContaining({
-      failureState: 'failed_ambiguous',
-    }));
-    expect(injectPrompt).toHaveBeenCalledTimes(2);
-
-    await vi.advanceTimersByTimeAsync(50);
-    await Promise.resolve();
-
-    expect(arbiter.snapshot()).toMatchObject({
-      queuedCount: 1,
-      headInputState: 'failed_terminal',
-      lastFailureReason: 'ambiguous_provider_acceptance',
-    });
-    expect(onInjectionFailure).toHaveBeenCalledWith(expect.objectContaining({
-      failureState: 'failed_terminal',
-    }));
-    expect(injectPrompt).toHaveBeenCalledTimes(2);
-  });
-
-  it('blocks server-owned pending input after ambiguous provider-acceptance timeout and hands it back without reinjecting', async () => {
-    vi.useFakeTimers();
-    const input = promptInput('server-ambiguous', {
-      userMessageSeq: 42,
-      userMessageSeqs: [42],
-    });
-    const injectPrompt = vi.fn(async () => injected());
-    const onInjectionFailure = vi.fn();
-    const undeliverable: TerminalPromptInput[][] = [];
-    const arbiter = createClaudeUnifiedInputArbiter({
-      injectPrompt,
-      onInjectionFailure,
-      onUndeliverableInputs: (inputs) => undeliverable.push([...inputs]),
-      providerAcceptanceTimeoutMs: 50,
-    });
-
-    arbiter.enqueue(input);
-    arbiter.observeReadiness(readiness());
-    await arbiter.drain();
-
-    expect(injectPrompt).toHaveBeenCalledTimes(1);
-
-    await vi.advanceTimersByTimeAsync(50);
-    await Promise.resolve();
-
-    expect(injectPrompt).toHaveBeenCalledTimes(1);
-    expect(onInjectionFailure).toHaveBeenCalledWith(expect.objectContaining({
-      input,
-      failureState: 'failed_ambiguous',
-    }));
-    expect(arbiter.snapshot()).toMatchObject({
-      queuedCount: 1,
-      pendingInjectionCount: 0,
-      providerAcceptancePendingCount: 1,
-      headInputState: 'failed_ambiguous',
-      lastFailureReason: 'ambiguous_provider_acceptance',
-    });
-
-    await vi.advanceTimersByTimeAsync(50);
-    expect(injectPrompt).toHaveBeenCalledTimes(1);
-
-    arbiter.dispose();
-
-    expect(undeliverable).toEqual([[input]]);
-  });
-
-  it('blocks local-id-only server-owned pending input after ambiguous provider-acceptance timeout without reinjecting', async () => {
-    vi.useFakeTimers();
-    const input = promptInput('server-ambiguous-local-id', {
-      localIds: ['pending-local-id-only'],
-      userMessageSeq: null,
-    });
-    const injectPrompt = vi.fn(async () => injected());
-    const onInjectionFailure = vi.fn();
-    const arbiter = createClaudeUnifiedInputArbiter({
-      injectPrompt,
-      onInjectionFailure,
-      providerAcceptanceTimeoutMs: 50,
-    });
-
-    arbiter.enqueue(input);
-    arbiter.observeReadiness(readiness());
-    await arbiter.drain();
-
-    expect(injectPrompt).toHaveBeenCalledTimes(1);
-
-    await vi.advanceTimersByTimeAsync(50);
-    await Promise.resolve();
-
-    expect(injectPrompt).toHaveBeenCalledTimes(1);
-    expect(onInjectionFailure).toHaveBeenCalledWith(expect.objectContaining({
-      input,
-      failureState: 'failed_ambiguous',
-    }));
-    expect(arbiter.snapshot()).toMatchObject({
-      queuedCount: 1,
-      pendingInjectionCount: 0,
-      providerAcceptancePendingCount: 1,
-      headInputState: 'failed_ambiguous',
-      lastFailureReason: 'ambiguous_provider_acceptance',
-    });
-  });
-
-  it('scales provider acceptance timeout for large injected prompts before retrying', async () => {
-    vi.useFakeTimers();
-    const message = 'x'.repeat(128_000);
-    const input: TerminalPromptInput = {
-      ...promptInput('large'),
-      text: message,
-      multiline: true,
-    };
-    const injectPrompt = vi.fn(async () => injected({ bytesWritten: 128_000 }));
-    const failures: string[] = [];
-    const arbiter = createClaudeUnifiedInputArbiter({
-      injectPrompt,
-      onInjectionFailure: (failure) => failures.push(failure.failureState),
-      providerAcceptanceTimeoutMs: 50,
-    });
-
-    arbiter.enqueue(input);
-    arbiter.observeReadiness(readiness());
-    await arbiter.drain();
-
-    expect(injectPrompt).toHaveBeenCalledTimes(1);
-    expect(arbiter.snapshot()).toMatchObject({
-      queuedCount: 1,
-      headInputState: 'awaiting_provider_acceptance',
-    });
-
-    await vi.advanceTimersByTimeAsync(50);
-
-    expect(failures).toEqual([]);
-    expect(injectPrompt).toHaveBeenCalledTimes(1);
-    expect(arbiter.snapshot()).toMatchObject({
-      queuedCount: 1,
-      headInputState: 'awaiting_provider_acceptance',
-    });
-
-    const scaledTimeoutMs = resolveTerminalPromptProviderAcceptanceTimeoutMs(message, {
-      baseTimeoutMs: 50,
-      bytesWritten: 128_000,
-    });
-    await vi.advanceTimersByTimeAsync(scaledTimeoutMs + 1);
-
-    expect(failures).toEqual(['failed_ambiguous']);
-    expect(injectPrompt).toHaveBeenCalledTimes(2);
-    expect(arbiter.snapshot()).toMatchObject({
-      queuedCount: 1,
-      headInputState: 'awaiting_provider_acceptance',
-    });
-  });
-
-  it('accepts an ambiguous timeout without retrying when core already recorded provider acceptance', async () => {
-    vi.useFakeTimers();
-    const input = promptInput('already-accepted');
-    const injectPrompt = vi.fn(async () => injected());
     const onPromptAccepted = vi.fn();
-    const isPromptDeliveryAccepted = vi.fn((candidate: TerminalPromptInput) => candidate === input);
     const arbiter = createClaudeUnifiedInputArbiter({
       injectPrompt,
+      onInjectionFailure,
       onPromptAccepted,
-      isPromptDeliveryAccepted,
-      providerAcceptanceTimeoutMs: 50,
-    });
-
-    arbiter.enqueue(input);
-    arbiter.observeReadiness(readiness());
-    await arbiter.drain();
-
-    expect(injectPrompt).toHaveBeenCalledTimes(1);
-
-    await vi.advanceTimersByTimeAsync(50);
-
-    expect(isPromptDeliveryAccepted).toHaveBeenCalledWith(input);
-    expect(injectPrompt).toHaveBeenCalledTimes(1);
-    expect(onPromptAccepted).toHaveBeenCalledWith(input, expect.any(Object));
-    expect(arbiter.snapshot()).toMatchObject({
-      queuedCount: 0,
-      headInputState: 'submitted',
-      lastFailureReason: null,
-    });
-  });
-
-  it('accepts a seq-less pending head before the next in-flight drain when core delivery state records provider acceptance', async () => {
-    let deliveryAccepted = false;
-    const input = promptInput('post-injection-accepted', {
-      localIds: ['2354977c-f259-4e0d-bbdc-6268129b5e85'],
-      userMessageSeq: null,
-    });
-    const injectPrompt = vi.fn(async () => injected());
-    const accepted: Array<Readonly<{ text: string; acceptedAs: string }>> = [];
-    const isPromptDeliveryAccepted = vi.fn((candidate: TerminalPromptInput) => (
-      candidate === input && deliveryAccepted
-    ));
-    const arbiter = createClaudeUnifiedInputArbiter({
-      injectPrompt,
-      isPromptDeliveryAccepted,
-      onPromptAccepted: (acceptedInput, acceptance) => {
-        accepted.push({
-          text: acceptedInput.text,
-          acceptedAs: acceptance.acceptedAs,
-        });
-      },
-    });
-
-    arbiter.enqueue(input);
-    arbiter.observeReadiness(readiness());
-    await arbiter.drain();
-
-    expect(injectPrompt).toHaveBeenCalledTimes(1);
-    expect(accepted).toEqual([]);
-    expect(arbiter.snapshot()).toMatchObject({
-      queuedCount: 1,
-      headInputState: 'awaiting_provider_acceptance',
-    });
-
-    deliveryAccepted = true;
-    arbiter.observeReadiness(readiness({ activeTurnId: 'turn-live' }));
-    await arbiter.drain();
-
-    expect(isPromptDeliveryAccepted).toHaveBeenCalledWith(input);
-    expect(injectPrompt).toHaveBeenCalledTimes(1);
-    expect(accepted).toEqual([{
-      text: 'prompt post-injection-accepted',
-      acceptedAs: 'new_turn',
-    }]);
-    expect(arbiter.snapshot()).toMatchObject({
-      queuedCount: 0,
-      headInputState: 'submitted',
-      lastFailureReason: null,
-    });
-  });
-
-  it('does not inject a queued head already accepted by the provider before this arbiter saw it in flight', async () => {
-    const input = promptInput('pre-injection-accepted', {
-      localIds: ['local-pre-injection-accepted'],
-      userMessageSeq: null,
-    });
-    const injectPrompt = vi.fn(async () => injected());
-    const accepted: Array<Readonly<{ text: string; acceptedAs: string }>> = [];
-    const isPromptDeliveryAccepted = vi.fn((candidate: TerminalPromptInput) => candidate === input);
-    const arbiter = createClaudeUnifiedInputArbiter({
-      injectPrompt,
-      isPromptDeliveryAccepted,
-      onPromptAccepted: (acceptedInput, acceptance) => {
-        accepted.push({
-          text: acceptedInput.text,
-          acceptedAs: acceptance.acceptedAs,
-        });
-      },
-    });
-
-    arbiter.enqueue(input);
-    arbiter.observeReadiness(readiness({ activeTurnId: 'turn-live' }));
-    await arbiter.drain();
-
-    expect(isPromptDeliveryAccepted).toHaveBeenCalledWith(input);
-    expect(injectPrompt).not.toHaveBeenCalled();
-    expect(accepted).toEqual([{
-      text: 'prompt pre-injection-accepted',
-      acceptedAs: 'in_flight_steer',
-    }]);
-    expect(arbiter.snapshot()).toMatchObject({
-      queuedCount: 0,
-      headInputState: 'submitted',
-      lastFailureReason: null,
-    });
-  });
-
-  it('keeps a terminal-injected prompt retryable while compaction interrupts provider acceptance', async () => {
-    vi.useFakeTimers();
-    const injectPrompt = vi.fn(async () => injected());
-    const onInjectionFailure = vi.fn();
-    const arbiter = createClaudeUnifiedInputArbiter({
-      injectPrompt,
-      onInjectionFailure,
-      providerAcceptanceTimeoutMs: 50,
-    });
-
-    arbiter.enqueue(promptInput('compacted'));
-    arbiter.observeReadiness(readiness());
-    await arbiter.drain();
-
-    expect(injectPrompt).toHaveBeenCalledTimes(1);
-    arbiter.observeCompaction({ phase: 'started' });
-    await vi.advanceTimersByTimeAsync(50);
-
-    expect(onInjectionFailure).not.toHaveBeenCalled();
-    expect(arbiter.snapshot()).toMatchObject({
-      queuedCount: 1,
-      headInputState: 'awaiting_provider_acceptance',
-      lastFailureReason: null,
-    });
-
-    arbiter.observeCompaction({ phase: 'completed' });
-    arbiter.observeReadiness(readiness());
-    await arbiter.drain();
-
-    expect(injectPrompt).toHaveBeenCalledTimes(2);
-    expect(arbiter.snapshot()).toMatchObject({
-      queuedCount: 1,
-      headInputState: 'awaiting_provider_acceptance',
-      lastFailureReason: null,
-    });
-  });
-
-  it('terminalizes terminal queued-banner custody when provider acceptance never arrives', async () => {
-    vi.useFakeTimers();
-    const injectPrompt = vi.fn(async () => injected());
-    const onPromptAccepted = vi.fn();
-    const onInjectionFailure = vi.fn();
-    const arbiter = createClaudeUnifiedInputArbiter({
-      injectPrompt,
-      onPromptAccepted,
-      onInjectionFailure,
-      providerAcceptanceTimeoutMs: 50,
-    });
-
-    const input = promptInput('terminal-custody');
-    arbiter.enqueue(input);
-    arbiter.observeReadiness(readiness());
-    await arbiter.drain();
-
-    await expect(arbiter.observeTerminalPromptCustody(input)).resolves.toBe(true);
-    await vi.advanceTimersByTimeAsync(50);
-
-    expect(injectPrompt).toHaveBeenCalledTimes(1);
-    expect(onInjectionFailure).not.toHaveBeenCalled();
-    expect(onPromptAccepted).not.toHaveBeenCalled();
-    expect(arbiter.snapshot()).toMatchObject({
-      queuedCount: 1,
-      terminalCustodyCount: 1,
-      providerAcceptancePendingCount: 1,
-      headInputState: 'awaiting_provider_acceptance',
-      lastFailureReason: null,
-    });
-
-    arbiter.armPendingProviderAcceptanceTimeout();
-    await vi.advanceTimersByTimeAsync(50);
-
-    expect(onInjectionFailure).toHaveBeenCalledWith(expect.objectContaining({
-      input,
-      failureState: 'failed_terminal',
-      result: expect.objectContaining({
-        reason: 'ambiguous_provider_acceptance',
-        duplicateRisk: 'likely',
-      }),
-    }));
-    expect(onPromptAccepted).not.toHaveBeenCalled();
-    expect(arbiter.snapshot()).toMatchObject({
-      queuedCount: 0,
-      terminalCustodyCount: 0,
-      providerAcceptancePendingCount: 0,
-      headInputState: 'failed_terminal',
-      lastFailureReason: 'ambiguous_provider_acceptance',
-    });
-
-    await expect(arbiter.confirmProviderAcceptance({
-      promptText: 'prompt terminal-custody',
-    })).resolves.toBe(false);
-  });
-
-  it('terminalizes terminal queued-banner custody immediately when the terminal reports a failed turn', async () => {
-    vi.useFakeTimers();
-    const injectPrompt = vi.fn(async () => injected());
-    const onInjectionFailure = vi.fn();
-    const arbiter = createClaudeUnifiedInputArbiter({
-      injectPrompt,
-      onInjectionFailure,
       providerAcceptanceTimeoutMs: 10_000,
     });
 
@@ -701,18 +428,66 @@ describe('createClaudeUnifiedInputArbiter', () => {
 
     expect(onInjectionFailure).toHaveBeenCalledWith(expect.objectContaining({
       input,
-      failureState: 'failed_terminal',
+      failureState: 'failed_ambiguous',
       result: expect.objectContaining({
         reason: 'ambiguous_provider_acceptance',
         duplicateRisk: 'likely',
       }),
     }));
     expect(arbiter.snapshot()).toMatchObject({
+      queuedCount: 1,
+      terminalCustodyCount: 1,
+      providerAcceptancePendingCount: 1,
+      headInputState: 'awaiting_provider_acceptance',
+      lastFailureReason: 'ambiguous_provider_acceptance',
+    });
+
+    await expect(arbiter.confirmProviderAcceptance({
+      promptText: input.text,
+      exactPromptText: true,
+    })).resolves.toBe(true);
+    expect(onPromptAccepted).toHaveBeenCalledWith(input, expect.any(Object));
+    expect(arbiter.snapshot()).toMatchObject({
+      queuedCount: 0,
+      terminalCustodyCount: 0,
+      providerAcceptancePendingCount: 0,
+      headInputState: 'submitted',
+    });
+  });
+
+  it('terminalizes terminal custody when the failed turn carries exact pre-acceptance rejection evidence', async () => {
+    const input = promptInput('terminal-custody-provider-rejected');
+    const onInjectionFailure = vi.fn();
+    const onPromptTerminallyRejectedBeforeProvider = vi.fn();
+    const arbiter = createClaudeUnifiedInputArbiter({
+      injectPrompt: vi.fn(async () => injected()),
+      onInjectionFailure,
+      onPromptTerminallyRejectedBeforeProvider,
+      resolvePromptTerminalRejection: () => ({
+        deliveryBlockedReason: 'provider_rejected_before_acceptance',
+      }),
+    });
+
+    arbiter.enqueue(input);
+    arbiter.observeReadiness(readiness());
+    await arbiter.drain();
+    await expect(arbiter.observeTerminalPromptCustody(input)).resolves.toBe(true);
+
+    expect(arbiter.observePendingProviderAcceptanceTerminalFailure()).toBe(true);
+    expect(onPromptTerminallyRejectedBeforeProvider).toHaveBeenCalledWith(
+      input,
+      expect.objectContaining({ reason: 'ambiguous_provider_acceptance' }),
+      { deliveryBlockedReason: 'provider_rejected_before_acceptance' },
+    );
+    expect(onInjectionFailure).toHaveBeenCalledWith(expect.objectContaining({
+      input,
+      failureState: 'failed_terminal',
+    }));
+    expect(arbiter.snapshot()).toMatchObject({
       queuedCount: 0,
       terminalCustodyCount: 0,
       providerAcceptancePendingCount: 0,
       headInputState: 'failed_terminal',
-      lastFailureReason: 'ambiguous_provider_acceptance',
     });
   });
 
@@ -722,7 +497,6 @@ describe('createClaudeUnifiedInputArbiter', () => {
     const second = promptInput('terminal-custody-second');
     const injectedTexts: string[] = [];
     const acceptedTexts: string[] = [];
-    const undeliverable: TerminalPromptInput[][] = [];
     const arbiter = createClaudeUnifiedInputArbiter({
       injectPrompt: vi.fn(async (input) => {
         injectedTexts.push(input.text);
@@ -731,7 +505,6 @@ describe('createClaudeUnifiedInputArbiter', () => {
       onPromptAccepted: (input) => {
         acceptedTexts.push(input.text);
       },
-      onUndeliverableInputs: (inputs) => undeliverable.push([...inputs]),
       providerAcceptanceTimeoutMs: 50,
     });
 
@@ -802,7 +575,44 @@ describe('createClaudeUnifiedInputArbiter', () => {
     });
 
     arbiter.dispose();
-    expect(undeliverable).toEqual([]);
+  });
+
+  it('fails closed when prompt-only acceptance matches multiple terminal-custody inputs', async () => {
+    const first = promptInput('identical-terminal-custody', {
+      localIds: ['first-local'],
+    });
+    const second: TerminalPromptInput = {
+      ...first,
+      origin: {
+        ...first.origin,
+        nonce: 'identical-terminal-custody-second',
+        localIds: ['second-local'],
+      },
+    };
+    const acceptedLocalIds: string[] = [];
+    const arbiter = createClaudeUnifiedInputArbiter({
+      injectPrompt: vi.fn(async () => injected()),
+      onPromptAccepted: (input) => {
+        acceptedLocalIds.push(...(input.origin.localIds ?? []));
+      },
+    });
+
+    arbiter.observeReadiness(readiness({ activeTurnId: 'turn-1' }));
+    arbiter.enqueue(first);
+    await arbiter.drain();
+    await expect(arbiter.observeTerminalPromptCustody(first)).resolves.toBe(true);
+    arbiter.enqueue(second);
+    await arbiter.drain();
+    await expect(arbiter.observeTerminalPromptCustody(second)).resolves.toBe(true);
+
+    await expect(arbiter.confirmProviderAcceptance({
+      promptText: first.text,
+      exactPromptText: true,
+    })).resolves.toBe(false);
+    expect(acceptedLocalIds).toEqual([]);
+    expect(arbiter.snapshot()).toMatchObject({ terminalCustodyCount: 2 });
+
+    arbiter.dispose();
   });
 
   it('keeps a later injected prompt awaiting acceptance when an earlier terminal-custody prompt is confirmed first', async () => {
@@ -881,122 +691,7 @@ describe('createClaudeUnifiedInputArbiter', () => {
       providerAcceptancePendingCount: 0,
       headInputState: 'submitted',
     });
-  });
-
-  it('accepts a timed-out compact prompt when compact boundary evidence arrives later', async () => {
-    vi.useFakeTimers();
-    const onPromptAccepted = vi.fn();
-    const arbiter = createClaudeUnifiedInputArbiter({
-      injectPrompt: vi.fn(async () => injected()),
-      onPromptAccepted,
-      providerAcceptanceTimeoutMs: 50,
-    });
-    const compactInput: TerminalPromptInput = {
-      text: '/compact',
-      multiline: false,
-      origin: { kind: 'ui_pending', nonce: 'compact' },
-      scheduling: {},
-    };
-
-    arbiter.enqueue(compactInput);
-    arbiter.observeReadiness(readiness());
-    await arbiter.drain();
-    await vi.advanceTimersByTimeAsync(50);
-
-    expect(arbiter.snapshot()).toMatchObject({
-      queuedCount: 1,
-      headInputState: 'failed_ambiguous',
-    });
-
-    await expect(arbiter.confirmProviderAcceptance({
-      promptText: '/compact',
-      includeTimedOutAmbiguous: true,
-    })).resolves.toBe(true);
-
-    expect(onPromptAccepted).toHaveBeenCalledWith(compactInput, expect.any(Object));
-    expect(arbiter.snapshot()).toMatchObject({
-      queuedCount: 0,
-      headInputState: 'submitted',
-      lastFailureReason: null,
-    });
-  });
-
-  it('accepts late provider confirmation for an ambiguous timeout without retrying again', async () => {
-    vi.useFakeTimers();
-    const onPromptAccepted = vi.fn();
-    const injectPrompt = vi.fn(async () => injected());
-    const arbiter = createClaudeUnifiedInputArbiter({
-      injectPrompt,
-      onPromptAccepted,
-      providerAcceptanceTimeoutMs: 50,
-    });
-
-    const input = promptInput('late-confirmed');
-    arbiter.enqueue(input);
-    arbiter.observeReadiness(readiness());
-    await arbiter.drain();
-
-    await vi.advanceTimersByTimeAsync(50);
-    expect(injectPrompt).toHaveBeenCalledTimes(2);
-    expect(arbiter.snapshot()).toMatchObject({
-      queuedCount: 1,
-      headInputState: 'awaiting_provider_acceptance',
-    });
-
-    await expect(arbiter.confirmProviderAcceptance({
-      promptText: 'prompt late-confirmed',
-      includeTimedOutAmbiguous: true,
-    })).resolves.toBe(true);
-
-    expect(onPromptAccepted).toHaveBeenCalledWith(input, expect.any(Object));
-    expect(arbiter.snapshot()).toMatchObject({
-      queuedCount: 0,
-      headInputState: 'submitted',
-      lastFailureReason: null,
-    });
-    expect(injectPrompt).toHaveBeenCalledTimes(2);
-  });
-
-  it('accepts local-id-only pending prompt when finalizing readiness proves provider custody before timeout', async () => {
-    vi.useFakeTimers();
-    const input = promptInput('finalizing-accepted', {
-      localIds: ['pending-local-finalizing'],
-    });
-    const accepted: string[] = [];
-    const injectPrompt = vi.fn(async () => injected());
-    const onInjectionFailure = vi.fn();
-    const arbiter = createClaudeUnifiedInputArbiter({
-      injectPrompt,
-      onPromptAccepted: (acceptedInput) => {
-        accepted.push(acceptedInput.text);
-      },
-      onInjectionFailure,
-      providerAcceptanceTimeoutMs: 50,
-    });
-
-    arbiter.enqueue(input);
-    arbiter.observeReadiness(readiness());
-    await arbiter.drain();
-
-    expect(injectPrompt).toHaveBeenCalledTimes(1);
-    expect(accepted).toEqual([]);
-    expect(arbiter.snapshot()).toMatchObject({
-      queuedCount: 1,
-      headInputState: 'awaiting_provider_acceptance',
-    });
-
-    arbiter.observeReadiness(readiness({ status: 'defer_finalizing' }));
-    await vi.advanceTimersByTimeAsync(50);
-
-    expect(injectPrompt).toHaveBeenCalledTimes(1);
-    expect(onInjectionFailure).not.toHaveBeenCalled();
-    expect(accepted).toEqual(['prompt finalizing-accepted']);
-    expect(arbiter.snapshot()).toMatchObject({
-      queuedCount: 0,
-      headInputState: 'submitted',
-      lastFailureReason: null,
-    });
-  });
+  });;;;
 
   it('accepts provider confirmation that arrives while injection is still resolving', async () => {
     vi.useFakeTimers();
@@ -1062,102 +757,4 @@ describe('createClaudeUnifiedInputArbiter', () => {
     });
   });
 
-  describe('undeliverable-input handback (ported HF-2 / F-1)', () => {
-    it('hands back ALL still-queued inputs in FIFO order on dispose, including the awaiting-acceptance head', async () => {
-      const undeliverable: TerminalPromptInput[][] = [];
-      const arbiter = createClaudeUnifiedInputArbiter({
-        injectPrompt: vi.fn(async () => injected()),
-        onUndeliverableInputs: (inputs) => undeliverable.push([...inputs]),
-      });
-
-      const head = promptInput('head');
-      const tail = promptInput('tail');
-      arbiter.enqueue(head);
-      arbiter.enqueue(tail);
-      arbiter.observeReadiness(readiness());
-      await arbiter.drain();
-      expect(arbiter.snapshot()).toMatchObject({ headInputState: 'awaiting_provider_acceptance' });
-
-      arbiter.dispose();
-
-      // FIFO, never silently dropped. The awaiting-acceptance head is duplicate-attempt
-      // direction: redelivery is deduped downstream, silent loss is not recoverable.
-      expect(undeliverable).toEqual([[head, tail]]);
-    });
-
-    it('hands back an input enqueued after dispose instead of silently refusing it', () => {
-      const undeliverable: TerminalPromptInput[][] = [];
-      const arbiter = createClaudeUnifiedInputArbiter({
-        injectPrompt: vi.fn(async () => injected()),
-        onUndeliverableInputs: (inputs) => undeliverable.push([...inputs]),
-      });
-
-      arbiter.dispose();
-      const late = promptInput('late');
-      arbiter.enqueue(late);
-
-      expect(undeliverable).toEqual([[late]]);
-    });
-
-    it('does not hand back prompts the provider already accepted', async () => {
-      const undeliverable: TerminalPromptInput[][] = [];
-      const arbiter = createClaudeUnifiedInputArbiter({
-        injectPrompt: vi.fn(async () => injected()),
-        onUndeliverableInputs: (inputs) => undeliverable.push([...inputs]),
-      });
-
-      arbiter.enqueue(promptInput('accepted'));
-      arbiter.observeReadiness(readiness());
-      await arbiter.drain();
-      await expect(arbiter.confirmProviderAcceptance()).resolves.toBe(true);
-
-      arbiter.dispose();
-
-      expect(undeliverable).toEqual([]);
-    });
-
-    it('does not hand back a prompt after provider acceptance uncertainty terminalizes', async () => {
-      vi.useFakeTimers();
-      const undeliverable: TerminalPromptInput[][] = [];
-      const arbiter = createClaudeUnifiedInputArbiter({
-        injectPrompt: vi.fn(async () => injected()),
-        onUndeliverableInputs: (inputs) => undeliverable.push([...inputs]),
-        providerAcceptanceTimeoutMs: 50,
-      });
-
-      arbiter.enqueue(promptInput('terminal-unknown'));
-      arbiter.observeReadiness(readiness());
-      await arbiter.drain();
-      await vi.advanceTimersByTimeAsync(50);
-      await vi.advanceTimersByTimeAsync(50);
-
-      expect(arbiter.snapshot()).toMatchObject({
-        queuedCount: 1,
-        headInputState: 'failed_terminal',
-        lastFailureReason: 'ambiguous_provider_acceptance',
-      });
-
-      arbiter.dispose();
-
-      expect(undeliverable).toEqual([]);
-    });
-
-    it('does not hand back a terminal-custody prompt that never received provider confirmation', async () => {
-      const undeliverable: TerminalPromptInput[][] = [];
-      const arbiter = createClaudeUnifiedInputArbiter({
-        injectPrompt: vi.fn(async () => injected()),
-        onUndeliverableInputs: (inputs) => undeliverable.push([...inputs]),
-      });
-
-      const input = promptInput('terminal-custody-handback');
-      arbiter.enqueue(input);
-      arbiter.observeReadiness(readiness());
-      await arbiter.drain();
-      await expect(arbiter.observeTerminalPromptCustody(input)).resolves.toBe(true);
-
-      arbiter.dispose();
-
-      expect(undeliverable).toEqual([]);
-    });
-  });
 });

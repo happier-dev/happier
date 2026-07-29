@@ -19,6 +19,8 @@ const FIELD_CAPABILITY_PATH = {
   'display.title': ['display', 'title'],
   'runtime.workState': ['runtime', 'workState'],
   'runtime.activity': ['runtime', 'activity'],
+  'runtime.externalAgent': ['runtime', 'externalAgent'],
+  'runtime.externalSessionOperation': ['runtime', 'externalSessionOperation'],
   'runtime.usageLimitRecovery': ['runtime', 'usageLimitRecovery'],
   'runtime.sessionRunner': ['runtime', 'sessionRunner'],
   'view.readState': ['view', 'readState'],

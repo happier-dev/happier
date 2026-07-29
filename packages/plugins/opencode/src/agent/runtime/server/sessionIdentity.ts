@@ -1,9 +1,8 @@
-import type { PluginContextV1 } from '@happier-dev/plugin-sdk';
-
 import { OPEN_CODE_PROVIDER_SESSION_ID_METADATA_KEY } from '../../identity/session.js';
+import type { OpenCodeRuntimeContext } from './runtimeContext.js';
 
 export async function publishOpenCodeProviderSessionId(params: Readonly<{
-  ctx: PluginContextV1;
+  ctx: OpenCodeRuntimeContext;
   providerSessionId: string;
   reason: string;
 }>): Promise<void> {

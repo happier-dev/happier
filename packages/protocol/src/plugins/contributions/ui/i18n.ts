@@ -28,3 +28,5 @@ export const PluginUiTranslationsContributionV1Schema = z.object({
   defaultLocale: PluginUiLocaleCodeV1Schema.optional(),
 }).strict();
 export type PluginUiTranslationsContributionV1 = z.infer<typeof PluginUiTranslationsContributionV1Schema>;
+export type PluginUiTranslationsContribution = z.infer<typeof PluginUiTranslationsContributionV1Schema>;
+export type PluginUiTranslationsContributionInput = z.input<typeof PluginUiTranslationsContributionV1Schema>;

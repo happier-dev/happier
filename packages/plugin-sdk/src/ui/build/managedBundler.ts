@@ -1,8 +1,11 @@
+import { createRequire } from 'node:module';
 import { readFile } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
 
-import type { ExecRuntimeServiceV1 } from '../../exec.js';
-import type { ReactNativeRepackBuildPresetV1 } from '../reactNativeBuild.js';
+import { PLUGIN_UI_HOST_API_VERSION_V1 } from '@happier-dev/protocol/plugins/ui';
+
+import type { PluginUiBuildTarget } from './config.js';
+import type { ReactNativeRepackBuildPreset } from '../reactNativeBuild.js';
 import type {
     PluginUiBuildSurfaceV1,
     PluginUiBundlerRunResultV1,
@@ -10,17 +13,34 @@ import type {
     PluginUiReactNativeBuildSurfaceV1,
 } from './buildUiArtifacts.js';
 
+export type ManagedBundlerExecResult = Readonly<{
+    exitCode: number | null;
+    signal: string | null;
+    stdout: string;
+    stderr: string;
+}>;
+
+export type ManagedBundlerExecService = Readonly<{
+    run(input: Readonly<{
+        kind: 'managed-installable';
+        installableId: string;
+        args?: readonly string[];
+        cwd?: string;
+        sourcePreference?: 'managed-first' | 'system-first';
+    }>, options?: Readonly<{ timeoutMs?: number }>): Promise<ManagedBundlerExecResult>;
+}>;
+
 /**
  * Managed-runtime-backed bundler runner. The author build is a
  * "managed JS-runtime-dependent" path (docs/binary-runtime.md): it MUST route
  * the bundler invocation through the centralized managed runtime/tool
- * abstraction (`ExecRuntimeServiceV1`) rather than spawning raw
+ * abstraction rather than spawning raw
  * node/npm/npx/pnpm/yarn/bunx. The bundler (Vite for web tiers, Re.Pack for
  * React Native) is launched as a managed installable; its emitted dist files
  * are then read back so the executor can digest the real bytes.
  */
 export type ManagedBundlerRunnerInputV1 = Readonly<{
-    exec: ExecRuntimeServiceV1;
+    exec: ManagedBundlerExecService;
     /**
      * Absolute path the bundler writes its emitted artifact tree into. Files are
      * read back relative to `<emittedRoot>` and keyed by their relative path.
@@ -34,11 +54,69 @@ export type ManagedBundlerRunnerInputV1 = Readonly<{
         surface: PluginUiBuildSurfaceV1,
         context: Readonly<{ projectRoot: string; emittedRoot: string }>,
     ) => Promise<readonly string[]>;
+    toArtifactRelativePath?: (
+        surface: PluginUiBuildSurfaceV1,
+        absolutePath: string,
+        context: Readonly<{ projectRoot: string; emittedRoot: string }>,
+    ) => string;
     timeoutMs?: number;
 }>;
 
 const DEFAULT_VITE_INSTALLABLE_ID = 'plugin-ui.bundler.vite';
 const DEFAULT_REPACK_INSTALLABLE_ID = 'plugin-ui.bundler.repack';
+
+export type ManagedPluginUiBuildVersionsV1 = Readonly<{
+    hostUiApiVersion: string;
+    viteVersion?: string;
+    repackVersion?: string;
+    reactVersion: string;
+    reactNativeVersion?: string;
+}>;
+
+function readInstalledPackageVersion(projectRoot: string, packageName: string): string {
+    const require = createRequire(join(projectRoot, 'package.json'));
+    let packageJson: unknown;
+    try {
+        packageJson = require(`${packageName}/package.json`) as unknown;
+    } catch (cause) {
+        throw new Error(
+            `Managed plugin UI build requires project dependency "${packageName}" (${(cause as Error).message})`,
+        );
+    }
+    const version = typeof packageJson === 'object' && packageJson !== null
+        ? (packageJson as { version?: unknown }).version
+        : undefined;
+    if (typeof version !== 'string' || version.trim() === '') {
+        throw new Error(`Managed plugin UI build could not resolve an exact version for "${packageName}"`);
+    }
+    return version;
+}
+
+/**
+ * Resolves artifact provenance/compatibility from the exact packages consumed
+ * by the managed bundler. Authors do not repeat runner or version decisions in
+ * `PluginUiBuildConfig`.
+ */
+export function resolveManagedPluginUiBuildVersions(
+    projectRoot: string,
+    targets: readonly PluginUiBuildTarget[],
+): ManagedPluginUiBuildVersionsV1 {
+    const needsVite = targets.some((target) => target.kind === 'hostedWeb'
+        || (target.kind === 'reactNative'
+            && target.platforms.some((platform) => platform === 'web' || platform === 'desktop')));
+    const needsRepack = targets.some((target) => target.kind === 'reactNative'
+        && target.platforms.some((platform) => platform === 'ios' || platform === 'android'));
+    const needsReactNative = targets.some((target) => target.kind === 'reactNative');
+    return Object.freeze({
+        hostUiApiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
+        ...(needsVite ? { viteVersion: readInstalledPackageVersion(projectRoot, 'vite') } : {}),
+        ...(needsRepack ? { repackVersion: readInstalledPackageVersion(projectRoot, '@callstack/repack') } : {}),
+        reactVersion: readInstalledPackageVersion(projectRoot, 'react'),
+        ...(needsReactNative
+            ? { reactNativeVersion: readInstalledPackageVersion(projectRoot, 'react-native') }
+            : {}),
+    });
+}
 
 /**
  * A build surface is repack-bundled iff it is a `reactNative`-kind surface
@@ -53,7 +131,7 @@ const DEFAULT_REPACK_INSTALLABLE_ID = 'plugin-ui.bundler.repack';
 function isRepackSurface(
     surface: PluginUiBuildSurfaceV1,
 ): surface is PluginUiReactNativeBuildSurfaceV1 & {
-    readonly preset: ReactNativeRepackBuildPresetV1;
+    readonly preset: ReactNativeRepackBuildPreset;
 } {
     return surface.kind === 'reactNative' && surface.preset.bundler === 'repack';
 }
@@ -205,7 +283,12 @@ export function createManagedRuntimeBundlerRunner(
             emittedRoot: input.emittedRoot,
         });
         const files = await Promise.all(absoluteFiles.map(async (absolutePath) => ({
-            relativePath: toRelativeArtifactPath(input.emittedRoot, absolutePath),
+            relativePath: input.toArtifactRelativePath
+                ? input.toArtifactRelativePath(surface, absolutePath, {
+                    projectRoot: context.projectRoot,
+                    emittedRoot: input.emittedRoot,
+                })
+                : toRelativeArtifactPath(input.emittedRoot, absolutePath),
             bytes: new Uint8Array(await readFile(join(absolutePath))),
         })));
         return { files };

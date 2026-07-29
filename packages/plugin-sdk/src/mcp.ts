@@ -6,37 +6,110 @@ import type {
     DetectedMcpServerV1,
 } from '@happier-dev/protocol';
 
-import type { ClassifiedRuntimeErrorV1 } from './errors.js';
-import type { ExecClientHandleV1, ExecLaunchInputV1 } from './exec.js';
-import type { ManagedServerHandleV1, ManagedServerSpecV1 } from './managedServer.js';
-
 export type McpHostedRuntimeExposureV1 =
     | Readonly<{ kind: 'registryOnly' }>
     | Readonly<{ kind: 'loopbackHttp'; requested: true }>;
-
-export type McpHostedRuntimeEndpointV1 =
-    | Readonly<{ kind: 'registryOnly' }>
-    | Readonly<{
-        kind: 'loopbackHttp';
-        url: string;
-        host: '127.0.0.1';
-        port: number;
-        expiresAtMs?: number;
-    }>;
 
 export type McpHostedServerTransportV1 = Readonly<{
     kind: 'hosted';
     exposure?: McpHostedRuntimeExposureV1;
 }>;
 
+export type McpExecutableLaunchV1 =
+    | Readonly<{
+        kind: 'agent-cli';
+        agentId: string;
+        args?: readonly string[];
+        cwd?: string;
+        env?: Readonly<Record<string, string>>;
+        unsetEnvKeys?: readonly string[];
+        stdin?: string | Uint8Array;
+    }>
+    | Readonly<{
+        kind: 'binary';
+        executablePath: string;
+        args?: readonly string[];
+        cwd?: string;
+        env?: Readonly<Record<string, string>>;
+        unsetEnvKeys?: readonly string[];
+        stdin?: string | Uint8Array;
+    }>
+    | Readonly<{
+        kind: 'managed-installable';
+        installableId: string;
+        executableName?: string;
+        args?: readonly string[];
+        cwd?: string;
+        env?: Readonly<Record<string, string>>;
+        unsetEnvKeys?: readonly string[];
+        stdin?: string | Uint8Array;
+        sourcePreference?: 'managed-first';
+    }>
+    | Readonly<{ kind: 'ipc'; endpoint: string }>;
+
 export type McpStdioTransportV1 = Readonly<{
     kind: 'stdio';
-    launch: ExecLaunchInputV1;
+    launch: McpExecutableLaunchV1;
+}>;
+
+export type McpManagedServerCredentialV1 = Readonly<{
+    envKey: string;
+    value: string;
+    httpHeader?: Readonly<{ name: string; value: string }>;
+}>;
+
+export type McpManagedServerModeV1 =
+    | Readonly<{
+        kind: 'managed-spawn';
+        host?: string;
+        port?: number;
+        baseUrl?: string;
+        portArg?: string;
+        portEnvKey?: string;
+        baseUrlEnvKey?: string;
+        credential?: McpManagedServerCredentialV1;
+    }>
+    | Readonly<{
+        kind: 'external-attach';
+        baseUrl: string;
+        credential?: McpManagedServerCredentialV1;
+    }>;
+
+export type McpManagedServerSpecV1 = Readonly<{
+    id: string;
+    launch?: McpExecutableLaunchV1;
+    mode?: McpManagedServerModeV1;
+    healthCheck?:
+        | Readonly<{
+            kind: 'http';
+            url?: string;
+            path?: string;
+            headers?: Readonly<Record<string, string>>;
+            timeoutMs?: number;
+        }>
+        | Readonly<{
+            kind: 'command';
+            launch: McpExecutableLaunchV1;
+            timeoutMs?: number;
+        }>;
+    orphanReaper?: Readonly<{
+        executablePath: string;
+        commandIncludes?: readonly string[];
+        initialSignal?: string;
+        forceSignal?: string;
+        forceAfterMs?: number;
+    }>;
+    watchdog?: Readonly<{ intervalMs: number; missedIntervals: number }>;
+    durableLog?: Readonly<{ enabled?: boolean; dir?: string; keepCount?: number }>;
+    launchFingerprint?: string;
+    startupTimeoutMs?: number;
+    restart?: 'never';
+    signal?: AbortSignal;
 }>;
 
 export type McpManagedServerTransportV1 = Readonly<{
     kind: 'managed';
-    server: ManagedServerSpecV1;
+    server: McpManagedServerSpecV1;
     url?: string;
 }>;
 
@@ -111,43 +184,6 @@ export type McpServerSpecV1 = Readonly<{
     hosted?: McpHostedServerDefinitionV1;
 }>;
 
-export type McpClientTransportV1 =
-    | McpStdioTransportV1
-    | McpManagedServerTransportV1
-    | McpEndpointTransportV1;
-
-export type McpClientSpecV1 = Readonly<{
-    id: string;
-    transport: McpClientTransportV1;
-}>;
-
-export type McpResolvedScopeV1 = Readonly<{
-    sessionId: string;
-    accountId?: string | null;
-    workspaceId?: string | null;
-    directory?: string | null;
-}>;
-
-export type McpResolvedStdioTransportV1 = Readonly<{
-    kind: 'stdio';
-}>;
-
-export type McpResolvedManagedServerTransportV1 = Readonly<{
-    kind: 'managed';
-    url?: string;
-}>;
-
-export type McpResolvedServerTransportV1 =
-    | McpHostedServerTransportV1
-    | McpResolvedStdioTransportV1
-    | McpResolvedManagedServerTransportV1
-    | McpEndpointTransportV1;
-
-export type ResolvedMcpServerSpecV1 = Omit<McpServerSpecV1, 'transport'> & Readonly<{
-    transport: McpResolvedServerTransportV1;
-    scope: McpResolvedScopeV1;
-}>;
-
 export type McpDiscoveryWarningV1 = DaemonMcpServersDetectWarningV1;
 export type {
     DaemonMcpServersDetectWarningV1,
@@ -175,32 +211,3 @@ export type McpResolveForSessionInputV1 = Readonly<{
     workspaceId?: string | null;
     directory?: string | null;
 }>;
-
-export type McpServerHandleV1 = Readonly<{
-    id: string;
-    spec?: McpServerSpecV1;
-    endpoint?: McpHostedRuntimeEndpointV1;
-    managedServer?: ManagedServerHandleV1;
-    dispose(): Promise<void>;
-}>;
-
-export type McpClientHandleV1 = Readonly<{
-    id: string;
-    spec?: McpClientSpecV1;
-    client?: ExecClientHandleV1;
-    managedServer?: ManagedServerHandleV1;
-    request?(message: unknown): Promise<unknown>;
-    notify?(message: unknown): Promise<void>;
-    dispose(): Promise<void>;
-}>;
-
-export type McpRuntimeErrorV1 = ClassifiedRuntimeErrorV1 & Readonly<{
-    substrate: 'mcp';
-}>;
-
-export interface McpRuntimeServiceV1 {
-    startServer(spec: McpServerSpecV1): Promise<McpServerHandleV1>;
-    createClient(spec: McpClientSpecV1): Promise<McpClientHandleV1>;
-    list(): Promise<readonly McpServerSpecV1[]>;
-    resolveForSession(input: McpResolveForSessionInputV1): Promise<readonly ResolvedMcpServerSpecV1[]>;
-}

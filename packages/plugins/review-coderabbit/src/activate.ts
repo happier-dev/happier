@@ -1,24 +1,13 @@
+import type { PluginApi } from '@happier-dev/plugin-sdk';
 import type {
-  PluginApi,
-  CreateSessionRuntimeParamsV1,
-  PluginContextV1,
-} from '@happier-dev/plugin-sdk';
+  AgentRuntimeFactory } from '@happier-dev/plugin-sdk/agent-runtime';
 
-import { createCodeRabbitExecutionRunBackend } from './agent/reviews/run.js';
+import { createCodeRabbitExecutionRunFactory } from './agent/reviews/nativeRun.js';
+
+const createCodeRabbitRuntime: AgentRuntimeFactory = () => Object.freeze({
+  executionRuns: createCodeRabbitExecutionRunFactory(),
+});
 
 export function activate(api: PluginApi): void {
-  api.registerAgentRuntime({
-    agentId: 'coderabbit',
-    create: (ctx: PluginContextV1) => ({
-      runtimeCore: {
-        createSessionRuntime: async (_sessionParams: CreateSessionRuntimeParamsV1) => {
-          throw new Error('CodeRabbit is a review-only execution-run plugin and does not support sessions.');
-        },
-        createExecutionRunBackend: (executionRunParams) => createCodeRabbitExecutionRunBackend({
-          ctx,
-          executionRunParams,
-        }),
-      },
-    }),
-  });
+  api.agents.register('coderabbit', createCodeRabbitRuntime);
 }

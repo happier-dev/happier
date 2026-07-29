@@ -6,9 +6,23 @@ import {
 } from './v1.js';
 
 describe('ProviderBindingAuthorizationTicketV1Schema', () => {
-  it('requires SavedSecret id and persisted-record fingerprint together', () => {
+  it('requires the exact connection revision observed during authorization', () => {
     const base = {
       connectionId: 'pc_1', machineId: 'machine_1', connectionSecurityFingerprint: 'connection:v1:a',
+      bindingSecurityFingerprint: 'binding:v1:a', grantFingerprint: 'grant:v1:a',
+      selectedSecretBindingId: null, selectedSecretRecordFingerprint: null,
+    };
+
+    expect(ProviderBindingAuthorizationTicketV1Schema.safeParse({
+      ...base,
+      connectionRevision: 3,
+    }).success).toBe(true);
+    expect(ProviderBindingAuthorizationTicketV1Schema.safeParse(base).success).toBe(false);
+  });
+
+  it('requires SavedSecret id and persisted-record fingerprint together', () => {
+    const base = {
+      connectionId: 'pc_1', connectionRevision: 3, machineId: 'machine_1', connectionSecurityFingerprint: 'connection:v1:a',
       bindingSecurityFingerprint: 'binding:v1:a', grantFingerprint: 'grant:v1:a',
       selectedSecretBindingId: null, selectedSecretRecordFingerprint: null,
     };

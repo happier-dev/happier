@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import type { DaemonMcpServersDetectWarningV1, DetectedMcpServerV1 } from '@happier-dev/plugin-sdk/mcp';
+import type { DaemonMcpServersDetectWarningV1, DetectedMcpServerV1 } from '@happier-dev/plugin-sdk/experimental/mcp';
 
 export type ReadCodexMcpConfigServersResult = Readonly<{
     servers: ReadonlyArray<DetectedMcpServerV1>;

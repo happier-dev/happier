@@ -1,7 +1,7 @@
 import {
   SCM_OPERATION_ERROR_CODES,
   type ScmOperationErrorCode,
-} from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm';
 
 export class GithubRepositoryProvisioningError extends Error {
   readonly errorCode: ScmOperationErrorCode;

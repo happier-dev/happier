@@ -1,16 +1,6 @@
-import {
-  createSessionRuntimeActivityPublisher,
-  type ManagedServerSnapshotV1,
-  type PluginContextV1,
-} from '@happier-dev/plugin-sdk';
-import type { RuntimeEventV1 } from '@happier-dev/plugin-sdk/experimental/runtime/session';
-
 import { publishOpenCodeNativeTodosWorkState } from '../workState.js';
-import {
-  createOpenCodeConnectedServiceRuntimeAuthAdapter,
-  resolveOpenCodeRuntimeAuthSelection,
-} from '../../auth/services/runtime/failure.js';
 import type { OpenCodeRuntimeTurnOperations } from './operations.js';
+import type { OpenCodeSessionOpenRequest } from './operations.js';
 import {
   buildOpenCodeRuntimeIssue,
   publishOpenCodeTurnCancelled,
@@ -18,37 +8,26 @@ import {
   publishOpenCodeTurnFailed,
 } from './openCodeRuntimeEvents.js';
 import type { OpenCodeServerClient } from './openCodeServerClient.js';
-import { createOpenCodeServerClient, isOpenCodeServerAuthFailure } from './openCodeServerClient.js';
-import { asRecord, normalizeString } from './openCodeParsing.js';
-import {
-  openCodeBackgroundTaskWakeIndicatesAllTasksComplete,
-  openCodeToolPartLooksLikeBackgroundTaskLaunch,
-  readOpenCodeBackgroundTaskWakeSource,
-  readOpenCodeBackgroundTaskLaunchRuntimeSourceId,
-  readOpenCodeBackgroundTaskWakeRuntimeSourceId,
-  openCodeToolPartLooksLikeBackgroundOutputContinuation,
-} from './openCodeBackgroundTaskSignals.js';
+import { isOpenCodeServerAuthFailure } from './openCodeServerClient.js';
+import { asRecord, normalizeString, readNonBlankOpaqueIdentifier } from './openCodeParsing.js';
 import { formatOpenCodeServerPromptErrorMessage } from './formatOpenCodeServerPromptErrorMessage.js';
-import type { OpenCodeToolPart } from './providerActivity/createOpenCodeProviderActivityTracker.js';
-import { createOpenCodeProviderActivityTracker } from './providerActivity/createOpenCodeProviderActivityTracker.js';
-import {
-  refreshOpenCodeProviderActivityFromHistory,
-  refreshOpenCodeProviderActivityFromHistoryMessages,
-} from './providerActivity/history.js';
+import type { OpenCodeToolPart } from './foregroundToolTracker.js';
+import { createOpenCodeForegroundToolTracker } from './foregroundToolTracker.js';
 import {
   resolveOpenCodeManagedServerGenerationIdentity,
   type OpenCodeManagedServerGenerationIdentity,
-} from './providerActivity/managedServerGeneration.js';
+} from './managedServerGeneration.js';
 import {
   OPENCODE_SERVER_RESTARTED_DURING_TURN_ISSUE_CODE,
   createOpenCodeManagedServerTurnInterruptionSupervisor,
-} from './providerActivity/managedServerTurnInterruptionSupervisor.js';
+} from './managedServerTurnInterruptionSupervisor.js';
 import { attachOpenCodeProviderEventSubscriptionIfNeeded } from './providerEvents.js';
 import {
-  buildOpenCodePermissionDecisionRequest,
-  mapOpenCodePermissionDecisionToReply,
+  buildOpenCodePermissionApprovalRequest,
+  mapOpenCodeApprovalResultToReply,
   readOpenCodePermissionAsk,
-  readOpenCodePermissionReplyMessage,
+  readOpenCodeApprovalReplyMessage,
+  readOpenCodePermissionRequestId,
 } from './permissionBridge.js';
 import type { OpenCodePromptModel } from './promptConfig.js';
 import { normalizeOpenCodePromptConfigUpdate } from './promptConfig.js';
@@ -56,14 +35,12 @@ import { maybeFailOnOpenCodeRetryStatus } from './retryFailure.js';
 import { publishOpenCodeProviderSessionId } from './sessionIdentity.js';
 import {
   createOpenCodeServerRuntimeState,
-  createOpenCodeTurnId,
   claimOpenCodeActiveTurnForTerminalEvent,
   readEventSessionId,
   readOpenCodeToolCallKey,
   readOpenCodeToolPart,
   readProviderEvent,
   readStatusType,
-  recordOpenCodeProviderAutonomousBackgroundWake,
 } from './state.js';
 import {
   classifyOpenCodeAssistantCompletion,
@@ -76,12 +53,12 @@ import {
   buildOpenCodeRuntimeTranscriptLocalId,
 } from './transcript/identity.js';
 import { completeOpenCodeTurnIfReady } from './turnCompletion.js';
-import { beginOpenCodeProviderAutonomousBackgroundTurnIfNeeded } from './turnStart.js';
 import { createOpenCodeHappierAuthoredProviderUserMessageIds } from './happierAuthoredProviderUserMessages.js';
-
-const OPEN_CODE_IDLE_ASSISTANT_HISTORY_GRACE_MS = 60_000;
-const OPEN_CODE_HISTORY_FINALITY_INITIAL_BACKOFF_MS = 250;
-const OPEN_CODE_HISTORY_FINALITY_MAX_BACKOFF_MS = 2_000;
+import type {
+  OpenCodeManagedServerSnapshot,
+  OpenCodeRuntimeContext,
+} from './runtimeContext.js';
+import type { OpenCodeRuntimeEvent } from './runtimeEvents.js';
 
 function readOpenCodeProviderErrorMessage(error: unknown): string {
   const record = asRecord(error);
@@ -89,6 +66,15 @@ function readOpenCodeProviderErrorMessage(error: unknown): string {
   return normalizeString(data?.message)
     || normalizeString(record?.message)
     || normalizeString(record?.name);
+}
+
+class OpenCodePromptIdentityUnresolvedError extends Error {
+  readonly code = 'opencode_prompt_identity_unresolved';
+
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'OpenCodePromptIdentityUnresolvedError';
+  }
 }
 
 function readOpenCodeProviderErrorStatus(error: unknown): number | null {
@@ -136,6 +122,21 @@ function normalizeOpenCodePromptResponseMessages(response: unknown): readonly un
   return projection.kind === 'unknown' ? [] : [response];
 }
 
+function readOpenCodeForkMessageId(request: Extract<
+  OpenCodeSessionOpenRequest,
+  { kind: 'fork' }
+>): string | null {
+  if (request.source.providerCheckpoint === undefined) return null;
+  const checkpoint = asRecord(request.source.providerCheckpoint);
+  if (
+    normalizeString(checkpoint?.kind) !== 'opencode_exclusive_message_id'
+    || !normalizeString(checkpoint?.messageId)
+  ) {
+    throw new Error('OpenCode fork checkpoint is not an opencode_exclusive_message_id checkpoint');
+  }
+  return normalizeString(checkpoint?.messageId);
+}
+
 type Deferred<T> = Readonly<{
   promise: Promise<T>;
   resolve: (value: T) => void;
@@ -153,31 +154,24 @@ function createDeferred<T>(): Deferred<T> {
 }
 
 export function createOpenCodeServerRuntimeController(params: Readonly<{
-  ctx: PluginContextV1;
+  ctx: OpenCodeRuntimeContext;
   directory: string;
   happierSessionId: string;
   baseUrl: string;
-  client?: OpenCodeServerClient;
+  client: OpenCodeServerClient;
   env?: Readonly<Record<string, string>>;
-  readManagedServerSnapshot?: () => ManagedServerSnapshotV1 | null | undefined;
-  setThinking?: (thinking: boolean) => void;
+  readManagedServerSnapshot?: () => OpenCodeManagedServerSnapshot | null | undefined;
 }>): OpenCodeRuntimeTurnOperations {
-  const client = params.client ?? createOpenCodeServerClient({
-    fetch: params.ctx.fetch,
-    baseUrl: params.baseUrl,
-    directory: params.directory,
-  });
+  const client = params.client;
   const state = createOpenCodeServerRuntimeState();
-  const providerActivityTracker = createOpenCodeProviderActivityTracker();
-  const runtimeActivityPublisher = createSessionRuntimeActivityPublisher({
-    session: params.ctx.sessions.current,
-  });
-  const runtimeAuthAdapter = createOpenCodeConnectedServiceRuntimeAuthAdapter();
-  const messageHandlers = new Set<(message: RuntimeEventV1) => void>();
-  const accumulatedBackgroundWakeTextByPartKey = new Map<string, string>();
+  const foregroundToolTracker = createOpenCodeForegroundToolTracker();
+  const messageHandlers = new Set<(message: OpenCodeRuntimeEvent) => void>();
   const handledPermissionRequestKeys = new Set<string>();
+  const handledQuestionRequestKeys = new Set<string>();
+  const pendingQuestionRequestKeys = new Set<string>();
   const pendingPermissionRequestKeys = new Set<string>();
   const pendingPermissionDecisionAbortControllers = new Set<AbortController>();
+  const observedAutomaticCompactionMessageIds = new Set<string>();
   let currentTurnPermissionRejectionMessage: string | null = null;
   // Lane H/S2: in-memory dedupe gate for externally-authored (e.g. OpenCode TUI) user messages
   // mirrored into the Happier transcript while no Happier turn is active. Assistant dedupe reuses the
@@ -191,35 +185,9 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
   let passiveTranscriptProjectionInFlight = false;
   let passiveTranscriptProjectionRerunRequested = false;
   let promptModel: OpenCodePromptModel | null = null;
+  let nextAssistantHistoryRefreshAtMs = 0;
   let serverConnectedDeferred = createDeferred<void>();
   let serverConnectedGenerationKey: string | null = null;
-  let historyFinalityNextPollingReadAtMs = 0;
-  let historyFinalityPollingBackoffMs = 0;
-
-  function publishRuntimeActivityUpdate(promise: Promise<void>, reason: string): void {
-    void promise.catch((error) => {
-      params.ctx.logger.debug(`[OpenCodeServer] failed to publish runtime activity ${reason}`, { error });
-    });
-  }
-
-  function publishDetachedRuntimeActivity(sourceId: string): void {
-    publishRuntimeActivityUpdate(
-      runtimeActivityPublisher.markSourceActive({
-        sourceId,
-        sourceKind: 'provider_detached_task',
-      }),
-      'opencode_detached_task_active',
-    );
-  }
-
-  function clearDetachedRuntimeActivity(sourceId: string | null, reason: string): void {
-    publishRuntimeActivityUpdate(
-      sourceId
-        ? runtimeActivityPublisher.clearSource(sourceId)
-        : runtimeActivityPublisher.clearAllSources(),
-      reason,
-    );
-  }
 
   const markProviderUserMessageAsHappierAuthored = async (messageId: string): Promise<void> => {
     await happierAuthoredProviderUserMessageIds.add(messageId);
@@ -285,7 +253,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     }
   };
 
-  const publishMessage = (message: RuntimeEventV1): void => {
+  const publishMessage = (message: OpenCodeRuntimeEvent): void => {
     for (const handler of messageHandlers) handler(message);
   };
 
@@ -316,6 +284,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     const normalizedModelId = normalizeString(modelID);
     if (!normalizedProviderId || !normalizedModelId) return null;
     const provider = providers.find((entry) => normalizeString(entry.id) === normalizedProviderId);
+    if (!provider) return null;
     const models = asRecord(provider?.models);
     if (!models) {
       return modelIsSelectable({ providerID: normalizedProviderId, modelID: normalizedModelId })
@@ -340,13 +309,20 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
 
   const resolvePromptModel = async (modelId: string): Promise<OpenCodePromptModel | null> => {
     const parsed = normalizeOpenCodePromptConfigUpdate({ modelId });
-    if (parsed.model || !parsed.hasModel) return parsed.model;
+    if (!parsed.hasModel) return null;
     const trimmed = normalizeString(modelId);
     if (!trimmed || trimmed === 'default') return null;
     const [config, providers] = await Promise.all([
       client.globalConfigGet().catch(() => ({})),
-      client.providersList().catch(() => []),
+      client.providersList(),
     ]);
+    if (parsed.model) {
+      return findModelForProvider(
+        providers,
+        parsed.model.providerID,
+        parsed.model.modelID,
+      );
+    }
     const defaultProviderId = readDefaultProviderIdFromModelId(asRecord(config)?.model);
     const defaultProviderMatch = defaultProviderId
       ? findModelForProvider(providers, defaultProviderId, trimmed)
@@ -358,12 +334,16 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     return matches.length === 1 ? matches[0] : null;
   };
 
-  const publishRuntimeEvent = (event: RuntimeEventV1): void => {
-    publishMessage(event);
+  const resolveEffectivePromptModel = async (): Promise<OpenCodePromptModel | null> => {
+    if (promptModel) return promptModel;
+    const config = await client.globalConfigGet().catch(() => ({}));
+    const configuredDefault = normalizeString(asRecord(config)?.model);
+    if (!configuredDefault || configuredDefault === 'default') return null;
+    return await resolvePromptModel(configuredDefault);
   };
 
-  const setThinking = (thinking: boolean): void => {
-    params.setThinking?.(thinking);
+  const publishRuntimeEvent = (event: OpenCodeRuntimeEvent): void => {
+    publishMessage(event);
   };
 
   const abortPendingPermissionDecisions = (reason: string): void => {
@@ -373,6 +353,10 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
       if (!controller.signal.aborted) controller.abort(abortReason);
     }
     pendingPermissionDecisionAbortControllers.clear();
+  };
+
+  const retirePendingQuestions = (): void => {
+    pendingQuestionRequestKeys.clear();
   };
 
   const createTurnScopedPermissionDecisionSignal = (): Readonly<{
@@ -399,19 +383,21 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
 
   const resetCurrentTurnObservations = (): void => {
     abortPendingPermissionDecisions('OpenCode turn no longer owns pending permission decisions');
+    retirePendingQuestions();
     state.currentTurnObservedMessageIds.clear();
     state.currentTurnObservedToolCallKeys.clear();
     state.currentTurnPublishedToolCallKeys.clear();
     state.currentTurnPublishedToolResultKeys.clear();
+    state.currentTurnProviderUserMessageId = null;
     state.currentTurnProviderUserMessageIds.clear();
     state.currentTurnProviderPromptTexts.clear();
     state.currentTurnPromptSubmittedAtMs = null;
     state.currentTurnPromptAcceptedAtMs = null;
+    state.currentTurnTerminalAssistantMessageIds.clear();
     state.currentTurnPublishedAssistantMessageIds.clear();
     pendingPermissionRequestKeys.clear();
     currentTurnPermissionRejectionMessage = null;
-    historyFinalityNextPollingReadAtMs = 0;
-    historyFinalityPollingBackoffMs = 0;
+    nextAssistantHistoryRefreshAtMs = 0;
   };
 
   const observeCurrentTurnMessageId = (messageId: string): void => {
@@ -433,22 +419,6 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     });
   };
 
-  const refreshProviderActivityFromHistory = async (): Promise<void> => {
-    await refreshOpenCodeProviderActivityFromHistory({
-      client,
-      state,
-      tracker: providerActivityTracker,
-    });
-  };
-
-  const refreshProviderActivityFromHistoryMessages = (messages: readonly unknown[]): void => {
-    refreshOpenCodeProviderActivityFromHistoryMessages({
-      messages,
-      state,
-      tracker: providerActivityTracker,
-    });
-  };
-
   const readProjectedTranscriptText = (message: unknown): string => {
     const record = asRecord(message);
     if (!record) return '';
@@ -457,27 +427,6 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
       Array.isArray(record.parts) ? record.parts : [],
       { context: 'direct_transcript' },
     );
-  };
-
-  const publishObservedToolPartsFromCurrentTurnHistoryMessage = (
-    parts: readonly unknown[],
-  ): void => {
-    for (const rawPart of parts) {
-      const part = readOpenCodeToolPart(rawPart);
-      if (!part) continue;
-      providerActivityTracker.observeToolPart({
-        part,
-        source: 'history',
-        partId: normalizeString(asRecord(rawPart)?.id) || null,
-      });
-      observeCurrentTurnToolPart(part);
-      publishOpenCodeToolPartRuntimeEvents({
-        part,
-        state,
-        happierSessionId: params.happierSessionId,
-        publishRuntimeEvent,
-      });
-    }
   };
 
   const providerUserMessageMatchesCurrentPrompt = (message: unknown): boolean => {
@@ -499,15 +448,18 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
       && projection.createdAtMs >= submittedAtMs;
   };
 
-  type CurrentProviderUserMessageAnchor = Readonly<{
-    index: number;
-    source: 'message_id' | 'prompt_text_timestamp';
-  }>;
+  type CurrentProviderUserMessageAnchorResolution =
+    | Readonly<{
+        status: 'resolved';
+        index: number;
+      }>
+    | Readonly<{ status: 'missing' | 'ambiguous' }>;
 
   const resolveCurrentProviderUserMessageAnchor = (
     messages: readonly unknown[],
-  ): CurrentProviderUserMessageAnchor | null => {
-    let promptFallback: CurrentProviderUserMessageAnchor | null = null;
+  ): CurrentProviderUserMessageAnchorResolution => {
+    const messageIdMatches: number[] = [];
+    const promptFallbackMatches: number[] = [];
     for (let index = 0; index < messages.length; index += 1) {
       const message = messages[index];
       const projection = classifyOpenCodeMessageForProjection(message);
@@ -515,22 +467,52 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
       const messageIdMatchesCurrentTurn = Boolean(
         projection.messageId && state.currentTurnProviderUserMessageIds.has(projection.messageId),
       );
-      if (messageIdMatchesCurrentTurn) return { index, source: 'message_id' };
+      if (messageIdMatchesCurrentTurn) {
+        messageIdMatches.push(index);
+        continue;
+      }
       if (
         providerUserMessageMatchesCurrentPrompt(message)
         && providerUserMessageHasCurrentTurnPromptTimestamp(projection)
       ) {
-        promptFallback = { index, source: 'prompt_text_timestamp' };
+        promptFallbackMatches.push(index);
       }
     }
-    return promptFallback;
+    const matches = messageIdMatches.length > 0 ? messageIdMatches : promptFallbackMatches;
+    if (matches.length === 0) return { status: 'missing' };
+    if (matches.length > 1) return { status: 'ambiguous' };
+    return {
+      status: 'resolved',
+      index: matches[0]!,
+    };
+  };
+
+  const adoptCurrentProviderUserMessageFromAuthoritativeInventory = async (
+    messages: readonly unknown[],
+  ): Promise<
+    | Readonly<{ status: 'resolved'; providerUserMessageId: string }>
+    | Readonly<{ status: 'missing' | 'ambiguous' }>
+  > => {
+    const resolution = resolveCurrentProviderUserMessageAnchor(messages);
+    if (resolution.status !== 'resolved') return resolution;
+    const projection = classifyOpenCodeMessageForProjection(messages[resolution.index]);
+    if (projection.kind !== 'user_transcript' || !projection.messageId) {
+      return { status: 'missing' };
+    }
+    state.currentTurnProviderUserMessageId = projection.messageId;
+    state.currentTurnProviderUserMessageIds.add(projection.messageId);
+    await markProviderUserMessageAsHappierAuthored(projection.messageId);
+    observeCurrentTurnMessageId(projection.messageId);
+    return {
+      status: 'resolved',
+      providerUserMessageId: projection.messageId,
+    };
   };
 
   const markCurrentProviderUserMessageFromHistoryBestEffort = async (
     reason: string,
   ): Promise<void> => {
     if (!state.turnInFlight || !state.providerSessionId) return;
-    if (state.currentTurnProviderUserMessageIds.size > 0) return;
     let messages: readonly unknown[];
     try {
       messages = await client.sessionMessages({ sessionId: state.providerSessionId });
@@ -541,13 +523,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
       });
       return;
     }
-    const anchor = resolveCurrentProviderUserMessageAnchor(messages);
-    if (!anchor) return;
-    const projection = classifyOpenCodeMessageForProjection(messages[anchor.index]);
-    if (projection.kind !== 'user_transcript' || !projection.messageId) return;
-    state.currentTurnProviderUserMessageIds.add(projection.messageId);
-    await markProviderUserMessageAsHappierAuthored(projection.messageId);
-    observeCurrentTurnMessageId(projection.messageId);
+    await adoptCurrentProviderUserMessageFromAuthoritativeInventory(messages);
   };
 
   type AssistantHistoryProjectionResult = Readonly<{
@@ -571,7 +547,9 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
   ): Promise<AssistantHistoryProjectionResult> => {
     if (!state.turnInFlight || !state.providerSessionId) return EMPTY_ASSISTANT_HISTORY_PROJECTION_RESULT;
     const currentProviderUserMessageAnchor = resolveCurrentProviderUserMessageAnchor(messages);
-    const currentProviderUserMessageAnchorIndex = currentProviderUserMessageAnchor?.index ?? -1;
+    const currentProviderUserMessageAnchorIndex = currentProviderUserMessageAnchor.status === 'resolved'
+      ? currentProviderUserMessageAnchor.index
+      : -1;
     let emptyTerminalAssistantMessageCount = 0;
     let currentTurnAssistantWithPartsCount = 0;
     let terminalAssistantMessageCount = 0;
@@ -593,14 +571,25 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
       if (!messageId) continue;
       const belongsToCurrentTurn = state.currentTurnObservedMessageIds.has(messageId)
         || (
-          currentProviderUserMessageAnchorIndex >= 0
-          && index > currentProviderUserMessageAnchorIndex
+          state.currentTurnProviderUserMessageId !== null
+          && readNonBlankOpaqueIdentifier(projection.info?.parentID) === state.currentTurnProviderUserMessageId
         );
       if (!belongsToCurrentTurn) continue;
       const record = asRecord(message);
       const parts = Array.isArray(record?.parts) ? record.parts : [];
-      publishObservedToolPartsFromCurrentTurnHistoryMessage(parts);
       const text = readProjectedTranscriptText(message);
+      for (const rawPart of parts) {
+        const toolPart = readOpenCodeToolPart(rawPart);
+        if (!toolPart) continue;
+        foregroundToolTracker.observeToolPart({ part: toolPart });
+        observeCurrentTurnToolPart(toolPart);
+        publishOpenCodeToolPartRuntimeEvents({
+          part: toolPart,
+          state,
+          happierSessionId: params.happierSessionId,
+          publishRuntimeEvent,
+        });
+      }
       if (providerSessionError === null) {
         const info = asRecord(record?.info);
         const error = info?.error;
@@ -613,6 +602,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
       if (completion.kind === 'terminal_success') {
         if (text) {
           terminalAssistantMessageCount += 1;
+          state.currentTurnTerminalAssistantMessageIds.add(messageId);
         } else if (parts.length === 0) {
           emptyTerminalAssistantMessageCount += 1;
         }
@@ -648,17 +638,108 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     };
   };
 
-  const markPromptResponseMessagesAsCurrentTurnEvidence = async (messages: readonly unknown[]): Promise<void> => {
-    if (!state.turnInFlight) return;
+  const reconcileExactCurrentTurnTerminalAssistantFromAuthoritativeInventoryBestEffort = async (
+    forceHistoryRefresh = false,
+  ): Promise<
+    AssistantHistoryProjectionResult
+  > => {
+    const providerSessionId = state.providerSessionId;
+    let providerUserMessageId = state.currentTurnProviderUserMessageId;
+    if (!state.turnInFlight || !providerSessionId || !providerUserMessageId) {
+      return EMPTY_ASSISTANT_HISTORY_PROJECTION_RESULT;
+    }
+    if (state.currentTurnTerminalAssistantMessageIds.size > 0) {
+      return EMPTY_ASSISTANT_HISTORY_PROJECTION_RESULT;
+    }
+    const now = Date.now();
+    if (!forceHistoryRefresh && now < nextAssistantHistoryRefreshAtMs) {
+      return EMPTY_ASSISTANT_HISTORY_PROJECTION_RESULT;
+    }
+    nextAssistantHistoryRefreshAtMs = now + 1_000;
+
+    let messages: readonly unknown[];
+    try {
+      messages = await client.sessionMessages({ sessionId: providerSessionId });
+    } catch (error) {
+      params.ctx.logger.debug('[OpenCodeServer] exact-parent terminal assistant inventory reconciliation failed (non-fatal)', {
+        error,
+      });
+      return EMPTY_ASSISTANT_HISTORY_PROJECTION_RESULT;
+    }
+
+    const providerUserMessageResolution =
+      await adoptCurrentProviderUserMessageFromAuthoritativeInventory(messages);
+    if (providerUserMessageResolution.status === 'resolved') {
+      providerUserMessageId = providerUserMessageResolution.providerUserMessageId;
+    }
+
+    const candidatesByMessageId = new Map<string, Readonly<{
+      message: unknown;
+      providerErrorFingerprint: string | null;
+      text: string;
+    }>>();
+    for (const message of messages) {
+      const projection = classifyOpenCodeMessageForProjection(message);
+      const messageId = readNonBlankOpaqueIdentifier(projection.info?.id);
+      if (projection.kind !== 'assistant_transcript' || !messageId) continue;
+      if (readNonBlankOpaqueIdentifier(projection.info?.sessionID) !== providerSessionId) continue;
+      if (readNonBlankOpaqueIdentifier(projection.info?.parentID) !== providerUserMessageId) continue;
+      if (classifyOpenCodeAssistantCompletion(message).kind !== 'terminal_success') continue;
+
+      const text = readProjectedTranscriptText(message);
+      const providerError = projection.info?.error;
+      let providerErrorFingerprint: string | null = null;
+      if (providerError !== undefined && providerError !== null) {
+        try {
+          providerErrorFingerprint = JSON.stringify(providerError) ?? 'unserializable-provider-error';
+        } catch {
+          providerErrorFingerprint = 'unserializable-provider-error';
+        }
+      }
+      const existing = candidatesByMessageId.get(messageId);
+      if (
+        existing
+        && (
+          existing.text !== text
+          || existing.providerErrorFingerprint !== providerErrorFingerprint
+        )
+      ) {
+        return EMPTY_ASSISTANT_HISTORY_PROJECTION_RESULT;
+      }
+      candidatesByMessageId.set(messageId, { message, providerErrorFingerprint, text });
+    }
+    if (candidatesByMessageId.size !== 1) return EMPTY_ASSISTANT_HISTORY_PROJECTION_RESULT;
+
+    const [messageId, candidate] = candidatesByMessageId.entries().next().value ?? [];
+    if (!messageId || !candidate) return EMPTY_ASSISTANT_HISTORY_PROJECTION_RESULT;
+    const providerMessageKey = buildOpenCodeProviderSessionMessageKey(providerSessionId, messageId);
+    if (state.emittedAssistantMessageIds.has(providerMessageKey)) {
+      return EMPTY_ASSISTANT_HISTORY_PROJECTION_RESULT;
+    }
+    observeCurrentTurnMessageId(messageId);
+    return await publishObservedAssistantMessagesFromHistory([candidate.message]);
+  };
+
+  const markPromptResponseMessagesAsCurrentTurnEvidence = (
+    messages: readonly unknown[],
+    providerUserMessageId: string,
+  ): readonly unknown[] => {
+    if (!state.turnInFlight) return [];
+    const currentTurnMessages: unknown[] = [];
     for (const message of messages) {
       const projection = classifyOpenCodeMessageForProjection(message);
       if (!projection.messageId) continue;
+      const belongsToCurrentTurn = projection.kind === 'user_transcript'
+        ? projection.messageId === providerUserMessageId
+        : (
+          projection.kind === 'assistant_transcript'
+          && readNonBlankOpaqueIdentifier(projection.info?.parentID) === providerUserMessageId
+        );
+      if (!belongsToCurrentTurn) continue;
+      currentTurnMessages.push(message);
       observeCurrentTurnMessageId(projection.messageId);
-      if (projection.kind === 'user_transcript') {
-        state.currentTurnProviderUserMessageIds.add(projection.messageId);
-        await markProviderUserMessageAsHappierAuthored(projection.messageId);
-      }
     }
+    return currentTurnMessages;
   };
 
   // Origin-agnostic transcript projection (Lane H / S2). Mirrors settled messages this OpenCode
@@ -760,89 +841,84 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     }
   };
 
-  type FinalityHistoryPass = 'idle' | 'polling';
-
-  const readProviderHistoryForFinality = async (
-    pass: FinalityHistoryPass,
-  ): Promise<readonly unknown[] | null> => {
-    if (!state.providerSessionId) return null;
-    if (pass === 'polling') {
-      const now = Date.now();
-      if (historyFinalityNextPollingReadAtMs > 0 && now < historyFinalityNextPollingReadAtMs) {
-        return null;
-      }
-    }
-    try {
-      const messages = await client.sessionMessages({ sessionId: state.providerSessionId });
-      if (pass === 'polling') {
-        historyFinalityNextPollingReadAtMs = Date.now() + historyFinalityPollingBackoffMs;
-        historyFinalityPollingBackoffMs = historyFinalityPollingBackoffMs === 0
-          ? OPEN_CODE_HISTORY_FINALITY_INITIAL_BACKOFF_MS
-          : Math.min(historyFinalityPollingBackoffMs * 2, OPEN_CODE_HISTORY_FINALITY_MAX_BACKOFF_MS);
-      }
-      return messages;
-    } catch (error) {
-      if (pass === 'polling') {
-        historyFinalityNextPollingReadAtMs = Date.now() + historyFinalityPollingBackoffMs;
-        historyFinalityPollingBackoffMs = historyFinalityPollingBackoffMs === 0
-          ? OPEN_CODE_HISTORY_FINALITY_INITIAL_BACKOFF_MS
-          : Math.min(historyFinalityPollingBackoffMs * 2, OPEN_CODE_HISTORY_FINALITY_MAX_BACKOFF_MS);
-      }
-      params.ctx.logger.debug(`[OpenCodeServer] history refresh failed before ${pass} finality check`, { error });
-      params.ctx.logger.debug(`[OpenCodeServer] assistant transcript projection failed before ${pass} finality check`, { error });
-      return null;
-    }
-  };
-
-  const inspectProviderHistoryForFinality = async (
-    pass: FinalityHistoryPass,
-  ): Promise<AssistantHistoryProjectionResult> => {
-    const messages = await readProviderHistoryForFinality(pass);
-    if (!messages) return EMPTY_ASSISTANT_HISTORY_PROJECTION_RESULT;
-    try {
-      refreshProviderActivityFromHistoryMessages(messages);
-    } catch (error) {
-      params.ctx.logger.debug(`[OpenCodeServer] history refresh failed before ${pass} finality check`, { error });
-    }
-    return await publishObservedAssistantMessagesFromHistory(messages).catch((error: unknown) => {
-      params.ctx.logger.debug(`[OpenCodeServer] assistant transcript projection failed before ${pass} finality check`, { error });
-      return EMPTY_ASSISTANT_HISTORY_PROJECTION_RESULT;
-    });
-  };
-
   const completeTurnIfReady = async (
     status: unknown,
     historyProjection: AssistantHistoryProjectionResult = EMPTY_ASSISTANT_HISTORY_PROJECTION_RESULT,
   ): Promise<void> => {
+    const hasTerminalAssistantHistory = historyProjection.terminalAssistantMessageCount > 0
+      || state.currentTurnTerminalAssistantMessageIds.size > 0;
+    if (!hasTerminalAssistantHistory) {
+      const statusType = readStatusType(status);
+      const providerIsIdle = statusType !== 'busy';
+      const noLiveProviderWork = !turnHasLiveForegroundWorkForCurrentGeneration();
+      const acceptedAtMs = state.currentTurnPromptAcceptedAtMs;
+      const assistantGraceExpired = acceptedAtMs !== null
+        && Date.now() - acceptedAtMs >= 60_000;
+      const terminalWithoutText = historyProjection.emptyTerminalAssistantMessageCount > 0
+        || historyProjection.currentTurnAssistantWithPartsCount > 0;
+      const permissionDenied = currentTurnPermissionRejectionMessage !== null;
+      if (
+        providerIsIdle
+        && noLiveProviderWork
+        && (terminalWithoutText || permissionDenied || assistantGraceExpired)
+      ) {
+        const turnId = claimOpenCodeActiveTurnForTerminalEvent(state);
+        if (!turnId) return;
+        const emittedAtMs = Date.now();
+        const issue = permissionDenied
+          ? buildOpenCodeRuntimeIssue({
+              code: 'opencode_permission_denied',
+              source: 'permission_blocked',
+              message: currentTurnPermissionRejectionMessage,
+              occurredAt: emittedAtMs,
+            })
+          : buildOpenCodeRuntimeIssue({
+              code: 'opencode_empty_provider_response',
+              source: 'agent_session_error',
+              message: terminalWithoutText
+                ? 'OpenCode completed without publishing assistant text.'
+                : 'OpenCode did not publish assistant text before the completion grace expired.',
+              occurredAt: emittedAtMs,
+            });
+        resetCurrentTurnObservations();
+        await publishOpenCodeTurnFailed({
+          publishRuntimeEvent,
+          sessionId: params.happierSessionId,
+          turnId,
+          emittedAtMs,
+          issue,
+        });
+      }
+      return;
+    }
     await completeOpenCodeTurnIfReady({
       publishRuntimeEvent,
       state,
-      providerActivityTracker,
+      foregroundToolTracker,
       happierSessionId: params.happierSessionId,
       resetCurrentTurnObservations,
-      setThinking,
       status,
-      hasTerminalAssistantHistory: historyProjection.terminalAssistantMessageCount > 0,
-      hasLiveProviderWork: turnHasLiveProviderWorkForCurrentGeneration,
+      hasTerminalAssistantHistory,
+      hasLiveProviderWork: turnHasLiveForegroundWorkForCurrentGeneration,
     });
   };
 
-  const inspectPromptSubmissionResponseForFinality = async (response: unknown): Promise<void> => {
+  const inspectPromptSubmissionResponseForFinality = async (
+    response: unknown,
+    providerUserMessageId: string,
+  ): Promise<void> => {
     const messages = normalizeOpenCodePromptResponseMessages(response);
     if (messages.length === 0) return;
-    await markPromptResponseMessagesAsCurrentTurnEvidence(messages);
-    try {
-      refreshProviderActivityFromHistoryMessages(messages);
-    } catch (error) {
-      params.ctx.logger.debug('[OpenCodeServer] prompt response activity refresh failed', { error });
-    }
-    const historyProjection = await publishObservedAssistantMessagesFromHistory(messages).catch((error: unknown) => {
+    const currentTurnMessages = markPromptResponseMessagesAsCurrentTurnEvidence(
+      messages,
+      providerUserMessageId,
+    );
+    if (currentTurnMessages.length === 0) return;
+    const historyProjection = await publishObservedAssistantMessagesFromHistory(currentTurnMessages).catch((error: unknown) => {
       params.ctx.logger.debug('[OpenCodeServer] prompt response assistant transcript projection failed', { error });
       return EMPTY_ASSISTANT_HISTORY_PROJECTION_RESULT;
     });
-    if (await failCurrentTurnForProviderSessionHistoryError(historyProjection)) return;
-    if (await failCurrentTurnForMissingAssistantResponse(historyProjection)) return;
-    if (currentTurnShouldWaitForAssistantHistory(historyProjection)) return;
+    if (await failCurrentTurnForPromptResponseError(historyProjection)) return;
     await completeTurnIfReady({}, historyProjection);
   };
 
@@ -880,7 +956,6 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     if (!turnId) return false;
     const emittedAtMs = Date.now();
     resetCurrentTurnObservations();
-    setThinking(false);
     await publishOpenCodeTurnFailed({
       publishRuntimeEvent,
       sessionId: params.happierSessionId,
@@ -907,7 +982,6 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     if (!turnId) return;
     const emittedAtMs = Date.now();
     resetCurrentTurnObservations();
-    setThinking(false);
     await publishOpenCodeTurnFailed({
       publishRuntimeEvent,
       sessionId: params.happierSessionId,
@@ -922,71 +996,41 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     });
   };
 
-  // ONE bounded reconciliation of the active turn's live-known tool work from the replacement server's
-  // durable history. Bounded: a single pass over the provider session's messages × parts, scoped to
-  // tool calls observed during the current turn. A now-terminal tool clears its tracker entry
-  // (`observeToolPart` deletes on terminal status), so genuinely-completed work no longer reads active.
-  const reconcileLiveKnownToolStateFromHistory = async (): Promise<void> => {
-    if (!state.turnInFlight || !state.providerSessionId) return;
-    if (state.currentTurnObservedToolCallKeys.size === 0) return;
-    let rawMessages: readonly unknown[];
-    try {
-      rawMessages = await client.sessionMessages({ sessionId: state.providerSessionId });
-    } catch (error) {
-      params.ctx.logger.debug('[OpenCodeServer] live-known reconcile: history read failed (non-fatal)', { error });
-      return;
-    }
-    for (const rawMessage of rawMessages) {
-      const record = asRecord(rawMessage);
-      const parts = Array.isArray(record?.parts) ? record.parts : [];
-      for (const rawPart of parts) {
-        const part = readOpenCodeToolPart(rawPart);
-        if (!part) continue;
-        if (!state.currentTurnObservedToolCallKeys.has(readOpenCodeToolCallKey(part))) continue;
-        providerActivityTracker.observeToolPart({
-          part,
-          source: 'history',
-          partId: normalizeString(asRecord(rawPart)?.id) || null,
-        });
-      }
-    }
-  };
-
-  // True if any live-known tool call of the active turn is still active after a bounded reconcile from
-  // the replacement server's durable history. Reconciliation DELETES tracker entries for tools that
-  // are now terminal in the new server's history and re-stamps surviving non-terminal tools to the
-  // current generation; a tool that VANISHED from the new server is never re-observed, so its
-  // old-generation tracker entry survives. Either kind of surviving entry (genuinely-persisting
-  // current-generation work OR vanished old-generation work) means the in-flight tool work did not
-  // cleanly reconcile across the restart, so the fail decision is generation-AGNOSTIC. (The separate
-  // completion gate stays generation-aware so an UNDETECTED generation change cannot wedge an idle
-  // turn forever.)
   const hasUnreconciledActiveLiveKnownToolWork = (_currentGenerationKey: string | null): boolean =>
-    providerActivityTracker.hasActiveProviderWork() || pendingPermissionRequestKeys.size > 0;
+    foregroundToolTracker.hasActiveToolCalls() || pendingPermissionRequestKeys.size > 0;
 
   const managedServerTurnInterruptionSupervisor = createOpenCodeManagedServerTurnInterruptionSupervisor({
     logger: params.ctx.logger,
     isTurnActive: () => state.turnInFlight && state.activeTurnId !== null,
     readOpenCodeManagedServerGenerationIdentity: readManagedServerGenerationIdentity,
-    setObservedGenerationKey: (generationKey) => providerActivityTracker.setObservedGenerationKey(generationKey),
-    reconcileLiveKnownToolStateFromHistory,
+    setObservedGenerationKey: (generationKey) => foregroundToolTracker.setGenerationKey(generationKey),
+    reconcileLiveKnownToolStateFromHistory: async () => {
+      const providerSessionId = state.providerSessionId;
+      if (!providerSessionId) return;
+      const messages = await client.sessionMessages({ sessionId: providerSessionId });
+      for (const message of messages) {
+        const record = asRecord(message);
+        const parts = Array.isArray(record?.parts) ? record.parts : [];
+        for (const rawPart of parts) {
+          const part = readOpenCodeToolPart(rawPart);
+          if (part) foregroundToolTracker.observeToolPart({ part });
+        }
+      }
+    },
     hasUnreconciledActiveLiveKnownToolWork,
     failActiveTurnDueToManagedServerRestart,
     resetProviderWorkForInterruptedTurn: () => {
-      providerActivityTracker.resetForProviderSession(state.providerSessionId);
+      foregroundToolTracker.reset();
       abortPendingPermissionDecisions('OpenCode managed server interrupted the active turn');
       pendingPermissionRequestKeys.clear();
     },
     clearOrphanedProviderWork: (currentGenerationKey) => {
-      providerActivityTracker.clearActiveWork({
-        reason: 'managed_server_generation_replaced',
-        generationKey: currentGenerationKey,
-      });
+      foregroundToolTracker.clearOrphanedToolCalls(currentGenerationKey);
       abortPendingPermissionDecisions('OpenCode managed server generation replaced active work');
       pendingPermissionRequestKeys.clear();
     },
     describeActiveProviderWorkForLog: () => {
-      const work = providerActivityTracker.getProviderWorkState();
+      const work = foregroundToolTracker.describe();
       const pendingPermissionRequestCount = pendingPermissionRequestKeys.size;
       if (!work.active && pendingPermissionRequestCount === 0) return { active: false };
       if (!work.active) {
@@ -1007,47 +1051,27 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
   // Liveness for the turn-completion gate: a turn is only "still working" when it has active provider
   // work NOT orphaned by a replaced managed-server generation. Closes the F4 wedge where an orphaned
   // old-generation non-terminal tool would otherwise read as eternal work and block completion.
-  const turnHasLiveProviderWorkForCurrentGeneration = (): boolean => {
-    if (pendingPermissionRequestKeys.size > 0) return true;
+  const turnHasLiveForegroundWorkForCurrentGeneration = (): boolean => {
+    if (pendingPermissionRequestKeys.size > 0 || pendingQuestionRequestKeys.size > 0) return true;
     const currentGenerationKey = managedServerTurnInterruptionSupervisor.getCurrentGenerationKey();
-    if (currentGenerationKey === null) return providerActivityTracker.hasActiveProviderWork();
-    return providerActivityTracker.hasActiveProviderWorkNotOrphanedByGeneration(currentGenerationKey);
+    if (currentGenerationKey === null) return foregroundToolTracker.hasActiveToolCalls();
+    return foregroundToolTracker.hasActiveToolCallsForGeneration(currentGenerationKey);
   };
 
-  const failCurrentTurnForProviderSessionError = async (error: unknown): Promise<boolean> => {
-    await markCurrentProviderUserMessageFromHistoryBestEffort('agent_session_error');
+  const failCurrentTurnForProviderSessionError = async (
+    error: unknown,
+    options: Readonly<{ historyAlreadyInspected?: boolean }> = {},
+  ): Promise<boolean> => {
+    if (options.historyAlreadyInspected !== true) {
+      await markCurrentProviderUserMessageFromHistoryBestEffort('agent_session_error');
+    }
     const turnId = claimOpenCodeActiveTurnForTerminalEvent(state);
     if (!turnId) return false;
     const emittedAtMs = Date.now();
     const message = formatOpenCodeServerPromptErrorMessage(error);
     const isAuthFailure = openCodeProviderSessionErrorLooksAuthFailure({ error, formattedMessage: message });
-    if (isAuthFailure) {
-      const classification = runtimeAuthAdapter.classifyRuntimeAuthFailure({
-        target: { agentId: 'opencode', targetId: params.happierSessionId },
-        error,
-        selection: resolveOpenCodeRuntimeAuthSelection({
-          env: params.env,
-          error,
-        }),
-      });
-      if (classification) {
-        void params.ctx.sessions.current.auth.services.refreshRuntimeAuth({
-          agentId: 'opencode',
-          serviceId: classification.serviceId,
-          targetId: params.happierSessionId,
-          env: params.env ?? null,
-          classification,
-          reason: 'provider_session_auth_failure',
-        }).catch((refreshError: unknown) => {
-          params.ctx.logger.debug('[OpenCodeServer] connected-service runtime auth recovery report failed', {
-            errorName: refreshError instanceof Error ? refreshError.name : typeof refreshError,
-          });
-        });
-      }
-    }
-    providerActivityTracker.resetForProviderSession(state.providerSessionId);
+    foregroundToolTracker.reset();
     resetCurrentTurnObservations();
-    setThinking(false);
     await publishOpenCodeTurnFailed({
       publishRuntimeEvent,
       sessionId: params.happierSessionId,
@@ -1063,99 +1087,15 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     return true;
   };
 
-  const failCurrentTurnForProviderSessionHistoryError = async (
+  const failCurrentTurnForPromptResponseError = async (
     historyProjection: AssistantHistoryProjectionResult,
   ): Promise<boolean> => {
     if (historyProjection.providerSessionError === null) return false;
-    return await failCurrentTurnForProviderSessionError(historyProjection.providerSessionError);
+    return await failCurrentTurnForProviderSessionError(
+      historyProjection.providerSessionError,
+      { historyAlreadyInspected: true },
+    );
   };
-
-  const failCurrentTurnForMissingAssistantResponse = async (
-    historyProjection: AssistantHistoryProjectionResult,
-  ): Promise<boolean> => {
-    if (!state.turnInFlight || !state.activeTurnId) return false;
-    if (state.currentTurnProviderPromptTexts.size === 0) return false;
-    if (state.currentTurnPublishedAssistantMessageIds.size > 0) return false;
-    if (providerActivityTracker.hasActiveProviderWork()) return false;
-    if (pendingPermissionRequestKeys.size > 0) return false;
-    const hasNoAssistantHistoryEvidence =
-      historyProjection.currentTurnAssistantWithPartsCount === 0
-      && historyProjection.emptyTerminalAssistantMessageCount === 0
-      && historyProjection.terminalAssistantMessageCount === 0
-      && historyProjection.providerSessionError === null;
-    if (hasNoAssistantHistoryEvidence && !currentTurnAssistantHistoryWaitExpired()) {
-      return false;
-    }
-    const emittedAtMs = Date.now();
-    if (currentTurnPermissionRejectionMessage) {
-      const message = currentTurnPermissionRejectionMessage;
-      await markCurrentProviderUserMessageFromHistoryBestEffort('permission_rejected');
-      const turnId = claimOpenCodeActiveTurnForTerminalEvent(state);
-      if (!turnId) return false;
-      providerActivityTracker.resetForProviderSession(state.providerSessionId);
-      resetCurrentTurnObservations();
-      setThinking(false);
-      await publishOpenCodeTurnFailed({
-        publishRuntimeEvent,
-        sessionId: params.happierSessionId,
-        turnId,
-        emittedAtMs,
-        issue: buildOpenCodeRuntimeIssue({
-          code: 'opencode_permission_denied',
-          source: 'permission_blocked',
-          message,
-          occurredAt: emittedAtMs,
-        }),
-      });
-      return true;
-    }
-    let message = 'OpenCode reported the turn idle without returning an assistant message. Check provider credentials, model availability, and OpenCode logs.';
-    if (historyProjection.currentTurnAssistantWithPartsCount > 0) {
-      message = 'OpenCode completed provider tool work but returned no assistant message. Check provider credentials, model availability, and OpenCode logs.';
-    } else if (historyProjection.emptyTerminalAssistantMessageCount > 0) {
-      message = 'OpenCode completed the turn but returned an empty assistant message. Check provider credentials, model availability, and OpenCode logs.';
-    } else if (hasNoAssistantHistoryEvidence) {
-      message = 'OpenCode accepted the prompt but did not publish assistant, tool, or error history before the inactivity timeout. Check provider credentials, model availability, and OpenCode logs.';
-    }
-    await markCurrentProviderUserMessageFromHistoryBestEffort('missing_assistant_response');
-    const turnId = claimOpenCodeActiveTurnForTerminalEvent(state);
-    if (!turnId) return false;
-    providerActivityTracker.resetForProviderSession(state.providerSessionId);
-    resetCurrentTurnObservations();
-    setThinking(false);
-    await publishOpenCodeTurnFailed({
-      publishRuntimeEvent,
-      sessionId: params.happierSessionId,
-      turnId,
-      emittedAtMs,
-      issue: buildOpenCodeRuntimeIssue({
-        code: 'opencode_empty_provider_response',
-        source: 'agent_session_error',
-        message,
-        occurredAt: emittedAtMs,
-      }),
-    });
-    return true;
-  };
-
-  const currentTurnAssistantHistoryWaitExpired = (): boolean => (
-    state.currentTurnPromptAcceptedAtMs !== null
-    && Date.now() - state.currentTurnPromptAcceptedAtMs >= OPEN_CODE_IDLE_ASSISTANT_HISTORY_GRACE_MS
-  );
-
-  const currentTurnShouldWaitForAssistantHistory = (
-    historyProjection: AssistantHistoryProjectionResult,
-  ): boolean => (
-    state.turnInFlight
-    && state.currentTurnProviderPromptTexts.size > 0
-    && state.currentTurnPublishedAssistantMessageIds.size === 0
-    && !providerActivityTracker.hasActiveProviderWork()
-    && historyProjection.currentTurnAssistantWithPartsCount === 0
-    && historyProjection.emptyTerminalAssistantMessageCount === 0
-    && historyProjection.terminalAssistantMessageCount === 0
-    && historyProjection.providerSessionError === null
-    && !currentTurnAssistantHistoryWaitExpired()
-  );
 
   const failCurrentTurnForProviderErrorStatus = async (status: unknown): Promise<boolean> => {
     if (readStatusType(status) !== 'error') return false;
@@ -1177,9 +1117,167 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     return true;
   };
 
+  const handleQuestionAsked = async (
+    properties: Readonly<Record<string, unknown>>,
+  ): Promise<void> => {
+    const requestId = normalizeString(properties.id);
+    const providerSessionId = normalizeString(properties.sessionID);
+    if (
+      !requestId
+      || !providerSessionId
+      || providerSessionId !== state.providerSessionId
+    ) return;
+    const requestKey = `${providerSessionId}:${requestId}`;
+    if (handledQuestionRequestKeys.has(requestKey)) return;
+    handledQuestionRequestKeys.add(requestKey);
+    if (handledQuestionRequestKeys.size > 512) {
+      const oldest = handledQuestionRequestKeys.values().next().value;
+      if (typeof oldest === 'string') handledQuestionRequestKeys.delete(oldest);
+    }
+    const questions = Array.isArray(properties.questions)
+      ? properties.questions.map(asRecord).filter(
+          (question): question is Readonly<Record<string, unknown>> => question !== null,
+        )
+      : [];
+    if (questions.length === 0) {
+      await client.questionReject({ requestId });
+      return;
+    }
+    const internalTitleQuestions = questions.every((question) => {
+      const header = normalizeString(question.header).toLowerCase();
+      const prompt = normalizeString(question.question).toLowerCase();
+      const options = Array.isArray(question.options)
+        ? question.options.map(asRecord).filter(
+            (option): option is Readonly<Record<string, unknown>> => option !== null,
+          )
+        : [];
+      return (header === 'title' || header === 'title update')
+        && prompt.startsWith('(internal)')
+        && question.multiple !== true
+        && options.length === 1
+        && normalizeString(options[0]?.label).toLowerCase() === 'ok';
+    });
+    if (internalTitleQuestions) {
+      await client.questionReply({
+        requestId,
+        answers: questions.map(() => ['OK']),
+      });
+      return;
+    }
+
+    const hostQuestions = questions.map((question, questionIndex) => {
+      const id = `${requestId}:${questionIndex}`;
+      const prompt = normalizeString(question.question)
+        || normalizeString(question.header);
+      const options = Array.isArray(question.options)
+        ? question.options.map(asRecord).filter(
+            (option): option is Readonly<Record<string, unknown>> => (
+              option !== null && normalizeString(option.label).length > 0
+            ),
+          )
+        : [];
+      if (options.length === 0) {
+        return { id, prompt, type: 'text' as const, required: true };
+      }
+      return {
+        id,
+        prompt,
+        type: question.multiple === true ? 'multiple' as const : 'single' as const,
+        required: true,
+        choices: options.map((option, optionIndex) => ({
+          id: `${id}:choice:${optionIndex}`,
+          label: normalizeString(option.label),
+          ...(normalizeString(option.description)
+            ? { description: normalizeString(option.description) }
+            : {}),
+        })) as [
+          { id: string; label: string; description?: string },
+          ...{ id: string; label: string; description?: string }[],
+        ],
+        allowCustom: question.multiple !== true,
+      };
+    });
+    if (
+      hostQuestions.some((question) => !question.prompt)
+      || hostQuestions.length === 0
+    ) {
+      await client.questionReject({ requestId });
+      return;
+    }
+
+    pendingQuestionRequestKeys.add(requestKey);
+    const questionProviderSessionId = state.providerSessionId;
+    const questionIsStillCurrent = (): boolean => (
+      pendingQuestionRequestKeys.has(requestKey)
+      && state.providerSessionId === questionProviderSessionId
+      && !params.ctx.abort.signal.aborted
+    );
+    try {
+      const result = await params.ctx.ui.askQuestions(
+        hostQuestions as [typeof hostQuestions[number], ...typeof hostQuestions[number][]],
+      );
+      if (!questionIsStillCurrent()) return;
+      if (result.status !== 'answered') {
+        await client.questionReject({ requestId });
+        return;
+      }
+      const answers = hostQuestions.map((hostQuestion, questionIndex) => {
+        const answer = result.answers[hostQuestion.id];
+        if (!answer) return [] as string[];
+        if (answer.type === 'text') return [answer.value];
+        const originalOptions = Array.isArray(questions[questionIndex]?.options)
+          ? (questions[questionIndex]?.options as readonly unknown[])
+              .map(asRecord)
+              .filter(
+                (option): option is Readonly<Record<string, unknown>> => option !== null,
+              )
+          : [];
+        const renderChoice = (
+          choice: Readonly<{ type: 'choice'; choiceId: string }>
+            | Readonly<{ type: 'custom'; value: string }>,
+        ): string => {
+          if (choice.type === 'custom') return choice.value;
+          const index = Number.parseInt(choice.choiceId.split(':').at(-1) ?? '', 10);
+          return normalizeString(originalOptions[index]?.label);
+        };
+        if (answer.type === 'single') return [renderChoice(answer.answer)].filter(Boolean);
+        return answer.answers.map(renderChoice).filter(Boolean);
+      });
+      await client.questionReply({ requestId, answers });
+    } catch (error) {
+      params.ctx.logger.debug('[OpenCodeServer] question handling failed closed', {
+        requestId,
+        error,
+      });
+      if (!questionIsStillCurrent()) return;
+      await client.questionReject({ requestId }).catch((replyError: unknown) => {
+        params.ctx.logger.debug('[OpenCodeServer] question rejection failed', {
+          requestId,
+          error: replyError,
+        });
+      });
+    } finally {
+      pendingQuestionRequestKeys.delete(requestKey);
+    }
+  };
+
   const handlePermissionAsked = async (properties: Readonly<Record<string, unknown>>): Promise<void> => {
     const ask = readOpenCodePermissionAsk(properties, state.providerSessionId);
-    if (!ask) return;
+    if (!ask) {
+      const requestId = readOpenCodePermissionRequestId(properties);
+      if (!requestId || !rememberPermissionRequest(requestId)) return;
+      await client.permissionReply({
+        requestId,
+        reply: 'reject',
+        message: 'OpenCode permission request was malformed or ambiguous.',
+      }).catch((error: unknown) => {
+        params.ctx.logger.debug('[OpenCodeServer] malformed permission rejection failed', {
+          requestId,
+          error,
+        });
+      });
+      return;
+    }
     if (!rememberPermissionRequest(ask.requestId)) return;
 
     let reply: 'once' | 'always' | 'reject' = 'reject';
@@ -1190,7 +1288,9 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     const requestGenerationKey = readManagedServerGenerationIdentity()?.generationKey ?? null;
     const requestIsTurnScoped = requestTurnId !== null;
     const permissionRequestIsStillCurrent = (): boolean => (
-      (!requestIsTurnScoped || pendingPermissionRequestKeys.has(requestKey))
+      !state.disposed
+      && !params.ctx.abort.signal.aborted
+      && (!requestIsTurnScoped || pendingPermissionRequestKeys.has(requestKey))
       && (!requestIsTurnScoped || state.activeTurnId === requestTurnId)
       && state.providerSessionId === requestProviderSessionId
       && (readManagedServerGenerationIdentity()?.generationKey ?? null) === requestGenerationKey
@@ -1215,11 +1315,13 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     try {
       try {
         const decision = await params.ctx.sessions.current.permissions.requestDecision(
-          buildOpenCodePermissionDecisionRequest(ask),
-          permissionDecisionSignal ? { signal: permissionDecisionSignal.signal } : undefined,
+          buildOpenCodePermissionApprovalRequest(ask),
+          {
+            signal: permissionDecisionSignal?.signal ?? params.ctx.abort.signal,
+          },
         );
-        reply = mapOpenCodePermissionDecisionToReply(decision);
-        message = readOpenCodePermissionReplyMessage(decision);
+        reply = mapOpenCodeApprovalResultToReply(decision);
+        message = readOpenCodeApprovalReplyMessage(decision);
       } catch (error) {
         if (permissionDecisionSignal?.isAborted() || !permissionRequestIsStillCurrent()) return;
         params.ctx.logger.debug('[OpenCodeServer] permission request failed closed', { error });
@@ -1276,7 +1378,6 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
 
     if (type === 'server.connected') {
       markServerConnected();
-      await refreshProviderActivityFromHistory();
       // Lane H/S2: catch up on externally-authored (e.g. TUI) turns when no Happier turn is active.
       // Self-gates on `turnInFlight`, so it is a no-op during an active turn (live path owns it).
       await projectExternalSessionMessagesBestEffort();
@@ -1293,54 +1394,32 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
       return;
     }
 
+    if (type === 'question.asked') {
+      await handleQuestionAsked(properties);
+      return;
+    }
+
     if (type === 'session.status') {
-      await handleStatus(asRecord(properties.status) ?? properties.status);
+      await handleStatus(
+        asRecord(properties.status) ?? properties.status,
+        { forceHistoryRefresh: true },
+      );
       return;
     }
 
     if (type === 'session.idle') {
-      await handleStatus({ type: 'idle' });
+      await handleStatus({ type: 'idle' }, { forceHistoryRefresh: true });
       return;
     }
 
     if (type === 'message.part.updated' || type === 'message.part.created') {
       const rawPart = asRecord(properties.part);
-      const rawPartText = normalizeString(rawPart?.text);
       observeCurrentTurnMessageId(normalizeString(rawPart?.messageID));
-      const backgroundWakeSource = rawPartText
-        ? readOpenCodeBackgroundTaskWakeSource(rawPartText)
-        : null;
-      if (backgroundWakeSource) {
-        recordProviderAutonomousBackgroundWake({
-          source: backgroundWakeSource,
-          messageId: normalizeString(rawPart?.messageID),
-          runtimeActivitySourceId: readOpenCodeBackgroundTaskWakeRuntimeSourceId(rawPartText),
-          clearAllRuntimeActivitySources: openCodeBackgroundTaskWakeIndicatesAllTasksComplete(rawPartText),
-        });
-        return;
-      }
       const part = readOpenCodeToolPart(rawPart);
       if (!part) return;
-      if (openCodeToolPartLooksLikeBackgroundTaskLaunch(part)) {
-        publishDetachedRuntimeActivity(readOpenCodeBackgroundTaskLaunchRuntimeSourceId(part));
-      }
-      const isBackgroundOutputContinuation =
-        openCodeToolPartLooksLikeBackgroundOutputContinuation(part);
-      if (
-        !state.turnInFlight &&
-        (state.pendingProviderAutonomousBackgroundWake ||
-          isBackgroundOutputContinuation)
-      ) {
-        await beginProviderAutonomousBackgroundTurnIfNeeded({
-          reason: isBackgroundOutputContinuation
-            ? 'background-output-tool'
-            : 'background-wake',
-        });
-      }
-      providerActivityTracker.observeToolPart({
+      if (!state.turnInFlight) return;
+      foregroundToolTracker.observeToolPart({
         part,
-        source: 'live',
-        partId: normalizeString(rawPart?.id) || null,
       });
       observeCurrentTurnToolPart(part);
       publishOpenCodeToolPartRuntimeEvents({
@@ -1353,61 +1432,56 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     }
 
     if (type === 'message.updated') {
-      observeCurrentTurnMessageId(normalizeString(asRecord(properties.info)?.id));
+      const info = asRecord(properties.info);
+      const messageId = normalizeString(info?.id);
+      observeCurrentTurnMessageId(messageId);
+      if (
+        messageId
+        && info?.summary === true
+        && normalizeString(info.role) === 'assistant'
+        && !observedAutomaticCompactionMessageIds.has(messageId)
+      ) {
+        observedAutomaticCompactionMessageIds.add(messageId);
+        const emittedAtMs = Date.now();
+        publishRuntimeEvent({
+          kind: 'context-compaction',
+          sessionId: params.happierSessionId,
+          emittedAtMs,
+          compactionId: messageId,
+          phase: 'started',
+          trigger: 'automatic',
+        });
+        publishRuntimeEvent({
+          kind: 'context-compaction',
+          sessionId: params.happierSessionId,
+          emittedAtMs,
+          compactionId: messageId,
+          phase: 'completed',
+          trigger: 'automatic',
+        });
+      }
       return;
     }
 
     if (type === 'message.part.delta') {
-      const messageId = normalizeString(properties.messageID);
-      const partId = normalizeString(properties.partID);
-      const delta = normalizeString(properties.delta);
-      if (!state.providerSessionId || !messageId || !partId || !delta) return;
-      observeCurrentTurnMessageId(messageId);
-      const key = `${state.providerSessionId}:${messageId}:${partId}`;
-      const accumulated = accumulatedBackgroundWakeTextByPartKey.get(key) ?? '';
-      const nextAccumulated = delta.startsWith(accumulated) ? delta : accumulated + delta;
-      accumulatedBackgroundWakeTextByPartKey.set(key, nextAccumulated);
-      const backgroundWakeSource = readOpenCodeBackgroundTaskWakeSource(nextAccumulated);
-      if (!backgroundWakeSource) return;
-      recordProviderAutonomousBackgroundWake({
-        source: backgroundWakeSource,
-        messageId,
-        runtimeActivitySourceId: readOpenCodeBackgroundTaskWakeRuntimeSourceId(nextAccumulated),
-        clearAllRuntimeActivitySources: openCodeBackgroundTaskWakeIndicatesAllTasksComplete(nextAccumulated),
-      });
+      observeCurrentTurnMessageId(normalizeString(properties.messageID));
       return;
     }
   };
 
-  const recordProviderAutonomousBackgroundWake = (input: Readonly<{
-    source: 'native-background-task' | 'oh-my-openagent-background-task';
-    messageId?: string | null;
-    runtimeActivitySourceId?: string | null;
-    clearAllRuntimeActivitySources?: boolean;
-  }>): void => {
-    if (input.runtimeActivitySourceId) {
-      clearDetachedRuntimeActivity(input.runtimeActivitySourceId, 'opencode_background_task_wake');
-    } else if (input.clearAllRuntimeActivitySources === true) {
-      clearDetachedRuntimeActivity(null, 'opencode_background_task_wake_all_complete');
-    }
-    recordOpenCodeProviderAutonomousBackgroundWake({
-      state,
-      source: input.source,
-      messageId: input.messageId,
+  const stopNativeRetry = async (): Promise<void> => {
+    if (!state.providerSessionId) return;
+    await client.sessionAbort({ sessionId: state.providerSessionId }).catch((error: unknown) => {
+      params.ctx.logger.debug('[OpenCodeServer] session abort failed while stopping a native retry', {
+        error,
+      });
     });
   };
 
-  const beginProviderAutonomousBackgroundTurnIfNeeded = async (input: Readonly<{
-    reason: 'background-wake' | 'background-output-tool';
-  }>): Promise<boolean> => beginOpenCodeProviderAutonomousBackgroundTurnIfNeeded({
-    publishRuntimeEvent,
-    state,
-    happierSessionId: params.happierSessionId,
-    setThinking,
-    reason: input.reason,
-  });
-
-  const handleStatus = async (status: unknown): Promise<void> => {
+  const handleStatus = async (
+    status: unknown,
+    options: Readonly<{ forceHistoryRefresh?: boolean }> = {},
+  ): Promise<void> => {
     // Lane E: observe a possible mid-turn managed-server generation change before processing status.
     // Awaited so a detected replacement deterministically reconciles-or-fails before completion.
     await managedServerTurnInterruptionSupervisor.observeManagedServerGeneration();
@@ -1417,16 +1491,11 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
       status,
       state,
       happierSessionId: params.happierSessionId,
+      stopNativeRetry,
     });
     if (await failCurrentTurnForProviderErrorStatus(status)) return;
     const statusType = readStatusType(status);
     if (statusType === 'busy') {
-      if (state.pendingProviderAutonomousBackgroundWake) {
-        await beginProviderAutonomousBackgroundTurnIfNeeded({
-          reason: 'background-wake',
-        });
-      }
-      setThinking(true);
       return;
     }
     if (statusType === 'idle') {
@@ -1437,22 +1506,21 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
         await projectExternalSessionMessagesBestEffort();
         return;
       }
-      const historyProjection = await inspectProviderHistoryForFinality('idle');
-      if (await failCurrentTurnForProviderSessionHistoryError(historyProjection)) return;
-      if (await failCurrentTurnForMissingAssistantResponse(historyProjection)) return;
-      if (currentTurnShouldWaitForAssistantHistory(historyProjection)) return;
+      const historyProjection = await reconcileExactCurrentTurnTerminalAssistantFromAuthoritativeInventoryBestEffort(
+        options.forceHistoryRefresh === true,
+      );
+      if (await failCurrentTurnForPromptResponseError(historyProjection)) return;
       await completeTurnIfReady(status, historyProjection);
     }
   };
 
   return {
-    beginTurnLifecycle() {
-      state.activeTurnId = createOpenCodeTurnId();
+    beginTurnLifecycle(turnId) {
+      state.activeTurnId = turnId;
       state.turnInFlight = true;
       resetCurrentTurnObservations();
       // Lane E: stamp the managed-server generation this turn starts against.
       managedServerTurnInterruptionSupervisor.captureTurnStartGeneration();
-      setThinking(true);
       void publishOpenCodeRuntimeEvent(publishRuntimeEvent, {
         kind: 'turn-start',
         sessionId: params.happierSessionId,
@@ -1462,28 +1530,41 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
         params.ctx.logger.debug('[OpenCodeServer] failed to publish turn-start event', { error });
       });
     },
-    async startOrLoadSession(opts = {}) {
-      const resumeId = normalizeString(opts.resumeId);
-      if (resumeId) {
-        state.providerSessionId = resumeId;
+    async openSession(request) {
+      if (request.kind === 'resume') {
+        state.providerSessionId = normalizeString(request.providerSessionId);
+      } else if (request.kind === 'fork') {
+        const parentProviderSessionId = normalizeString(request.source.providerSessionId);
+        if (!parentProviderSessionId) {
+          throw new Error('OpenCode fork requires a parent provider session id');
+        }
+        const messageId = readOpenCodeForkMessageId(request);
+        const forked = await client.sessionFork({
+          sessionId: parentProviderSessionId,
+          ...(messageId ? { messageId } : {}),
+        });
+        state.providerSessionId = forked.id;
       } else {
         const created = await client.sessionCreate({ directory: params.directory });
         state.providerSessionId = created.id;
+      }
+      if (!state.providerSessionId) {
+        throw new Error('OpenCode session open did not produce a provider session id');
       }
       await publishOpenCodeProviderSessionId({
         ctx: params.ctx,
         providerSessionId: state.providerSessionId,
         reason: 'opencode_session_started',
       });
-      providerActivityTracker.resetForProviderSession(state.providerSessionId);
-      clearDetachedRuntimeActivity(null, 'opencode_provider_session_reset');
+      foregroundToolTracker.reset();
       state.emittedAssistantMessageIds.clear();
+      observedAutomaticCompactionMessageIds.clear();
       await happierAuthoredProviderUserMessageIds.hydrate();
       handledPermissionRequestKeys.clear();
       abortPendingPermissionDecisions('OpenCode provider session reset');
       pendingPermissionRequestKeys.clear();
-      state.pendingProviderAutonomousBackgroundWake = null;
-      accumulatedBackgroundWakeTextByPartKey.clear();
+      handledQuestionRequestKeys.clear();
+      retirePendingQuestions();
       attachOpenCodeProviderEventSubscriptionIfNeeded({
         client,
         ctx: params.ctx,
@@ -1494,15 +1575,20 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
       return state.providerSessionId;
     },
     async sendTurnPrompt(prompt, meta) {
-      if (!state.activeTurnId) this.beginTurnLifecycle();
-      if (!state.providerSessionId) await this.startOrLoadSession();
+      if (!state.activeTurnId) {
+        throw new Error('OpenCode prompt submission requires an active host turn lifecycle');
+      }
+      if (!state.providerSessionId) await this.openSession({ kind: 'create' });
       const providerSessionId = state.providerSessionId;
       const turnId = state.activeTurnId;
       if (!providerSessionId || !turnId) throw new Error('OpenCode session failed to initialize');
 
       const serverReadyForPrompt = await waitForServerConnectedBeforePrompt(turnId);
-      if (!serverReadyForPrompt) return;
+      if (!serverReadyForPrompt) {
+        throw new Error('OpenCode server became unavailable before prompt submission');
+      }
 
+      state.currentTurnProviderPromptTexts.clear();
       state.currentTurnProviderPromptTexts.add(prompt);
       const promptSubmittedAtMs = Date.now();
       state.currentTurnPromptSubmittedAtMs = promptSubmittedAtMs;
@@ -1516,7 +1602,6 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
         if (failedTurnId) {
           const emittedAtMs = Date.now();
           resetCurrentTurnObservations();
-          setThinking(false);
           await publishOpenCodeTurnFailed({
             publishRuntimeEvent,
             sessionId: params.happierSessionId,
@@ -1531,42 +1616,90 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
           });
         }
       };
+      const failPromptIdentityResolution = async (
+        message: string,
+        cause?: unknown,
+      ): Promise<OpenCodePromptIdentityUnresolvedError> => {
+        const failedTurnId = claimOpenCodeActiveTurnForTerminalEvent(state);
+        if (failedTurnId) {
+          const emittedAtMs = Date.now();
+          resetCurrentTurnObservations();
+          await publishOpenCodeTurnFailed({
+            publishRuntimeEvent,
+            sessionId: params.happierSessionId,
+            turnId: failedTurnId,
+            emittedAtMs,
+            issue: buildOpenCodeRuntimeIssue({
+              code: 'opencode_prompt_identity_unresolved',
+              source: 'agent_session_error',
+              message,
+              occurredAt: emittedAtMs,
+            }),
+          });
+        }
+        return new OpenCodePromptIdentityUnresolvedError(
+          message,
+          cause === undefined ? undefined : { cause },
+        );
+      };
       try {
+        state.currentTurnProviderUserMessageIds.clear();
+        state.currentTurnTerminalAssistantMessageIds.clear();
+        state.currentTurnProviderUserMessageId = null;
         const perPromptModelId = normalizeString(meta?.modelId);
         const modelForPrompt = perPromptModelId
           ? await resolvePromptModel(perPromptModelId)
           : promptModel;
-        const promptSubmission = client.sessionPromptAsync({
+        const promptSubmission = await client.sessionPromptAsync({
           sessionId: providerSessionId,
           text: prompt,
+          ...(meta?.promptParts ? { parts: meta.promptParts } : {}),
           ...(modelForPrompt ? { model: modelForPrompt } : {}),
           ...(state.promptVariant ? { variant: state.promptVariant } : {}),
           ...(state.promptConfig ? { config: state.promptConfig } : {}),
         });
+        let authoritativeMessages: readonly unknown[];
+        try {
+          authoritativeMessages = await client.sessionMessages({ sessionId: providerSessionId });
+        } catch (error) {
+          throw await failPromptIdentityResolution(
+            'OpenCode accepted the prompt, but its authoritative message inventory could not be read to establish input custody.',
+            error,
+          );
+        }
+        const providerUserMessageResolution =
+          await adoptCurrentProviderUserMessageFromAuthoritativeInventory(authoritativeMessages);
+        if (providerUserMessageResolution.status !== 'resolved') {
+          throw await failPromptIdentityResolution(
+            providerUserMessageResolution.status === 'ambiguous'
+              ? 'OpenCode accepted the prompt, but its authoritative message inventory contained multiple matching native user messages.'
+              : 'OpenCode accepted the prompt, but its authoritative message inventory did not contain a matching native user message.',
+          );
+        }
+        const providerUserMessageId = providerUserMessageResolution.providerUserMessageId;
         state.currentTurnPromptAcceptedAtMs = Date.now();
-        void promptSubmission.then(
-          (response) => {
-            queueMicrotask(() => {
-              void inspectPromptSubmissionResponseForFinality(response).catch((error: unknown) => {
-                params.ctx.logger.debug('[OpenCodeServer] failed to inspect prompt response evidence', { error });
-              });
-            });
-          },
-          (error: unknown) => {
-            void failPromptSubmission(error).catch((publishError: unknown) => {
-              params.ctx.logger.debug('[OpenCodeServer] failed to publish prompt submission failure', {
-                error: publishError,
-              });
-            });
-          },
-        );
+        queueMicrotask(() => {
+          void inspectPromptSubmissionResponseForFinality(
+            promptSubmission,
+            providerUserMessageId,
+          ).catch((error: unknown) => {
+            params.ctx.logger.debug('[OpenCodeServer] failed to inspect prompt response evidence', { error });
+          });
+        });
+        return {
+          providerUserMessageId,
+          ...(modelForPrompt
+            ? { effectiveModelId: `${modelForPrompt.providerID}/${modelForPrompt.modelID}` }
+            : {}),
+        };
       } catch (error) {
+        if (error instanceof OpenCodePromptIdentityUnresolvedError) throw error;
         await failPromptSubmission(error);
         throw error;
       }
     },
     async steerInFlightTurn(message, meta) {
-      await this.sendTurnPrompt(message, meta);
+      return await this.sendTurnPrompt(message, meta);
     },
     async waitForTurnCompletion() {
       if (!state.turnInFlight || !state.activeTurnId || !state.providerSessionId) return;
@@ -1588,18 +1721,14 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
         status,
         state,
         happierSessionId: params.happierSessionId,
+        stopNativeRetry,
       });
       if (await failCurrentTurnForProviderErrorStatus(status)) return;
-      let historyProjection = EMPTY_ASSISTANT_HISTORY_PROJECTION_RESULT;
       if (readStatusType(status) === 'busy') {
-        setThinking(true);
         return;
-      } else {
-        historyProjection = await inspectProviderHistoryForFinality('polling');
-        if (await failCurrentTurnForProviderSessionHistoryError(historyProjection)) return;
-        if (await failCurrentTurnForMissingAssistantResponse(historyProjection)) return;
-        if (currentTurnShouldWaitForAssistantHistory(historyProjection)) return;
       }
+      const historyProjection = await reconcileExactCurrentTurnTerminalAssistantFromAuthoritativeInventoryBestEffort();
+      if (await failCurrentTurnForPromptResponseError(historyProjection)) return;
       await completeTurnIfReady(status, historyProjection);
     },
     subscribeRuntimeEvents(handler) {
@@ -1610,9 +1739,9 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     },
     async cancelTurn() {
       const turnId = claimOpenCodeActiveTurnForTerminalEvent(state);
+      retirePendingQuestions();
       if (turnId) {
         resetCurrentTurnObservations();
-        setThinking(false);
         wakeServerConnectedWaiters();
       }
       if (state.providerSessionId) {
@@ -1643,7 +1772,16 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     async updateSessionRuntimeConfig(update) {
       const promptConfigUpdate = normalizeOpenCodePromptConfigUpdate(update);
       if (promptConfigUpdate.hasModel) {
-        promptModel = promptConfigUpdate.model ?? await resolvePromptModel(normalizeString(update.modelId));
+        const requestedModelId = normalizeString(update.modelId);
+        if (!requestedModelId || requestedModelId === 'default') {
+          promptModel = null;
+        } else {
+          const resolvedModel = await resolvePromptModel(requestedModelId);
+          if (!resolvedModel) {
+            throw new Error(`OpenCode model "${requestedModelId}" is not selectable`);
+          }
+          promptModel = resolvedModel;
+        }
       }
       if (promptConfigUpdate.variant) {
         state.promptVariant = promptConfigUpdate.variant;
@@ -1655,6 +1793,54 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
         kind: 'opencode.runtime_config_update',
         update,
       });
+    },
+    async compactContext(request) {
+      const providerSessionId = state.providerSessionId;
+      if (!providerSessionId) {
+        throw new Error('OpenCode context compaction requires an open provider session');
+      }
+      const model = await resolveEffectivePromptModel();
+      if (!model) {
+        throw new Error('OpenCode context compaction requires a resolved model');
+      }
+      publishRuntimeEvent({
+        kind: 'context-compaction',
+        sessionId: params.happierSessionId,
+        emittedAtMs: Date.now(),
+        compactionId: request.compactionId,
+        phase: 'started',
+        trigger: 'manual',
+      });
+      try {
+        await client.sessionSummarize({
+          sessionId: providerSessionId,
+          model,
+          auto: false,
+        });
+        publishRuntimeEvent({
+          kind: 'context-compaction',
+          sessionId: params.happierSessionId,
+          emittedAtMs: Date.now(),
+          compactionId: request.compactionId,
+          phase: 'completed',
+          trigger: 'manual',
+        });
+      } catch (error) {
+        publishRuntimeEvent({
+          kind: 'context-compaction',
+          sessionId: params.happierSessionId,
+          emittedAtMs: Date.now(),
+          compactionId: request.compactionId,
+          phase: 'failed',
+          trigger: 'manual',
+          diagnostic: {
+            code: 'opencode_compaction_failed',
+            severity: 'error',
+            message: error instanceof Error ? error.message : String(error),
+          },
+        });
+        throw error;
+      }
     },
     handleProviderEvent,
     async resetOrDisposeRuntime() {
@@ -1669,18 +1855,17 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
       state.activeTurnId = null;
       state.turnInFlight = false;
       promptModel = null;
-      state.pendingProviderAutonomousBackgroundWake = null;
       handledPermissionRequestKeys.clear();
       abortPendingPermissionDecisions('OpenCode runtime disposed');
       pendingPermissionRequestKeys.clear();
-      accumulatedBackgroundWakeTextByPartKey.clear();
+      handledQuestionRequestKeys.clear();
+      retirePendingQuestions();
       resetCurrentTurnObservations();
       state.emittedAssistantMessageIds.clear();
+      observedAutomaticCompactionMessageIds.clear();
       happierAuthoredProviderUserMessageIds.clearMemory();
-      providerActivityTracker.resetForProviderSession(null);
-      clearDetachedRuntimeActivity(null, 'opencode_runtime_disposed');
+      foregroundToolTracker.reset();
       resetServerConnectedReadiness();
-      setThinking(false);
     },
   };
 }

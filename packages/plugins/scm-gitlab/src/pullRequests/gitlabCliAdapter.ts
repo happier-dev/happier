@@ -4,19 +4,18 @@ import {
   type ScmOperationErrorCode,
   type ScmPullRequestReference,
   type ScmPullRequestSummary,
-} from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm';
 import type {
   ScmHostingProviderPullRequestCreateInput,
   ScmHostingProviderPullRequestGetInput,
   ScmHostingProviderPullRequestListInput,
   ScmHostingProviderRuntimeCommandResult,
   ScmHostingProviderRuntimeServices,
-} from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/experimental/scm/hostingProvider';
 
 import {
   detectGitlabCliAuth,
   type GitlabCliAuthDetectionResult,
-  type GitlabCliCommandRunner,
 } from './gitlabCliDetection.js';
 import { withGitlabCliTempBody } from './gitlabCliTempBody.js';
 import { mapGitlabMergeRequest } from './gitlabMergeRequestMapping.js';
@@ -24,6 +23,7 @@ import { mapGitlabMergeRequest } from './gitlabMergeRequestMapping.js';
 export const GITLAB_PULL_REQUEST_AUTH_PROFILE_KEY = 'glab-cli';
 
 const DEFAULT_GITLAB_CLI_PR_TIMEOUT_MS = 30_000;
+const GITLAB_CLI_EXECUTABLE = Object.freeze({ kind: 'systemTool' as const, id: 'gitlab-cli' });
 const GITLAB_CLI_NONINTERACTIVE_ENV = Object.freeze({
   GIT_TERMINAL_PROMPT: '0',
   GLAB_NO_PROMPT: '1',
@@ -71,29 +71,34 @@ function defaultRunCommand(): never {
   throw createUnsupportedError('GitLab CLI command runner is unavailable');
 }
 
-function normalizeRuntimeCommandResult(result: ScmHostingProviderRuntimeCommandResult): Awaited<ReturnType<GitlabCliCommandRunner>> {
-  return {
-    ok: result.ok,
-    stdout: result.stdout,
-    stderr: result.stderr,
-    exitCode: result.exitCode,
-  };
+type GitlabAdapterCommandRunner = (request: Readonly<{
+  binPath: string;
+  args: readonly string[];
+  timeoutMs: number;
+  env?: Readonly<Record<string, string>>;
+}>) => Promise<ScmHostingProviderRuntimeCommandResult>;
+
+function createRuntimeCommandRunner(
+  runtimeServices?: ScmHostingProviderRuntimeServices,
+): GitlabAdapterCommandRunner | null {
+  const executeCommand = runtimeServices?.executeCommand;
+  if (!executeCommand) return null;
+  return async (request) => await executeCommand({
+    executable: GITLAB_CLI_EXECUTABLE,
+    args: request.args,
+    timeoutMs: request.timeoutMs,
+    ...(request.env ? { env: request.env } : {}),
+  });
 }
 
 function defaultDetectAuth(input: Readonly<{
   providerBaseUrl: string;
   runtimeServices?: ScmHostingProviderRuntimeServices;
 }>): Promise<GitlabCliAuthDetectionResult> {
+  const runtimeCommandRunner = createRuntimeCommandRunner(input.runtimeServices);
   return detectGitlabCliAuth({
     providerBaseUrl: input.providerBaseUrl,
-    runCommand: input.runtimeServices?.runCommand
-      ? async (request) => normalizeRuntimeCommandResult(await input.runtimeServices?.runCommand?.(request) ?? {
-        ok: false,
-        stdout: '',
-        stderr: 'glab command runner is unavailable',
-        exitCode: null,
-      })
-      : undefined,
+    ...(runtimeCommandRunner ? { runCommand: runtimeCommandRunner } : {}),
   });
 }
 
@@ -250,7 +255,7 @@ export function createGitlabCliAdapter(params?: Readonly<{
     runtimeServices?: ScmHostingProviderRuntimeServices;
   }>): Promise<string> {
     const auth = await resolveAuthenticatedCommand(input.provider, input.runtimeServices);
-    const commandRunner = input.runtimeServices?.runCommand ?? runCommand;
+    const commandRunner = createRuntimeCommandRunner(input.runtimeServices) ?? runCommand;
     const result = await commandRunner({
       binPath: auth.binPath,
       args: input.args,

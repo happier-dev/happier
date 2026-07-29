@@ -22,6 +22,13 @@ type ExternalSessionKeySegmentDeclaration =
       profileField: string;
       when: ExternalSessionWhenDeclaration;
     }>;
+type ExternalSessionInstanceDeclaration =
+  | Readonly<{ kind: 'default'; constants: Readonly<Record<string, unknown>> }>
+  | Readonly<{
+      kind: 'connectedServiceProfiles';
+      constants: Readonly<Record<string, unknown>>;
+      fields: Readonly<{ serviceId: string; profileId: string }>;
+    }>;
 
 export type BackendExternalSessionSourceReferenceDeclaration = Readonly<{
   sourceKind: string;
@@ -32,6 +39,7 @@ export type BackendExternalSessionSourceReferenceDeclaration = Readonly<{
   key: Readonly<{
     segments: readonly ExternalSessionKeySegmentDeclaration[];
   }>;
+  instances?: readonly ExternalSessionInstanceDeclaration[];
 }>;
 
 export type BackendExternalSessionSourceReferenceIssue = Readonly<{
@@ -90,6 +98,15 @@ export function findBackendExternalSessionSourceReferenceIssues(
     addReferenceIssue(issues, declaredFields, segment.groupField, ['key', 'segments', index, 'groupField']);
     addReferenceIssue(issues, declaredFields, segment.profileField, ['key', 'segments', index, 'profileField']);
     addWhenReferenceIssue(issues, declaredFields, segment.when, ['key', 'segments', index, 'when', 'field']);
+  }
+
+  for (const [index, instance] of (declaration.instances ?? []).entries()) {
+    for (const fieldName of Object.keys(instance.constants)) {
+      addReferenceIssue(issues, declaredFields, fieldName, ['instances', index, 'constants', fieldName]);
+    }
+    if (instance.kind === 'default') continue;
+    addReferenceIssue(issues, declaredFields, instance.fields.serviceId, ['instances', index, 'fields', 'serviceId']);
+    addReferenceIssue(issues, declaredFields, instance.fields.profileId, ['instances', index, 'fields', 'profileId']);
   }
 
   return issues;

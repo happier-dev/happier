@@ -1,4 +1,4 @@
-import { isChangeTitleToolNameAlias } from '@happier-dev/plugin-sdk/experimental/acp';
+import { isChangeTitleToolNameAlias } from '@happier-dev/protocol/tools/v2';
 
 export type CodexRolloutToolVisibility = 'default' | 'debug-only' | 'ignore';
 

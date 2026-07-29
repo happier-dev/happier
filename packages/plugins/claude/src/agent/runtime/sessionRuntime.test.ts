@@ -1,17 +1,20 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-    createClaudePublicSessionRuntime,
+    createClaudeTestSessionRuntime,
     type ClaudeRuntimeTurnOperations,
-} from './sessionRuntime.js';
-import type { RuntimeEventV1 } from '@happier-dev/plugin-sdk/experimental/runtime/session';
+} from './sessionRuntime.testkit.js';
+import type {
+    ClaudeProviderPromptDeliveryOutcome,
+    ClaudeProviderPromptDeliveryOutcomeCallback,
+} from './providerOperations.js';
+import type { ClaudeProviderEvent } from './providerEvents.js';
 
 function createRecordingOperations(): Readonly<{
     operations: ClaudeRuntimeTurnOperations;
     normalPrompts: Array<Readonly<{
         prompt: string;
         meta?: Readonly<{
-            providerClaimedPendingLocalIds?: readonly string[];
             userMessageSeq?: number | null;
             userMessageSeqs?: readonly number[];
         }>;
@@ -19,17 +22,16 @@ function createRecordingOperations(): Readonly<{
     steers: Array<Readonly<{
         message: string;
         meta?: Readonly<{
-            providerClaimedPendingLocalIds?: readonly string[];
             userMessageSeq?: number | null;
             userMessageSeqs?: readonly number[];
         }>;
     }>>;
-    emit(event: RuntimeEventV1): void;
+    emit(event: ClaudeProviderEvent): void;
+    emitDeliveryOutcome(outcome: ClaudeProviderPromptDeliveryOutcome): void;
 }> {
     const normalPrompts: Array<Readonly<{
         prompt: string;
         meta?: Readonly<{
-            providerClaimedPendingLocalIds?: readonly string[];
             userMessageSeq?: number | null;
             userMessageSeqs?: readonly number[];
         }>;
@@ -37,22 +39,24 @@ function createRecordingOperations(): Readonly<{
     const steers: Array<Readonly<{
         message: string;
         meta?: Readonly<{
-            providerClaimedPendingLocalIds?: readonly string[];
             userMessageSeq?: number | null;
             userMessageSeqs?: readonly number[];
         }>;
     }>> = [];
-    const eventHandlers = new Set<(event: RuntimeEventV1) => void>();
+    const eventHandlers = new Set<(event: ClaudeProviderEvent) => void>();
+    let deliveryOutcomeHandler: ClaudeProviderPromptDeliveryOutcomeCallback | null = null;
     const operations: ClaudeRuntimeTurnOperations = {
         beginTurnLifecycle() {},
-        async startOrLoadSession() {
+        async startProviderSession() {
             return null;
         },
         async sendTurnPrompt(prompt, meta) {
             normalPrompts.push({ prompt, meta });
+            return { kind: 'accepted' };
         },
         async steerInFlightTurn(message, meta) {
             steers.push({ message, meta });
+            return { kind: 'accepted' };
         },
         async waitForTurnCompletion() {},
         subscribeRuntimeEvents(handler) {
@@ -69,6 +73,9 @@ function createRecordingOperations(): Readonly<{
             return { sessionId: null };
         },
         async updateSessionRuntimeConfig() {},
+        setOnPromptDeliveryOutcome(handler) {
+            deliveryOutcomeHandler = handler;
+        },
         async resetOrDisposeRuntime() {},
     };
 
@@ -81,66 +88,17 @@ function createRecordingOperations(): Readonly<{
                 handler(event);
             }
         },
+        emitDeliveryOutcome(outcome) {
+            deliveryOutcomeHandler?.(outcome);
+        },
     };
 }
 
-describe('createClaudePublicSessionRuntime', () => {
-    it('preserves provider-claimed pending identity and userMessageSeq on normal public send delivery', async () => {
-        const { operations, normalPrompts } = createRecordingOperations();
-        const runtime = createClaudePublicSessionRuntime(operations);
-
-        await expect(runtime.send(
-            { text: 'normal prompt' },
-            {
-                providerClaimedPendingLocalIds: ['local-claimed-1', 'local-claimed-1', '  ', 'local-claimed-2'],
-                userMessageSeq: 42,
-            },
-        ))
-            .resolves
-            .toEqual({ status: 'accepted' });
-
-        expect(normalPrompts).toEqual([
-            {
-                prompt: 'normal prompt',
-                meta: {
-                    providerClaimedPendingLocalIds: ['local-claimed-1', 'local-claimed-2'],
-                    userMessageSeq: 42,
-                    userMessageSeqs: [42],
-                },
-            },
-        ]);
-    });
-
-    it('preserves provider-claimed pending identity and userMessageSeq on steer public send delivery', async () => {
-        const { operations, steers } = createRecordingOperations();
-        const runtime = createClaudePublicSessionRuntime(operations);
-
-        await expect(runtime.send(
-            { text: 'steer prompt' },
-            {
-                deliverAs: 'steer',
-                providerClaimedPendingLocalIds: ['local-claimed-steer'],
-                userMessageSeq: 43,
-            },
-        ))
-            .resolves
-            .toEqual({ status: 'accepted' });
-
-        expect(steers).toEqual([
-            {
-                message: 'steer prompt',
-                meta: {
-                    providerClaimedPendingLocalIds: ['local-claimed-steer'],
-                    userMessageSeq: 43,
-                    userMessageSeqs: [43],
-                },
-            },
-        ]);
-    });
+describe('createClaudeTestSessionRuntime', () => {
 
     it('drops non-integer or negative userMessageSeq values before runtime delivery', async () => {
         const { operations, normalPrompts, steers } = createRecordingOperations();
-        const runtime = createClaudePublicSessionRuntime(operations);
+        const runtime = createClaudeTestSessionRuntime(operations);
 
         await expect(runtime.send({ text: 'fractional prompt' }, { userMessageSeq: 4.5 }))
             .resolves
@@ -163,9 +121,9 @@ describe('createClaudePublicSessionRuntime', () => {
         ]);
     });
 
-    it('confirms provider acceptance only after Claude Agent SDK runtime evidence', async () => {
+    it('translates the exact Claude Agent SDK submission result without downstream event inference', async () => {
         const { operations, emit } = createRecordingOperations();
-        const runtime = createClaudePublicSessionRuntime(operations);
+        const runtime = createClaudeTestSessionRuntime(operations);
         const accepted: Array<Readonly<{ userMessageSeq: number | null; userMessageSeqs?: readonly number[] }>> = [];
         runtime.setOnPromptAcceptedByProvider?.((info) => accepted.push(info));
 
@@ -173,15 +131,39 @@ describe('createClaudePublicSessionRuntime', () => {
             .resolves
             .toEqual({ status: 'accepted' });
 
-        expect(accepted).toEqual([]);
+        expect(accepted).toEqual([{ userMessageSeq: 44, userMessageSeqs: [44] }]);
 
         emit({
             kind: 'message-delta',
             sessionId: 'happier-session-1',
             turnId: 'claude-sdk-turn-1',
+            emittedAtMs: 1,
             delta: { text: 'hello' },
         });
 
         expect(accepted).toEqual([{ userMessageSeq: 44, userMessageSeqs: [44] }]);
+    });
+
+    it('forwards typed prompt delivery outcomes from Claude operations with stable identity intact', () => {
+        const { operations, emitDeliveryOutcome } = createRecordingOperations();
+        const runtime = createClaudeTestSessionRuntime(operations);
+        const outcomes: ClaudeProviderPromptDeliveryOutcome[] = [];
+        runtime.setOnPromptDeliveryOutcome?.((outcome) => outcomes.push(outcome));
+
+        emitDeliveryOutcome({
+            type: 'custody_observed',
+            localInputId: 'local-custody',
+            localInputIds: ['local-custody'],
+            userMessageSeq: 45,
+            userMessageSeqs: [45],
+        });
+
+        expect(outcomes).toEqual([{
+            type: 'custody_observed',
+            localInputId: 'local-custody',
+            localInputIds: ['local-custody'],
+            userMessageSeq: 45,
+            userMessageSeqs: [45],
+        }]);
     });
 });

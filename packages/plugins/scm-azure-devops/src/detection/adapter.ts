@@ -1,8 +1,10 @@
-import type { ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm';
+import type { ScmHostingProviderRef } from '@happier-dev/plugin-sdk/experimental/scm';
 
+import { PLUGIN_MANIFEST } from '../manifest.js';
 import { encodeCompareRef, parseScmRemoteUrl, stripTrailingSlash } from './remoteUrl.js';
 
-export const AZURE_DEVOPS_SCM_HOSTING_PROVIDER_ID = 'scm.azure-devops';
+export const AZURE_DEVOPS_SCM_HOSTING_PROVIDER_LOCAL_ID = 'azure-devops';
+export const AZURE_DEVOPS_SCM_HOSTING_PROVIDER_ID = `${PLUGIN_MANIFEST.id}/${AZURE_DEVOPS_SCM_HOSTING_PROVIDER_LOCAL_ID}`;
 export const AZURE_DEVOPS_REMOTE_HOST_MATCHERS = Object.freeze({
   exactHosts: Object.freeze(['dev.azure.com', 'ssh.dev.azure.com']),
   suffixHosts: Object.freeze(['.visualstudio.com']),

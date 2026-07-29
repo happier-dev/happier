@@ -1,18 +1,16 @@
 import { readFileSync } from 'node:fs';
 
+import { ingestPluginManifestV2 } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
 
+import * as inspectorManifest from './manifest';
 import {
-  INSPECTOR_APP_SURFACE,
-  INSPECTOR_NATIVE_BUNDLE_IOS,
-  INSPECTOR_NATIVE_BUNDLE_WEB,
   INSPECTOR_NATIVE_BUNDLE_ID,
-  INSPECTOR_NATIVE_IOS_ARTIFACT_DIGEST,
-  INSPECTOR_NATIVE_IOS_CONTAINER_NAME,
-  INSPECTOR_NATIVE_WEB_ARTIFACT_DIGEST,
   INSPECTOR_PLUGIN_ID,
   INSPECTOR_SETTINGS,
+  INSPECTOR_SETTINGS_ID,
   INSPECTOR_SHOW_DIAGNOSTICS_SETTING_ID,
+  INSPECTOR_UI,
   PLUGIN_MANIFEST,
 } from './manifest';
 
@@ -44,75 +42,113 @@ describe('Plugin Inspector manifest', () => {
     expect(manifestSource).not.toContain(forbiddenAgentsPackage);
   });
 
-  it('declares one app-scope reactNative surface, settings, native bundle, and reload hook', () => {
+  it('round-trips its public manifest through canonical object and JSON ingestion', () => {
+    const objectIngestion = ingestPluginManifestV2(PLUGIN_MANIFEST);
+    const jsonIngestion = ingestPluginManifestV2(JSON.parse(JSON.stringify(PLUGIN_MANIFEST)));
+
+    expect(objectIngestion).toMatchObject({ ok: true });
+    expect(jsonIngestion).toEqual(objectIngestion);
+  });
+
+  it('rejects a view whose renderer does not exist', () => {
+    const manifest = JSON.parse(JSON.stringify(PLUGIN_MANIFEST)) as {
+      contributes: { ui: { views: Array<{ renderer: string }> } };
+    };
+    manifest.contributes.ui.views[0]!.renderer = 'missing-renderer';
+
+    expect(ingestPluginManifestV2(manifest)).toMatchObject({
+      ok: false,
+      diagnostics: [expect.objectContaining({
+        code: 'plugin_manifest_dangling_reference',
+        path: ['contributes', 'ui', 'views', 0, 'renderer'],
+      })],
+    });
+  });
+
+  it('rejects predecessor host-method vocabulary in the strict renderer declaration', () => {
+    const manifest = JSON.parse(JSON.stringify(PLUGIN_MANIFEST)) as {
+      contributes: { ui: { renderers: Array<{ requiredHostMethods: string[] }> } };
+    };
+    manifest.contributes.ui.renderers[0]!.requiredHostMethods = ['dispatchAction'];
+
+    expect(ingestPluginManifestV2(manifest)).toMatchObject({
+      ok: false,
+      diagnostics: [expect.objectContaining({
+        code: 'plugin_manifest_invalid',
+        path: ['contributes', 'ui', 'renderers', 0, 'requiredHostMethods', 0],
+      })],
+    });
+  });
+
+  it('rejects duplicate translation locales', () => {
+    const manifest = JSON.parse(JSON.stringify(PLUGIN_MANIFEST)) as {
+      contributes: { ui: { translations: unknown[] } };
+    };
+    manifest.contributes.ui.translations.push(
+      JSON.parse(JSON.stringify(manifest.contributes.ui.translations[0])),
+    );
+
+    expect(ingestPluginManifestV2(manifest)).toMatchObject({
+      ok: false,
+      diagnostics: [expect.objectContaining({
+        code: 'plugin_manifest_invalid',
+        path: ['contributes', 'ui', 'translations', 1, 'locale'],
+      })],
+    });
+  });
+
+  it('declares canonical settings without a declaration-only runtime hook', () => {
     expect(PLUGIN_MANIFEST.id).toBe(INSPECTOR_PLUGIN_ID);
-    expect(PLUGIN_MANIFEST.activationEvents).toEqual(['startup']);
-    expect(PLUGIN_MANIFEST.uses).toEqual(['settings', 'reload', 'hooks']);
-    expect(PLUGIN_MANIFEST.permissions.required).toEqual([]);
-    expect(PLUGIN_MANIFEST.contributes.hooks).toEqual([
-      expect.objectContaining({
-        id: 'plugin.reload.after',
-        handler: { target: 'plugin', exportName: 'handlePluginReloadAfter' },
-      }),
-    ]);
-    expect(PLUGIN_MANIFEST.contributes.surfacePlacements).toEqual([INSPECTOR_APP_SURFACE]);
-    expect(PLUGIN_MANIFEST.contributes.reactNativeBundles).toEqual([
-      INSPECTOR_NATIVE_BUNDLE_WEB,
-      INSPECTOR_NATIVE_BUNDLE_IOS,
-    ]);
-    // FIX-RNWEB-SERVING: the web sibling is now a REAL, digest-verified
-    // production artifact (Vite + react-native-web build of the SAME
-    // `renderSurface.tsx` source the ios build compiles) — the SAME
-    // `installedArtifact` serving story ios already used, not a
-    // dev-hot-reload declaration (a first-party bundled plugin's
-    // `pluginSource` correctly classifies as `internal`, which
-    // dev-hot-reload correctly denies; see the module doc above).
-    expect(INSPECTOR_NATIVE_BUNDLE_WEB).toMatchObject({
-      id: INSPECTOR_NATIVE_BUNDLE_ID,
-      bundle: {
-        platform: 'web',
-        channel: 'internal',
-        assetPath: 'react-native-web/inspector-app-native/entry.mjs',
-        integrity: { digest: INSPECTOR_NATIVE_WEB_ARTIFACT_DIGEST },
-      },
-      entry: { modulePath: './renderSurface', exportName: 'renderSurface' },
-      hostApi: { methods: ['dispatchAction', 'getSurfaceContext'] },
-    });
-    // NATIVE-PIPELINE: the second sibling contribution — SAME logical id,
-    // real ios artifact (built by rspack.config.mjs, digest computed by the
-    // real buildUiArtifacts pipeline, not a placeholder).
-    expect(INSPECTOR_NATIVE_BUNDLE_IOS).toMatchObject({
-      id: INSPECTOR_NATIVE_BUNDLE_ID,
-      bundle: {
-        platform: 'ios',
-        channel: 'internal',
-        assetPath: 'react-native/inspector-app-native/ios.bundle.js',
-        integrity: { digest: INSPECTOR_NATIVE_IOS_ARTIFACT_DIGEST },
-      },
-      entry: {
-        containerName: INSPECTOR_NATIVE_IOS_CONTAINER_NAME,
-        modulePath: './renderSurface',
-        exportName: 'renderSurface',
-      },
-    });
-    expect(INSPECTOR_APP_SURFACE).toMatchObject({
-      id: 'inspector-app',
-      placement: 'app.rightSidebarTab',
-      target: { kind: 'app' },
-      renderer: { kind: 'reactNative', contributionId: INSPECTOR_NATIVE_BUNDLE_ID },
-      rightSidebar: { tabId: 'plugin-inspector', scope: 'app' },
+    expect(PLUGIN_MANIFEST).not.toHaveProperty('activation');
+    expect(PLUGIN_MANIFEST.entrypoints).toEqual({ daemon: './dist/index.js' });
+    expect(PLUGIN_MANIFEST.hostAccess).toEqual({ required: [], optional: [] });
+    expect(PLUGIN_MANIFEST.contributes).not.toHaveProperty('hooks');
+    expect(INSPECTOR_SETTINGS).toMatchObject({
+      id: INSPECTOR_SETTINGS_ID,
+      target: { kind: 'plugin' },
+      scope: 'local',
     });
     expect(INSPECTOR_SETTINGS.fields).toEqual([
       expect.objectContaining({
         id: INSPECTOR_SHOW_DIAGNOSTICS_SETTING_ID,
-        control: 'switch',
-        defaultBooleanValue: true,
+        schema: { type: 'boolean' },
+        default: true,
       }),
     ]);
   });
 
-  it('retires the hostedWeb contribution — one RN surface is the sole owner (no dual UI)', () => {
+  it('retains one app-scope React Native surface whose physical graph is build-owned', () => {
+    expect(INSPECTOR_UI).toEqual({
+      views: [{
+        id: 'inspector-app',
+        placement: 'app.rightSidebarTab',
+        renderer: 'inspector-renderer',
+        title: { key: 'plugins.inspector.title', fallback: 'Plugin Inspector' },
+      }],
+      renderers: [{
+        id: 'inspector-renderer',
+        kind: 'reactNative',
+        artifact: INSPECTOR_NATIVE_BUNDLE_ID,
+        requiredHostMethods: ['executeAction'],
+      }],
+      translations: [{
+        locale: 'en',
+        messages: expect.objectContaining({
+          'plugins.inspector.title': 'Plugin Inspector',
+          'plugins.inspector.settings.showDiagnostics': 'Show diagnostics in Plugin Inspector',
+        }),
+      }],
+    });
+    expect(PLUGIN_MANIFEST.contributes.ui).toEqual(INSPECTOR_UI);
+  });
+
+  it('keeps every Inspector UI declaration in the canonical manifest graph', () => {
+    expect(inspectorManifest).not.toHaveProperty('INSPECTOR_APP_SURFACE');
+    expect(inspectorManifest).not.toHaveProperty('INSPECTOR_UI_TRANSLATIONS');
     expect(PLUGIN_MANIFEST.contributes).not.toHaveProperty('hostedWeb');
     expect(PLUGIN_MANIFEST.contributes).not.toHaveProperty('uiArtifacts');
+    expect(PLUGIN_MANIFEST.contributes).not.toHaveProperty('surfacePlacements');
+    expect(PLUGIN_MANIFEST.contributes).not.toHaveProperty('reactNativeBundles');
+    expect(PLUGIN_MANIFEST.contributes).not.toHaveProperty('uiTranslations');
   });
 });

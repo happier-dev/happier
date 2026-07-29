@@ -1,17 +1,14 @@
 import {
   buildConnectedServiceCredentialRecord,
+  type CloudAuthDiagnosticV1,
+  type CloudConnectAuthenticateOptionsV1,
+  type CloudConnectAuthenticateResultV1,
+  type CloudCustomAuthenticatorContextV1,
   type ConnectedServiceCredentialRecordV1,
 } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
-import type {
-  CloudAuthDiagnosticV1,
-  CloudConnectAuthenticateOptionsV1,
-  CloudConnectAuthenticateResultV1,
-  CloudCustomAuthenticatorContextV1,
-  FetchRuntimeHeadersV1,
-  FetchRuntimeServiceV1,
-} from '@happier-dev/plugin-sdk';
 import { sleepWithSignal as sdkSleepWithSignal } from '@happier-dev/plugin-sdk/experimental/timeout';
 
+import type { CodexRuntimeFetch } from '../../runtimeFetch.js';
 import { resolveCodexCloudAuthMode } from './authenticator.js';
 import {
   authenticateCodexDevice,
@@ -135,7 +132,7 @@ async function writeCredential(params: Readonly<{
   };
 }
 
-function normalizeFetchHeaders(headers: HeadersInit | undefined): FetchRuntimeHeadersV1 | undefined {
+function normalizeFetchHeaders(headers: HeadersInit | undefined): Readonly<Record<string, string>> | undefined {
   if (!headers) return undefined;
   if (headers instanceof Headers) {
     const normalized: Record<string, string> = {};
@@ -150,7 +147,7 @@ function normalizeFetchHeaders(headers: HeadersInit | undefined): FetchRuntimeHe
   return headers;
 }
 
-function createFetchAdapter(runtimeFetch: FetchRuntimeServiceV1, signal: AbortSignal): typeof fetch {
+function createFetchAdapter(runtimeFetch: CodexRuntimeFetch, signal: AbortSignal): typeof fetch {
   return (async (url: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const response = await runtimeFetch({
       url: String(url),

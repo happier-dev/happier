@@ -74,7 +74,7 @@ describe('ProviderDiscoveryCandidateV1Schema', () => {
   const candidate = {
     v: 1,
     machineId: 'machine-a',
-    contributionKey: 'happier.provider.ollama:providers:ollama',
+    contributionKey: 'happier.provider.ollama/ollama',
     providerName: 'Ollama',
     endpointTemplateId: 'ollama-native',
     normalizedEndpointUrl: 'http://127.0.0.1:22434/',
@@ -120,7 +120,7 @@ describe('ProviderLocalInstallationSummaryV1Schema', () => {
     const value = {
       v: 1,
       machineId: 'machine-a',
-      contributionKey: 'happier.provider.lmstudio:providers:lmstudio',
+      contributionKey: 'happier.provider.lmstudio/lmstudio',
       providerName: 'LM Studio',
       status: 'app_running_server_off',
       managedStartAvailable: false,

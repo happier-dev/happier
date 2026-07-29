@@ -1,10 +1,86 @@
 import type { SessionId } from '@happier-dev/protocol';
 
-import type { SubscriptionV1 } from '../context.js';
 import type {
     SessionPermissionsServiceV1,
     SessionScopedServicesV1,
 } from './scoped.js';
+
+type SessionWatchSubscription = Readonly<{ unsubscribe(): void }>;
+
+export type {
+    AgentExternalSessionCandidate,
+    AgentExternalSessionLinkData,
+    AgentExternalSessionLinkDataValue,
+    AgentExternalSessionSource,
+    AgentExternalSessionTranscriptItem,
+    AgentExternalSessionsContribution,
+    AgentExternalSessionsFailureCode,
+    AgentExternalSessionsInvocation,
+    AgentExternalSessionsListCandidatesRequest,
+    AgentExternalSessionsListCandidatesResult,
+    AgentExternalSessionsPageTranscriptRequest,
+    AgentExternalSessionsReadAfterDiagnostic,
+    AgentExternalSessionsReadAfterTranscriptRequest,
+    AgentExternalSessionsReadAfterTranscriptResult,
+    AgentExternalSessionsResult,
+    AgentExternalSessionsResolvedIdentity,
+    AgentExternalSessionsResolveLinkedIdentityRequest,
+    AgentExternalSessionsResolveLinkIdentityRequest,
+    AgentExternalSessionsResolveSourceRequest,
+    AgentExternalSessionsResolveSourceResult,
+    AgentExternalSessionsTranscriptPage,
+} from '../externalSessions.js';
+export type {
+    AgentExternalSessionObservationContribution,
+    AgentExternalSessionObservationDescribeResourceRequest,
+    AgentExternalSessionObservationObserveResourceRequest,
+    AgentExternalSessionObservationReconcileLink,
+    AgentExternalSessionObservationReconcileResourceRequest,
+    ExternalAgentObservationLinkEvidenceBatchV1,
+    ExternalAgentObservationLinkKeyV1,
+    ExternalAgentObservationReconcilePurposeV1,
+    ExternalAgentObservationReconcileRequestV1,
+    ExternalAgentObservationReconcileResultV1,
+    ExternalAgentObservationResourceDescriptorOutcomeV1,
+    ExternalAgentObservationResourceGroupingV1,
+    ExternalAgentObservationResourceDescriptorV1,
+    ExternalAgentObservationResourceKeyV1,
+    ExternalAgentObservationWatchFileChangesV1,
+} from '../externalSessionObservation.js';
+export {
+    AGENT_EXTERNAL_SESSION_TAKEOVER_LIMITS,
+    validateAgentExternalSessionTakeoverContribution,
+    validateAgentExternalSessionTakeoverLaunchPlan,
+    validateAgentExternalSessionTakeoverResolveLaunchRequest,
+    validateAgentExternalSessionTakeoverResolveLaunchResult,
+} from './externalSessionTakeover.js';
+export type {
+    AgentExternalSessionTakeoverContribution,
+    AgentExternalSessionTakeoverLaunchPlan,
+    AgentExternalSessionTakeoverResolveLaunchCallback,
+    AgentExternalSessionTakeoverResolveLaunchRequest,
+    AgentExternalSessionTakeoverResolveLaunchResult,
+} from './externalSessionTakeover.js';
+export {
+    AGENT_EXTERNAL_SESSION_HOOK_LIMITS,
+    validateAgentExternalSessionHookMapEventRequest,
+    validateAgentExternalSessionHookMapEventResult,
+    validateAgentExternalSessionHookResolveInstallationRequest,
+    validateAgentExternalSessionHookResolveInstallationResult,
+    validateAgentExternalSessionHooksContribution,
+} from '../externalSessionHooks.js';
+export type {
+    AgentExternalSessionHookCustodiedEntryProjection,
+    AgentExternalSessionHookInstallationVariant,
+    AgentExternalSessionHookMapEventRequest,
+    AgentExternalSessionHookMapEventResult,
+    AgentExternalSessionHookMapEventValue,
+    AgentExternalSessionHookResolveInstallationRequest,
+    AgentExternalSessionHookResolveInstallationResult,
+    AgentExternalSessionHookResolveInstallationValue,
+    AgentExternalSessionHooksContribution,
+    StrictJsonValue,
+} from '../externalSessionHooks.js';
 
 export type {
     ExternalSessionActivityV1,
@@ -18,6 +94,9 @@ export type {
 } from '@happier-dev/protocol';
 export {
     ExternalSessionsSourceSchema,
+    buildLinkedExternalSessionMetadataV1,
+    removeLinkedExternalSessionMetadataV1,
+    readLinkedExternalSessionV1FromMetadata,
     readRuntimeDescriptorV1FromMetadata,
 } from '@happier-dev/protocol';
 export {
@@ -42,11 +121,14 @@ export {
     type SessionStateFieldWriteValue,
 } from '@happier-dev/agents';
 export type {
-    ExternalSessionActivityResultV1,
+    BackendSessionLaunchHintsV1,
+    BackendSurfaceResultV1,
     ExternalSessionCandidatePageV1,
-    ExternalSessionFileFollowRuntimeServiceV1,
-    ExternalSessionFollowLeaseV1,
     ExternalSessionTranscriptPageV1,
+    ForkRequestV1,
+    ForkResultV1,
+    ForkSurfaceV1,
+    HandoffSurfaceV1,
 } from '@happier-dev/agents';
 export {
     applyRuntimeDescriptorSessionMetadata,
@@ -88,7 +170,10 @@ export interface PluginSessionsServiceV1 extends Omit<SessionScopedServicesV1, '
     readonly permissions: PluginSessionsPermissionsServiceV1;
     list(params?: PluginSessionListParamsV1): Promise<readonly PluginSessionRefV1[]>;
     get(params: PluginSessionGetParamsV1): Promise<SessionScopedServicesV1 | null>;
-    watch(params: PluginSessionWatchParamsV1, onEvent: (event: PluginSessionWatchEventV1) => void): SubscriptionV1;
+    watch(
+        params: PluginSessionWatchParamsV1,
+        onEvent: (event: PluginSessionWatchEventV1) => void,
+    ): SessionWatchSubscription;
 }
 
 export type {
@@ -97,15 +182,12 @@ export type {
     SessionRuntimeAuthRefreshResultV1,
     SessionRuntimeAuthServicesV1,
 } from './auth.js';
-export {
-    createSessionRuntimeActivityPublisher,
-    type CreateSessionRuntimeActivityPublisherOptions,
-    type SessionRuntimeActivityPublisher,
-    type SessionRuntimeActivityPublisherSourceInput,
-} from './runtimeActivity.js';
 export type {
     SessionAgentStateWriteRequestV1,
     SessionMetadataWriteRequestV1,
+    SessionMediaPublishGeneratedRequestV1,
+    SessionMediaServiceV1,
+    SessionMediaSourceRootV1,
     SessionPermissionDecisionRequestV1,
     SessionPermissionDecisionResultV1,
     SessionPermissionDecisionV1,
@@ -115,7 +197,6 @@ export type {
     SessionPermissionPersistAllowRuleScopeV1,
     SessionPermissionPersistAllowRuleV1,
     SessionPermissionsServiceV1,
-    SessionProviderAcceptedUserMessageDeliveryQueryV1,
     SessionScopedAgentMessageOptionsV1,
     SessionScopedSendAgentMessageRequestV1,
     SessionScopedSendRequestV1,
@@ -139,23 +220,12 @@ export type {
 export type {
     ExternalSessionAttachParamsV1,
     ExternalSessionAttachResultV1,
-    ExternalSessionCandidateHostAdapterV1,
-    ExternalSessionCandidateHostListRequestV1,
-    ExternalSessionCandidateHostRuntimeServiceV1,
     ExternalSessionCandidateV1,
     ExternalSessionFailureCodeV1,
-    ExternalSessionFileFollowInputV1,
-    ExternalSessionFollowTranscriptPathResolutionV1,
-    ExternalSessionHostAdaptersContributionV1,
     ExternalSessionListCandidatesParamsV1,
     ExternalSessionListCandidatesResultV1,
-    ExternalSessionProviderStoreKeyV1,
     ExternalSessionResolvedIdentityV1,
-    ExternalSessionResolveFollowTranscriptPathRequestV1,
-    ExternalSessionRuntimeHostAdapterParamsV1,
-    ExternalSessionRuntimeContextV1,
     ExternalSessionSourceV1,
-    ExternalSessionSurfaceV1,
     ExternalSessionTakeoverInputV1,
     ExternalSessionTakeoverResultV1,
     ExternalSessionTranscriptItemV1,
@@ -163,15 +233,10 @@ export type {
     ExternalSessionTranscriptPageResultV1,
     ExternalSessionTranscriptReadAfterParamsV1,
     ExternalSessionTranscriptReadAfterResultV1,
-    ExternalSessionTranscriptStoreAdapterV1,
-    ExternalSessionTranscriptStoreFollowRequestV1,
-    ExternalSessionTranscriptStorePageRequestV1,
-    ExternalSessionTranscriptStoreReadAfterRequestV1,
-    ExternalSessionTranscriptStoreRuntimeServiceV1,
     ExternalSessionTranscriptUpdateV1,
-    PluginExternalSessionsServiceV1,
     SessionStateUpdateV1,
 } from './external.js';
+export { deriveExternalSessionActivity } from './external.js';
 export type {
     ParticipantMessageV1,
     ParticipantRecipientV1,

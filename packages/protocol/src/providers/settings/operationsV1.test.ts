@@ -12,9 +12,11 @@ import {
   addOrUpdateProviderManualModelsV1,
   deleteProviderConnectionV1,
   ensureDefaultProviderConnectionV1,
+  hasProviderMachineStateV1,
   removeProviderMachineStateV1,
   resolveProviderGrantV1,
   resolveProviderSecretBindingIdV1,
+  resolveSavedSecretSlotBindingIdV1,
   removeProviderManualModelV1,
   resetProviderModelVisibilityV1,
   setProviderExperimentalConfirmationV1,
@@ -23,7 +25,7 @@ import {
 
 function baseSettings() {
   const connection = {
-    v: 1, id: 'pc_a', source: { kind: 'contribution', contributionKey: 'plugin:providers:p' },
+    v: 1, id: 'pc_a', source: { kind: 'contribution', contributionKey: 'plugin/p' },
     role: 'default', displayName: 'P', displayNameMode: 'automatic',
     endpointOverridesByMachineId: {
       machine_a: [{ endpointTemplateId: 'chat', baseUrl: 'http://127.0.0.1:1234/' }],
@@ -144,18 +146,34 @@ describe('provider settings operations', () => {
   it('CAS-reuses the winning default connection rather than duplicating it', () => {
     const existing = baseSettings();
     const result = ensureDefaultProviderConnectionV1(existing, {
-      contributionKey: 'plugin:providers:p', allocatedConnectionId: 'pc_loser',
+      contributionKey: 'plugin/p', allocatedConnectionId: 'pc_loser',
       providerName: 'P', now: 2,
     });
     expect(result.changed).toBe(false);
     expect(result.connection.id).toBe('pc_a');
 
     const created = ensureDefaultProviderConnectionV1(DEFAULT_PROVIDER_SETTINGS_V1, {
-      contributionKey: 'plugin:providers:new', allocatedConnectionId: 'pc_new',
+      contributionKey: 'plugin/new', allocatedConnectionId: 'pc_new',
       providerName: 'New', now: 2,
     });
     expect(created.changed).toBe(true);
     expect(created.connection).toMatchObject({ id: 'pc_new', role: 'default', displayNameMode: 'automatic' });
+
+    const existingCanonical = ProviderSettingsV1Schema.parse({
+      ...DEFAULT_PROVIDER_SETTINGS_V1,
+      connections: [{
+        v: 1, id: 'pc_canonical',
+        source: { kind: 'contribution', contributionKey: 'acme.gateway/gateway' },
+        role: 'default', displayName: 'Gateway', displayNameMode: 'automatic',
+        revision: 0, createdAt: 1, updatedAt: 1,
+      }],
+    });
+    const retry = ensureDefaultProviderConnectionV1(existingCanonical, {
+      contributionKey: 'acme.gateway/gateway', allocatedConnectionId: 'pc_must_not_be_created',
+      providerName: 'Gateway', now: 2,
+    });
+    expect(retry).toMatchObject({ changed: false, connection: { id: 'pc_canonical' } });
+    expect(retry.settings.connections).toHaveLength(1);
   });
 
   it('requires the exact grant type and fingerprints for the resolved scope', () => {
@@ -163,17 +181,31 @@ describe('provider settings operations', () => {
     expect(resolveProviderGrantV1(settings, {
       scope: 'account', connectionId: 'pc_a', machineId: 'machine_a',
       connectionSecurityFingerprint: 'connection-security:v1:a', endpointSetFingerprint: 'ignored',
-    })).toEqual({ authorized: true, grantKind: 'account' });
+    })).toEqual({ state: 'valid', authorized: true, grantKind: 'account' });
     expect(resolveProviderGrantV1(settings, {
       scope: 'machine', connectionId: 'pc_a', machineId: 'machine_a',
       connectionSecurityFingerprint: 'connection-security:v1:a', endpointSetFingerprint: 'endpoint-set:v1:changed',
-    })).toEqual({ authorized: false, errorCode: 'provider_machine_grant_stale' });
+    })).toEqual({ state: 'stale', authorized: false, errorCode: 'provider_machine_grant_stale' });
+    expect(resolveProviderGrantV1(settings, {
+      scope: 'machine', connectionId: 'pc_a', machineId: 'machine_missing',
+      connectionSecurityFingerprint: 'connection-security:v1:a', endpointSetFingerprint: 'endpoint-set:v1:a',
+    })).toEqual({ state: 'absent', authorized: false, errorCode: 'provider_not_enabled_on_machine' });
   });
 
   it('resolves per-machine secrets before account bindings without mutating either', () => {
     const settings = baseSettings();
     expect(resolveProviderSecretBindingIdV1(settings, 'pc_a', 'machine_a', 'apiKey')).toBe('secret-a');
     expect(resolveProviderSecretBindingIdV1(settings, 'pc_a', 'machine_missing', 'apiKey')).toBe('secret-account');
+  });
+
+  it('resolves the generic slot primitive without a provider connection', () => {
+    const bindings = {
+      account: { apiKey: 'secret-account' },
+      byMachineId: { machine_a: { apiKey: 'secret-machine' } },
+    };
+    expect(resolveSavedSecretSlotBindingIdV1(bindings, 'machine_a', 'apiKey')).toBe('secret-machine');
+    expect(resolveSavedSecretSlotBindingIdV1(bindings, 'machine_b', 'apiKey')).toBe('secret-account');
+    expect(resolveSavedSecretSlotBindingIdV1({}, 'machine_a', 'apiKey')).toBeNull();
   });
 
   it('never resolves inherited or poison credential-slot properties', () => {
@@ -186,7 +218,10 @@ describe('provider settings operations', () => {
   });
 
   it('removes only one machine override, grant, and machine-secret branch', () => {
+    expect(hasProviderMachineStateV1(baseSettings(), 'machine_a')).toBe(true);
     const next = removeProviderMachineStateV1(baseSettings(), 'machine_a');
+    expect(hasProviderMachineStateV1(next, 'machine_a')).toBe(false);
+    expect(hasProviderMachineStateV1(next, 'machine_b')).toBe(true);
     expect(next.machineGrants.map((grant) => grant.machineId)).toEqual(['machine_b']);
     expect(next.connections[0]?.endpointOverridesByMachineId).toEqual({
       machine_b: [{ endpointTemplateId: 'chat', baseUrl: 'http://127.0.0.1:5678/' }],
@@ -206,7 +241,7 @@ describe('provider settings operations', () => {
     expect(next.modelVisibilityByRef).toEqual({});
     expect(next.defaultsByAgentTargetKey).toEqual({});
     expect(next.connectionTombstones).toEqual([{
-      v: 1, id: 'pc_a', contributionKey: 'plugin:providers:p', lastDisplayName: 'P', deletedAt: 5,
+      v: 1, id: 'pc_a', contributionKey: 'plugin/p', lastDisplayName: 'P', deletedAt: 5,
     }]);
     expect(next.migration?.completedSources).toEqual([
       { sourceProfileId: 'legacy-p', kind: 'connection', connectionId: 'pc_a' },
@@ -239,7 +274,7 @@ describe('provider settings operations', () => {
     const connections = Array.from({ length: PROVIDER_SETTINGS_LIMITS_V1.connections }, (_, index) => ({
       v: 1 as const,
       id: `pc_existing_${String(index).padStart(3, '0')}`,
-      source: { kind: 'contribution' as const, contributionKey: `plugin:providers:p-${index}` },
+      source: { kind: 'contribution' as const, contributionKey: `plugin/p-${index}` },
       role: 'default' as const,
       displayName: `Provider ${index}`,
       displayNameMode: 'automatic' as const,
@@ -250,7 +285,7 @@ describe('provider settings operations', () => {
     const settings = ProviderSettingsV1Schema.parse({ ...DEFAULT_PROVIDER_SETTINGS_V1, connections });
 
     expect(() => ensureDefaultProviderConnectionV1(settings, {
-      contributionKey: 'plugin:providers:overflow',
+      contributionKey: 'plugin/overflow',
       allocatedConnectionId: 'pc_overflow',
       providerName: 'Overflow',
       now: 2,
@@ -261,7 +296,7 @@ describe('provider settings operations', () => {
     const connections = Array.from({ length: 10 }, (_, index) => ({
       v: 1 as const,
       id: `pc_large_${index}`,
-      source: { kind: 'contribution' as const, contributionKey: `plugin:providers:large-${index}` },
+      source: { kind: 'contribution' as const, contributionKey: `plugin/large-${index}` },
       role: 'named' as const,
       displayName: `Large ${index}`,
       displayNameMode: 'custom' as const,
@@ -281,7 +316,7 @@ describe('provider settings operations', () => {
     });
 
     expect(() => ensureDefaultProviderConnectionV1(schemaValidButOversized, {
-      contributionKey: 'plugin:providers:new', allocatedConnectionId: 'pc_new', providerName: 'New', now: 2,
+      contributionKey: 'plugin/new', allocatedConnectionId: 'pc_new', providerName: 'New', now: 2,
     })).toThrowError(ProviderSettingsLimitError);
   });
 });

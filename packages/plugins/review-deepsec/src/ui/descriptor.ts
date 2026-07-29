@@ -23,7 +23,7 @@ export const DEEPSEC_UI_DESCRIPTOR = Object.freeze({
     },
     picker: {
       iconName: 'shield-checkmark-outline',
-      cliGlyphTokenId: 'agentGlyph.deepsec',
+      cliGlyph: 'DS',
       cliGlyphScale: 0.9,
       profileCompatibilityGlyphScale: 0.9,
     },
@@ -33,7 +33,6 @@ export const DEEPSEC_UI_DESCRIPTOR = Object.freeze({
     },
     icon: { assetId: null },
   },
-  settings: {},
   behavior: {},
   session: {},
   message: {},

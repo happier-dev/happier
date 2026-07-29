@@ -6,7 +6,9 @@ import {
   resolveScmBackendCommandMaxOutputBytes,
   runScmBackendCommand,
   ScmSelectedMutationPathSchema,
-} from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm';
+
+import { GIT_INSTALLABLE_DEP_ID } from './installables/gitInstallable.js';
 
 const SAFE_GIT_ALLOW_PROTOCOL = 'https:ssh:git:file';
 
@@ -36,7 +38,7 @@ export function runScmCommand(input: {
   env?: Record<string, string | undefined>;
 }): Promise<ScmExecResult> {
   return runScmBackendCommand({
-    installableKey: 'dep.git',
+    installableKey: GIT_INSTALLABLE_DEP_ID,
     command: input.bin,
   }, {
     cwd: input.cwd,

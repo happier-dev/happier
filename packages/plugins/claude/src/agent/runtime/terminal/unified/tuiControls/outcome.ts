@@ -1,13 +1,10 @@
 import type {
-  RuntimeConfigOutcomeChangeKeyV1,
-  RuntimeConfigOutcomeStatusV1,
-  RuntimeConfigOutcomeTimingV1,
-} from '@happier-dev/plugin-sdk/experimental/runtime/session';
-
-import type {
   RuntimeConfigApplyOutcome,
   RuntimeConfigChangeOutcome,
+  RuntimeConfigOutcomeChangeKeyV1,
   RuntimeConfigOutcomeScalar,
+  RuntimeConfigOutcomeStatusV1,
+  RuntimeConfigOutcomeTimingV1,
 } from './types.js';
 
 /**

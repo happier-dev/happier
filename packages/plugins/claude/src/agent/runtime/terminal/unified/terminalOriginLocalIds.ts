@@ -1,4 +1,7 @@
-import type { PluginContextV1 } from '@happier-dev/plugin-sdk';
+import type {
+  PluginStorageScopeService,
+} from '@happier-dev/plugin-sdk/runtime';
+import type { ClaudeRuntimeLogger } from '../../dependencies.js';
 
 const CLAUDE_TERMINAL_ORIGIN_SEQUENCE_STORAGE_KEY = 'claude.unifiedTerminal.terminalOriginPromptSequence.v1';
 
@@ -20,7 +23,10 @@ function readStoredSequence(value: unknown): number {
 }
 
 export function createClaudeUnifiedTerminalOriginLocalIdAllocator(params: Readonly<{
-  ctx: PluginContextV1;
+  ctx: Readonly<{
+    logger: Pick<ClaudeRuntimeLogger, 'debug'>;
+    storage: Readonly<{ session: Pick<PluginStorageScopeService, 'get' | 'set'> }>;
+  }>;
   sessionId: string;
 }>): Readonly<{
   next(input?: Readonly<{ agentTurnId?: string | null }>): Promise<string>;

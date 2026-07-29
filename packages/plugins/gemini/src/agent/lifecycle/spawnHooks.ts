@@ -1,21 +1,17 @@
+import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+
 import {
   resolveGeminiApiKeyFromEnv,
   resolveGeminiAuthConfig,
 } from '../auth/resolution.js';
 
-type GeminiDaemonSpawnPrerequisiteResult = Readonly<{
-  allowed: boolean;
-  reasonCode?: string;
-  errorMessage?: string;
-}>;
-
-type GeminiDaemonHookEvent = Readonly<{
-  payload?: unknown;
-}>;
-
-type GeminiDaemonSpawnHookContext = Readonly<{
+type GeminiDaemonSpawnHookContext = Partial<PluginInvocationContext> & Readonly<{
   processEnv?: Readonly<Record<string, string | undefined>>;
 }>;
+
+type GeminiDaemonSpawnPrerequisiteResult =
+  | Readonly<{ decision: 'allow' }>
+  | Readonly<{ decision: 'deny'; reasonCode: string; errorMessage: string }>;
 
 function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -32,11 +28,12 @@ function readStringRecord(value: unknown): Readonly<Record<string, string | unde
 }
 
 function readMaterializedEnv(
-  event: GeminiDaemonHookEvent,
+  event: unknown,
   context?: GeminiDaemonSpawnHookContext,
 ): Readonly<Record<string, string | undefined>> {
-  const payload = readRecord(event.payload);
-  const runtimeSelection = readRecord(payload?.runtimeSelection) ?? readRecord(event);
+  const eventRecord = readRecord(event);
+  const payload = readRecord(eventRecord?.payload) ?? eventRecord;
+  const runtimeSelection = readRecord(payload?.runtimeSelection) ?? payload;
   return {
     ...(context?.processEnv ?? {}),
     ...(readStringRecord(runtimeSelection?.env) ?? {}),
@@ -46,20 +43,20 @@ function readMaterializedEnv(
 
 function denyGeminiSpawn(errorMessage: string): GeminiDaemonSpawnPrerequisiteResult {
   return {
-    allowed: false,
+    decision: 'deny',
     reasonCode: 'gemini_acp_credentials_unavailable',
     errorMessage,
   };
 }
 
 export async function resolveGeminiDaemonSpawnPrerequisites(
-  event: GeminiDaemonHookEvent,
+  event: unknown,
   context?: GeminiDaemonSpawnHookContext,
 ): Promise<GeminiDaemonSpawnPrerequisiteResult> {
   const env = readMaterializedEnv(event, context);
   try {
     resolveGeminiAuthConfig(env, resolveGeminiApiKeyFromEnv(env));
-    return { allowed: true };
+    return { decision: 'allow' };
   } catch (error) {
     return denyGeminiSpawn(error instanceof Error ? error.message : String(error));
   }

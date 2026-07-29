@@ -1,3 +1,3 @@
-import { ACP_WRITE_LIKE_PERMISSION_KINDS } from '@happier-dev/plugin-sdk/experimental/acp';
+import { ACP_WRITE_LIKE_PERMISSION_KINDS } from '@happier-dev/agents';
 
 export const COPILOT_WRITE_LIKE_PERMISSION_KINDS = ACP_WRITE_LIKE_PERMISSION_KINDS;

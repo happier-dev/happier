@@ -1,18 +1,19 @@
-import type { ManagedServerSnapshotV1, PluginContextV1 } from '@happier-dev/plugin-sdk';
-
 import type { OpenCodeRuntimeTurnOperations } from './operations.js';
 import type { OpenCodeServerClient } from './openCodeServerClient.js';
 import { createOpenCodeServerRuntimeController } from './runtimeController.js';
+import type {
+  OpenCodeManagedServerSnapshot,
+  OpenCodeRuntimeContext,
+} from './runtimeContext.js';
 
 export function createOpenCodeServerRuntime(params: Readonly<{
-  ctx: PluginContextV1;
+  ctx: OpenCodeRuntimeContext;
   directory: string;
   happierSessionId: string;
   baseUrl: string;
-  client?: OpenCodeServerClient;
+  client: OpenCodeServerClient;
   env?: Readonly<Record<string, string>>;
-  readManagedServerSnapshot?: () => ManagedServerSnapshotV1 | null | undefined;
-  setThinking?: (thinking: boolean) => void;
+  readManagedServerSnapshot?: () => OpenCodeManagedServerSnapshot | null | undefined;
 }>): OpenCodeRuntimeTurnOperations {
   return createOpenCodeServerRuntimeController(params);
 }

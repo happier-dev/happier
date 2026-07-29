@@ -1,4 +1,3 @@
-import { AZ_DEP_ID } from '@happier-dev/plugin-sdk/experimental/managedDependencies';
 import type {
   ScmHostingProviderDefaultBranchInput,
   ScmHostingProviderDefaultBranchMetadata,
@@ -12,7 +11,7 @@ import type {
   ScmHostingProviderRuntimeAdapter,
   ScmHostingProviderRuntimeCommandResult,
   ScmHostingProviderRuntimeServices,
-} from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/experimental/scm';
 import type {
   ScmHostingProviderRef,
   ScmHostingRepositoryAuthSummary,
@@ -20,7 +19,7 @@ import type {
   ScmHostingRepositorySummary,
   ScmPullRequestState,
   ScmPullRequestSummary,
-} from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm';
 
 import { azureDevopsHostingProviderAdapter } from '../detection/adapter.js';
 import {
@@ -38,6 +37,8 @@ import {
   createAzureNotFoundError,
   createAzureUnsupportedError,
 } from './errors.js';
+
+const AZURE_CLI_EXECUTABLE = Object.freeze({ kind: 'systemTool' as const, id: 'azure-cli' });
 import {
   mapAzurePullRequest,
   mapAzureRepositorySummary,
@@ -122,26 +123,15 @@ function mapAzFailure(result: ScmHostingProviderRuntimeCommandResult): never {
   throw createAzureCommandFailedError('Azure CLI operation failed');
 }
 
-async function resolveAz(input: Readonly<{
-  runtimeServices?: ScmHostingProviderRuntimeServices;
-}>): Promise<string> {
-  const resolved = await input.runtimeServices?.resolveInstallableCommand?.({ capabilityId: AZ_DEP_ID });
-  if (!resolved || resolved.kind !== 'available') {
-    throw createAzureUnsupportedError('Azure CLI dependency dep.az is unavailable');
-  }
-  return resolved.binPath;
-}
-
 async function runAzJson(input: Readonly<{
   args: readonly string[];
   runtimeServices?: ScmHostingProviderRuntimeServices;
   timeoutMs?: number;
 }>): Promise<unknown> {
-  const binPath = await resolveAz(input);
-  const runner = input.runtimeServices?.runCommand;
+  const runner = input.runtimeServices?.executeCommand;
   if (!runner) throw createAzureUnsupportedError('Azure CLI command runner is unavailable');
   const result = await runner({
-    binPath,
+    executable: AZURE_CLI_EXECUTABLE,
     args: input.args,
     timeoutMs: input.timeoutMs ?? DEFAULT_AZURE_DEVOPS_TIMEOUT_MS,
     env: AZURE_DEVOPS_NONINTERACTIVE_ENV,

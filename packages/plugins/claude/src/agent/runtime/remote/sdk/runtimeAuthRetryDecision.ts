@@ -1,7 +1,7 @@
 import {
     resolveRecoverableTurnFailureRetryDecision,
     type RecoverableTurnFailureRetryDecision,
-} from '@happier-dev/plugin-sdk/experimental/runtime/session';
+} from '@happier-dev/agents';
 
 type ClaudeRuntimeAuthRetryDecision =
     | Extract<RecoverableTurnFailureRetryDecision, { action: 'await_provider_retry' }>

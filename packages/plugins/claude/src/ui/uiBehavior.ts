@@ -14,8 +14,13 @@ import {
     CLAUDE_SETTING_SOURCES_V2,
     normalizeClaudeUnifiedTerminalHost,
     normalizeClaudeUnifiedTerminalResumeChoice,
+    normalizeClaudeUnifiedTerminalWorkspaceTrustPolicy,
 } from '../protocol/remoteSettings.js';
 import { resolveClaudeUnifiedDialogQuestionPresentation } from './workflow/resolveUnifiedDialogQuestionPresentation.js';
+import {
+    resolveClaudePendingDeliveryLabelKey,
+    type ClaudePendingDeliveryDetail,
+} from './pendingDeliveryPresentation.js';
 
 type ClaudeSettingKey = keyof typeof CLAUDE_REMOTE_AGENT_SETTINGS_DEFAULTS;
 type ClaudeSettingSourcesV2 = readonly (typeof CLAUDE_SETTING_SOURCES_V2)[number][];
@@ -123,6 +128,31 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+type ClaudeAttachedSessionTerminalCandidate = Readonly<{
+    active?: unknown;
+    metadata?: unknown;
+}>;
+
+export function isClaudeUnifiedAttachedSessionTerminalAvailable(
+    session: ClaudeAttachedSessionTerminalCandidate,
+): boolean {
+    const metadata = isRecord(session.metadata) ? session.metadata : null;
+    const terminal = isRecord(metadata?.terminal) ? metadata.terminal : null;
+    const serviceability = isRecord(terminal?.controlServiceabilityV1)
+        ? terminal.controlServiceabilityV1
+        : null;
+    const attachmentId = serviceability?.attachmentId;
+
+    return session.active === true
+        && terminal?.mode !== undefined
+        && terminal.mode !== 'plain'
+        && serviceability?.v === 1
+        && serviceability.state === 'servable'
+        && serviceability.retired !== true
+        && typeof attachmentId === 'string'
+        && attachmentId.trim().length > 0;
+}
+
 function readSetting(settings: Record<string, unknown>, key: ClaudeSettingKey): unknown {
     const value = settings[key];
     if (value === undefined) return CLAUDE_REMOTE_AGENT_SETTINGS_DEFAULTS[key];
@@ -202,6 +232,9 @@ function buildClaudeUiSettingsMessageMeta(settings: Record<string, unknown>): Re
         claudeUnifiedTerminalResumeChoice:
             normalizeClaudeUnifiedTerminalResumeChoice(readSetting(settings, 'claudeUnifiedTerminalResumeChoice'))
             ?? CLAUDE_REMOTE_AGENT_SETTINGS_DEFAULTS.claudeUnifiedTerminalResumeChoice,
+        claudeUnifiedTerminalWorkspaceTrust:
+            normalizeClaudeUnifiedTerminalWorkspaceTrustPolicy(readSetting(settings, 'claudeUnifiedTerminalWorkspaceTrust'))
+            ?? CLAUDE_REMOTE_AGENT_SETTINGS_DEFAULTS.claudeUnifiedTerminalWorkspaceTrust,
         claudeRemoteSettingSourcesV2: settingSourcesV2,
         ...(legacySettingSources ? { claudeRemoteSettingSources: legacySettingSources } : {}),
         claudeLocalPermissionBridgeEnabled: readBoolean(settings, 'claudeLocalPermissionBridgeEnabled'),
@@ -244,6 +277,61 @@ function mergeProviderExtras(
 }
 
 export const CLAUDE_UI_BEHAVIOR_OVERRIDE = {
+    pendingDelivery: {
+        resolveLabelKey: ({
+            session,
+            localId,
+            detail,
+        }: {
+            session: {
+                agentState?: {
+                    capabilities?: {
+                        pendingInputInterruptAndRunLocalId?: unknown;
+                    } | null;
+                } | null;
+            };
+            localId: string | null;
+            detail: ClaudePendingDeliveryDetail | undefined;
+        }) => resolveClaudePendingDeliveryLabelKey({
+            localId,
+            detail,
+            custodyObservedLocalId: session.agentState?.capabilities?.pendingInputInterruptAndRunLocalId,
+        }),
+        resolveTransientAction: ({
+            session,
+            localId,
+            wireMode,
+        }: {
+            session: {
+                agentState?: {
+                    capabilities?: {
+                        pendingInputInterruptAndRunLocalId?: unknown;
+                        pendingInputInterruptAndRunStateAt?: unknown;
+                    } | null;
+                } | null;
+            };
+            localId: string;
+            wireMode: string;
+        }) => {
+            if (wireMode !== 'pending_input_v1') return null;
+            const capabilities = session.agentState?.capabilities;
+            if (capabilities?.pendingInputInterruptAndRunLocalId !== localId) return null;
+            return {
+                id: 'interrupt_and_run' as const,
+                localId,
+                ...(typeof capabilities.pendingInputInterruptAndRunStateAt === 'number'
+                    ? { stateAtMs: capabilities.pendingInputInterruptAndRunStateAt }
+                    : {}),
+            };
+        },
+    },
+    attachedSessionTerminal: {
+        isAvailable: ({
+            session,
+        }: {
+            session: ClaudeAttachedSessionTerminalCandidate;
+        }): boolean => isClaudeUnifiedAttachedSessionTerminalAvailable(session),
+    },
     workflow: {
         resolveAskUserQuestionPresentation: ({
             input,

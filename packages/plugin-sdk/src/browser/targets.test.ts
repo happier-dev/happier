@@ -8,44 +8,35 @@ const display = {
     tone: 'info',
 } as const;
 
-const target = {
-    kind: 'hostedPluginWeb',
-    targetId: 'target_1',
-    pluginId: 'acme.preview',
-    contributionId: 'preview-web',
-    display,
-} as const;
-
 describe('browser SDK helpers', () => {
     it('defines browser targets and actions without exposing browser internals', () => {
         const browserTarget = defineBrowserTarget({
             id: 'preview-target',
-            target,
-            display,
-            featureGate: 'browser.viewTargets',
+            title: 'Preview target',
+            url: 'https://preview.example.com',
         });
 
         const action = defineBrowserAction({
             id: 'open-preview',
-            kind: 'openTarget',
-            target,
-            display,
-            policy: {
-                requiredFeatureIds: ['browser.viewTargets'],
-                profileMode: 'session',
-            },
+            title: 'Open preview',
+            action: 'open-preview',
+            target: 'preview-target',
+            order: 100,
         });
 
-        expect(browserTarget.target.kind).toBe('hostedPluginWeb');
-        expect(action.policy.requiredFeatureIds).toEqual(['browser.viewTargets']);
+        expect(browserTarget.url).toBe('https://preview.example.com');
+        expect(browserTarget.launch).toBe('newView');
+        expect(browserTarget.profile).toBe('user');
+        expect(action.target).toBe('preview-target');
+        expect(action.placement).toBe('toolbar');
     });
 
     it('rejects attempts to define browser chrome or adapter internals', () => {
         expect(() => defineBrowserAction({
             id: 'bad-browser-action',
-            kind: 'openTarget',
-            target,
-            display,
+            title: 'Bad browser action',
+            action: 'open-preview',
+            target: 'preview-target',
             chrome: { hideAddressBar: true },
         } as never)).toThrow();
     });

@@ -80,7 +80,7 @@ import type {
   ScmWorktreePruneResponse,
   ScmWorktreeRemoveRequest,
   ScmWorktreeRemoveResponse,
-} from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm';
 import type {
   ScmBackendRuntimeContext,
   ScmBackendRuntimeDetection,
@@ -99,7 +99,7 @@ import type {
   ScmWorkspaceIntegrationWorkspaceTransferMetadata,
   ScmWorkspaceIntegrationPortableWorkspacePathClassification,
   ScmWorkspaceIntegrationPortableWorkspacePathRequest,
-} from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/experimental/scm/backend';
 
 export type ScmRepoDetection = ScmBackendRuntimeDetection;
 export type ScmBackendContext = ScmBackendRuntimeContext;

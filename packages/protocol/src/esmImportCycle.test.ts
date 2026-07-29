@@ -12,7 +12,7 @@ describe('protocol ESM import safety', () => {
   it(
     'imports executionRuns under node + tsx without initialization errors',
     () => {
-      const entryUrl = pathToFileURL(path.join(__dirname, 'executionRuns.ts')).href;
+      const entryUrl = pathToFileURL(path.join(__dirname, 'execution/runs/index.ts')).href;
       const script = `import(${JSON.stringify(entryUrl)})`;
 
       const result = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', script], {

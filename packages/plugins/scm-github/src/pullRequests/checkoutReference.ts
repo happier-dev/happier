@@ -1,7 +1,7 @@
 import type {
   ScmHostingProviderPullRequestCheckoutReferenceMetadata,
-} from '@happier-dev/plugin-sdk';
-import type { ScmPullRequestSummary } from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm/hostingProvider';
+import type { ScmPullRequestSummary } from '@happier-dev/plugin-sdk/experimental/scm';
 
 export function resolveGithubCheckoutReferenceFromPullRequest(
   pullRequest: ScmPullRequestSummary,

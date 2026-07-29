@@ -5,11 +5,11 @@ import type {
   ScmWorktreePruneResponse,
   ScmWorktreeRemoveRequest,
   ScmWorktreeRemoveResponse,
-} from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm';
 import {
   SCM_OPERATION_ERROR_CODES,
   SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN,
-} from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm';
 import { mkdir } from 'node:fs/promises';
 
 import type { ScmBackendContext } from '../types.js';

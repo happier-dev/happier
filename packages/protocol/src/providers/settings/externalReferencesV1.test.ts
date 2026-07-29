@@ -8,7 +8,7 @@ describe('validateProviderSettingsExternalReferencesV1', () => {
     const settings = ProviderSettingsV1Schema.parse({
       ...DEFAULT_PROVIDER_SETTINGS_V1,
       connections: [{
-        v: 1, id: 'pc_a', source: { kind: 'contribution', contributionKey: 'plugin:providers:p' },
+        v: 1, id: 'pc_a', source: { kind: 'contribution', contributionKey: 'plugin/p' },
         role: 'default', displayName: 'P', displayNameMode: 'automatic',
         endpointOverrides: [{ endpointTemplateId: 'missing-template', baseUrl: 'https://example.test/v1' }],
         endpointOverridesByMachineId: {
@@ -26,7 +26,7 @@ describe('validateProviderSettingsExternalReferencesV1', () => {
     });
     expect(validateProviderSettingsExternalReferencesV1(settings, {
       knownMachineIds: ['machine_a'],
-      endpointTemplateIdsByContributionKey: { 'plugin:providers:p': ['chat'] },
+      endpointTemplateIdsByContributionKey: { 'plugin/p': ['chat'] },
     })).toEqual([
       { path: 'connections[0].endpointOverrides[0].endpointTemplateId', reason: 'unknown_endpoint_template' },
       { path: 'connections[0].endpointOverridesByMachineId.missing_machine', reason: 'unknown_machine' },

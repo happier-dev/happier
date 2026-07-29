@@ -11,7 +11,12 @@ export const SessionWorkStateStatusV1Schema = z.enum([
 ]);
 export type SessionWorkStateStatusV1 = z.infer<typeof SessionWorkStateStatusV1Schema>;
 
-export const SessionWorkStateStatusReasonV1Schema = z.enum(['budgetLimited', 'interrupted']);
+export const SessionWorkStateStatusReasonV1Schema = z.enum([
+  'blocked',
+  'usageLimited',
+  'budgetLimited',
+  'interrupted',
+]);
 export type SessionWorkStateStatusReasonV1 = z.infer<typeof SessionWorkStateStatusReasonV1Schema>;
 
 export const SessionWorkStateItemKindV1Schema = z.enum(['goal', 'task', 'todo']);

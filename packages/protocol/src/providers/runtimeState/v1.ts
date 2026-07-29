@@ -10,6 +10,7 @@ import {
   ProviderEndpointObservationFingerprintV1Schema,
   ProviderObservationAuthorizationFingerprintV1Schema,
 } from '../fingerprints.js';
+import { canonicalizeProviderContributionKeyV1 } from '../contributionIdentityV1.js';
 import {
   ProviderConnectionIdSchema,
   ProviderContributionKeySchema,
@@ -60,7 +61,9 @@ export type ProviderCatalogRuntimeStateKeyV1 = z.infer<typeof ProviderCatalogRun
 
 export const ProviderInstallationRuntimeStateKeyV1Schema = z.object({
   machineId: ProviderMachineIdSchema,
-  contributionKey: ProviderContributionKeySchema,
+  contributionKey: ProviderContributionKeySchema.transform(
+    canonicalizeProviderContributionKeyV1,
+  ),
   checkId: ProviderLocalIdSchema,
 }).strict();
 export type ProviderInstallationRuntimeStateKeyV1 = z.infer<typeof ProviderInstallationRuntimeStateKeyV1Schema>;

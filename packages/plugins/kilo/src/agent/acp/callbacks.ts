@@ -1,8 +1,16 @@
-import type { AcpTier2EnvBuilderV1 } from '@happier-dev/plugin-sdk/experimental/acp';
+import type {
+  AgentLaunchEnvironment,
+  AgentPermissionIntent,
+} from '@happier-dev/plugin-sdk/agent-runtime';
 
 import { buildKiloOpenCodePermissionEnv } from '../permissions/opencodePermissionPolicy.js';
 
-export const buildKiloAcpEnv: AcpTier2EnvBuilderV1 = ({ env, permissionMode }) => buildKiloOpenCodePermissionEnv({
-  env,
-  permissionMode,
-});
+export function buildKiloAcpEnv(params: Readonly<{
+  launchEnvironment?: AgentLaunchEnvironment;
+  permissionIntent: AgentPermissionIntent | null;
+}>): Readonly<Record<string, string>> {
+  return buildKiloOpenCodePermissionEnv({
+    env: params.launchEnvironment?.values,
+    permissionIntent: params.permissionIntent,
+  });
+}

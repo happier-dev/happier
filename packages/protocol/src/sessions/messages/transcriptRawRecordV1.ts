@@ -168,9 +168,7 @@ function preprocessMessageContent(data: unknown): unknown {
   return record;
 }
 
-const KNOWN_OUTPUT_DATA_TYPES = new Set(['system', 'result', 'summary', 'progress', 'assistant', 'user'] as const);
-
-type UnknownOutputDataType = string & { readonly __happierUnknownOutputDataType: unique symbol };
+type OpaqueOutputDataType = string & { readonly __happierOpaqueOutputDataType: unique symbol };
 
 const OutputExtrasShape = {
   isSidechain: z.boolean().nullish(),
@@ -218,16 +216,15 @@ const RawAgentOutputDataKnownSchema = z.discriminatedUnion('type', [
   ),
 ]);
 
-const RawAgentOutputDataUnknownSchema = z
+const RawAgentOutputDataOpaqueSchema = z
   .object({ type: z.string() })
   .extend(OutputExtrasShape)
   .passthrough()
-  .refine((value) => !KNOWN_OUTPUT_DATA_TYPES.has(value.type as any), {
-    message: 'Unknown output type must not collide with known output types',
-  })
-  .transform((value) => ({ ...value, type: value.type as UnknownOutputDataType }));
+  // The strict branch is tried first. Malformed known rows and future output types
+  // remain available as opaque data while the shared output envelope stays validated.
+  .transform((value) => ({ ...value, type: value.type as OpaqueOutputDataType }));
 
-const RawAgentOutputDataSchema = z.union([RawAgentOutputDataKnownSchema, RawAgentOutputDataUnknownSchema]);
+const RawAgentOutputDataSchema = z.union([RawAgentOutputDataKnownSchema, RawAgentOutputDataOpaqueSchema]);
 
 const TurnLifecycleEventV1Schema = z.enum([
   'task_started',

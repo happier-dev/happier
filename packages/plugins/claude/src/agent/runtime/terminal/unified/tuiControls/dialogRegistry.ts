@@ -4,8 +4,8 @@ import type { ClaudeScreenState } from '../screenState.js';
  * ONE registry over the recognized Claude Unified TUI screen-state dialogs. It consumes the parsed
  * `ClaudeScreenState` detector booleans — it never re-matches terminal text — and supplies, per
  * dialog: the owner that may answer it directly (slash controls / the startup resume resolver), the
- * needs-attention presentation (header/question/options), and a `literal_then_enter` answer recipe
- * per option. The generalized dialog-choice broker/probe, the slash controls, and the startup
+ * needs-attention presentation (header/question/options), and the exact terminal answer recipe per
+ * option. The generalized dialog-choice broker/probe, the slash controls, and the startup
  * resolver all resolve answers through this single owner so there is no second option/answer table.
  */
 
@@ -14,7 +14,8 @@ export type ClaudeUnifiedRecognizedDialogId =
   | 'usage_limit'
   | 'resume_choice'
   | 'safeguard_pause'
-  | 'effort_change';
+  | 'effort_change'
+  | 'trust_folder';
 
 export type ClaudeUnifiedDialogId = ClaudeUnifiedRecognizedDialogId | 'unrecognized_confirmation';
 
@@ -24,6 +25,7 @@ export type ClaudeUnifiedDialogBlockedReason =
   | 'resume_choice_dialog'
   | 'safeguard_pause_dialog'
   | 'effort_change_dialog'
+  | 'trust_folder_prompt'
   | 'unrecognized_confirmation_dialog';
 
 export type ClaudeUnifiedDialogDetectorStateKey =
@@ -31,7 +33,8 @@ export type ClaudeUnifiedDialogDetectorStateKey =
   | 'usageLimitDialogVisible'
   | 'resumeChoiceDialogVisible'
   | 'safeguardPauseDialogVisible'
-  | 'effortChangeDialogVisible';
+  | 'effortChangeDialogVisible'
+  | 'trustFolderPromptVisible';
 
 export type ClaudeUnifiedDialogOwner = 'slash_controls' | 'resume_startup';
 
@@ -44,10 +47,11 @@ export type ClaudeUnifiedDialogOption = Readonly<{
   choice: string;
   label: string;
   description: string;
-  answer: Readonly<{
-    kind: 'literal_then_enter';
-    text: string;
-  }>;
+  answer: Readonly<{ kind: 'literal'; text: string }>;
+  settingMutation?: Readonly<{
+    settingId: 'claudeUnifiedTerminalWorkspaceTrust';
+    value: 'always_trust_happier_workspaces' | 'always_reject_happier_workspaces';
+  }> | undefined;
 }>;
 
 export type ClaudeUnifiedRecognizedDialogRegistryEntry = Readonly<{
@@ -73,14 +77,9 @@ export type ClaudeUnifiedVisibleRecognizedDialog = Readonly<{
   header: string;
   question: string;
   options: readonly ClaudeUnifiedDialogOption[];
+  sourceSignature: string | null;
 }>;
 
-/**
- * Fail-closed presentation for a `❯`-numbered dialog whose heading matches NO recognized matcher:
- * a structural notice telling the user to open the terminal. Typed answers are NEVER derived from
- * the notice options — nothing is sent to the terminal — so the option `choice` values are stable,
- * translation-independent tokens. The app presentation boundary localizes the labels/description.
- */
 export type ClaudeUnifiedUnrecognizedDialogNotice = Readonly<{
   notice: 'open_terminal';
   questionId: string;
@@ -96,22 +95,24 @@ export const CLAUDE_UNIFIED_UNRECOGNIZED_DIALOG_NOTICE: ClaudeUnifiedUnrecognize
   requestReason: 'claude_unified_terminal_unrecognized_dialog',
   header: 'Claude needs attention',
   question: 'Claude is showing a dialog Happier does not recognize.',
-  options: Object.freeze([
-    option(
-      'open_terminal',
-      'Open terminal',
-      'Open the terminal to respond to Claude directly.',
-      '',
-    ),
-  ]),
+  options: Object.freeze([]),
 });
 
-export type ClaudeUnifiedVisibleUnrecognizedDialog = Readonly<{
+type ClaudeUnifiedVisibleUnrecognizedDialogBase = Readonly<{
   kind: 'unrecognized';
   dialogId: 'unrecognized_confirmation';
   owner: null;
-  notice: 'open_terminal';
+  questionId: string;
+  requestReason: string;
+  header: string;
+  question: string;
+  context: readonly string[];
+  options: readonly ClaudeUnifiedDialogOption[];
 }>;
+
+export type ClaudeUnifiedVisibleUnrecognizedDialog =
+  | (ClaudeUnifiedVisibleUnrecognizedDialogBase & Readonly<{ mode: 'generic'; signature: string }>)
+  | (ClaudeUnifiedVisibleUnrecognizedDialogBase & Readonly<{ mode: 'notice' }>);
 
 export type ClaudeUnifiedVisibleDialog =
   | ClaudeUnifiedVisibleRecognizedDialog
@@ -122,12 +123,14 @@ function option(
   label: string,
   description: string,
   text: string,
+  settingMutation?: ClaudeUnifiedDialogOption['settingMutation'],
 ): ClaudeUnifiedDialogOption {
   return {
     choice,
     label,
     description,
-    answer: { kind: 'literal_then_enter', text },
+    answer: { kind: 'literal', text },
+    ...(settingMutation ? { settingMutation } : {}),
   };
 }
 
@@ -214,6 +217,37 @@ export const CLAUDE_UNIFIED_RECOGNIZED_DIALOG_REGISTRY: readonly ClaudeUnifiedRe
       ];
     },
   },
+  {
+    // Claude suppresses every hook source until workspace trust is accepted, so the normal
+    // PermissionRequest bridge cannot bootstrap this provider-owned prompt. Keep this narrow trust
+    // decision in the canonical terminal dialog owner and require an explicit user choice; never
+    // infer or auto-accept workspace trust.
+    dialogId: 'trust_folder',
+    detectorStateKey: 'trustFolderPromptVisible',
+    owner: null,
+    questionId: 'claudeUnifiedTerminalTrustFolder',
+    requestReason: 'claude_unified_terminal_trust_folder',
+    header: 'Trust this folder',
+    question: 'Claude needs your permission to trust and run code from this folder.',
+    options: () => [
+      option('trust_once', 'Trust and proceed', 'Trust this workspace for this prompt.', '1'),
+      option(
+        'always_trust_happier_workspaces',
+        'Always trust Happier workspaces',
+        'Trust this prompt and remember the choice for future Claude workspaces opened by Happier.',
+        '1',
+        { settingId: 'claudeUnifiedTerminalWorkspaceTrust', value: 'always_trust_happier_workspaces' },
+      ),
+      option('reject_once', 'Do not trust', 'Reject this workspace for this prompt.', '2'),
+      option(
+        'always_reject_happier_workspaces',
+        'Always reject Happier workspaces',
+        'Reject this prompt and remember the choice for future Claude workspaces opened by Happier.',
+        '2',
+        { settingId: 'claudeUnifiedTerminalWorkspaceTrust', value: 'always_reject_happier_workspaces' },
+      ),
+    ],
+  },
 ]);
 
 const ENTRY_BY_ID = new Map(
@@ -226,6 +260,7 @@ const BLOCKED_REASON_BY_DIALOG_ID: Readonly<Record<ClaudeUnifiedDialogId, Claude
   resume_choice: 'resume_choice_dialog',
   safeguard_pause: 'safeguard_pause_dialog',
   effort_change: 'effort_change_dialog',
+  trust_folder: 'trust_folder_prompt',
   unrecognized_confirmation: 'unrecognized_confirmation_dialog',
 };
 
@@ -269,14 +304,43 @@ export function resolveClaudeUnifiedVisibleDialog(state: ClaudeScreenState): Cla
       header: entry.header,
       question: entry.question,
       options: entry.options(state),
+      sourceSignature: state.visibleNumberedDialog?.signature ?? null,
     };
   }
   if (state.unrecognizedConfirmationDialogVisible) {
+    const generic = state.unrecognizedConfirmationDialog;
+    if (generic) {
+      return {
+        kind: 'unrecognized',
+        mode: 'generic',
+        dialogId: 'unrecognized_confirmation',
+        owner: null,
+        questionId: 'claudeUnifiedTerminalGenericDialog',
+        requestReason: 'claude_unified_terminal_generic_dialog',
+        header: 'Claude needs attention',
+        question: generic.context.join('\n'),
+        context: generic.context,
+        signature: generic.signature,
+        options: generic.options.map((candidate) => option(
+          candidate.choice,
+          candidate.label,
+          'Send this exact visible choice to Claude.',
+          candidate.choice,
+        )),
+      };
+    }
+    const notice = CLAUDE_UNIFIED_UNRECOGNIZED_DIALOG_NOTICE;
     return {
       kind: 'unrecognized',
+      mode: 'notice',
       dialogId: 'unrecognized_confirmation',
       owner: null,
-      notice: 'open_terminal',
+      questionId: notice.questionId,
+      requestReason: notice.requestReason,
+      header: notice.header,
+      question: notice.question,
+      context: [],
+      options: notice.options,
     };
   }
   return null;
@@ -313,15 +377,22 @@ export function buildClaudeUnifiedDialogQuestionInput(
   dialog: ClaudeUnifiedVisibleDialog,
 ): Readonly<Record<string, unknown>> {
   if (dialog.kind === 'unrecognized') {
-    const notice = CLAUDE_UNIFIED_UNRECOGNIZED_DIALOG_NOTICE;
     return {
-      happierDialog: { kind: 'unrecognized', dialogId: dialog.dialogId, notice: notice.notice },
+      happierDialog: dialog.mode === 'generic'
+        ? {
+          kind: 'unrecognized',
+          mode: 'generic',
+          dialogId: dialog.dialogId,
+          signature: dialog.signature,
+          secondaryAction: 'open_terminal',
+        }
+        : { kind: 'unrecognized', mode: 'notice', dialogId: dialog.dialogId, action: 'open_terminal' },
       questions: [{
-        id: notice.questionId,
-        header: notice.header,
-        question: notice.question,
+        id: dialog.questionId,
+        header: dialog.header,
+        question: dialog.question,
         multiSelect: false,
-        options: notice.options.map((entryOption) => ({
+        options: dialog.options.map((entryOption) => ({
           choice: entryOption.choice,
           label: entryOption.label,
           description: entryOption.description,
@@ -330,7 +401,7 @@ export function buildClaudeUnifiedDialogQuestionInput(
     };
   }
   return {
-    happierDialog: { kind: 'recognized', dialogId: dialog.dialogId },
+      happierDialog: { kind: 'recognized', dialogId: dialog.dialogId, secondaryAction: 'open_terminal' },
     questions: [{
       id: dialog.questionId,
       header: dialog.header,
@@ -339,10 +410,29 @@ export function buildClaudeUnifiedDialogQuestionInput(
       options: dialog.options.map((entryOption) => ({
         choice: entryOption.choice,
         label: entryOption.label,
-        description: entryOption.description,
+          description: entryOption.description,
+          ...(entryOption.settingMutation ? { settingMutation: entryOption.settingMutation } : {}),
       })),
     }],
   };
+}
+
+/** Full visible identity used for request replacement and the final pre-byte recapture guard. */
+export function getClaudeUnifiedDialogIdentity(dialog: ClaudeUnifiedVisibleDialog): string {
+  return JSON.stringify({
+    dialogId: dialog.dialogId,
+    kind: dialog.kind,
+    mode: dialog.kind === 'unrecognized' ? dialog.mode : 'recognized',
+    context: dialog.kind === 'unrecognized' ? dialog.context : [dialog.header, dialog.question],
+    signature: dialog.kind === 'unrecognized' && dialog.mode === 'generic' ? dialog.signature : null,
+    sourceSignature: dialog.kind === 'recognized' ? dialog.sourceSignature : null,
+    options: dialog.options.map((candidate) => ({
+      choice: candidate.choice,
+      label: candidate.label,
+      answer: candidate.answer.text,
+      settingMutation: candidate.settingMutation ?? null,
+    })),
+  });
 }
 
 /**

@@ -1,4 +1,4 @@
-import type { FetchRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
+import type { CodexRuntimeFetch } from '../../runtimeFetch.js';
 
 import {
   assertNonEmptyString,
@@ -20,7 +20,7 @@ export async function exchangeCodexAuthorizationCodeForAuthTokens(params: Readon
   verifier: string;
   redirectUri: string;
   now: number;
-  runtimeFetch: FetchRuntimeServiceV1;
+  runtimeFetch: CodexRuntimeFetch;
 }>): Promise<CodexAuthTokens> {
   const response = await params.runtimeFetch({
     url: `${OPENAI_CODEX_AUTH_BASE_URL}/oauth/token`,
@@ -71,7 +71,7 @@ export async function exchangeCodexAuthorizationCodeForTokens(params: Readonly<{
   verifier: string;
   redirectUri: string;
   now: number;
-  runtimeFetch: FetchRuntimeServiceV1;
+  runtimeFetch: CodexRuntimeFetch;
 }>): Promise<Readonly<{
   accessToken: string;
   refreshToken: string;

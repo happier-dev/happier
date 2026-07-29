@@ -6,6 +6,11 @@ import {
 } from './hostedWebRuntime';
 
 describe('hosted web UI runtime SDK helpers', () => {
+    const file = (relativePath: string) => ({
+        relativePath,
+        digest: `sha256:${'a'.repeat(64)}`,
+        byteSize: 1,
+    });
     it('validates static, managed-service, and session-endpoint runtime modes', () => {
         expect(defineHostedWebRuntimeMode({
             kind: 'installedStaticAssets',
@@ -32,7 +37,7 @@ describe('hosted web UI runtime SDK helpers', () => {
                     contributionId: 'preview-web',
                     tier: 'hostedWeb',
                     entry: 'dist/index.html',
-                    files: ['dist/index.html', 'dist/assets/index.js'],
+                    files: [file('dist/index.html'), file('dist/assets/index.js')],
                     digest: 'sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
                     builtWith: { bundler: 'vite', version: '6.0.0' },
                     hostUiApiVersion: '1.0.0',
@@ -43,9 +48,14 @@ describe('hosted web UI runtime SDK helpers', () => {
                     tier: 'reactNative',
                     platform: 'ios',
                     entry: 'dist/ios.bundle',
-                    files: ['dist/ios.bundle'],
+                    files: [file('dist/ios.bundle')],
                     digest: 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
                     builtWith: { bundler: 'repack', version: '5.0.0' },
+                    repack: {
+                        containerName: 'native_preview',
+                        modulePath: './renderSurface',
+                        exportName: 'renderSurface',
+                    },
                     hostUiApiVersion: '1.0.0',
                     compat: {
                         react: '19.0.0',
@@ -63,7 +73,7 @@ describe('hosted web UI runtime SDK helpers', () => {
                     contributionId: 'native-preview',
                     tier: 'reactNative',
                     entry: 'dist/native.bundle',
-                    files: ['dist/native.bundle'],
+                    files: [file('dist/native.bundle')],
                     digest: 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
                     builtWith: { bundler: 'vite', version: '6.0.0' },
                     hostUiApiVersion: '1.0.0',

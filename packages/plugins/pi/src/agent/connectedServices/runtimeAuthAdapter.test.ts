@@ -19,7 +19,7 @@ describe('createPiConnectedServiceRuntimeAuthAdapter', () => {
     })).toBeNull();
   });
 
-  it('classifies Pi assistant usage-limit messages for the matching connected-service group', () => {
+  it('does not reclassify request-auth Anthropic terminal message text as recovery evidence', () => {
     const adapter = createPiConnectedServiceRuntimeAuthAdapter();
 
     const classification = adapter.classifyRuntimeAuthFailure({
@@ -45,19 +45,10 @@ describe('createPiConnectedServiceRuntimeAuthAdapter', () => {
       ]),
     });
 
-    expect(classification).toMatchObject({
-      kind: 'usage_limit',
-      limitCategory: 'usage_limit',
-      serviceId: 'claude-subscription',
-      profileId: 'claude-primary',
-      groupId: 'claude-main',
-      retryAfterMs: 150_000,
-      quotaScope: 'account',
-      source: 'stable_provider_message',
-    });
+    expect(classification).toBeNull();
   });
 
-  it('classifies encoded assistant content usage-limit messages for the matching Codex group', () => {
+  it('does not reclassify request-auth Codex terminal message text after leaf-owned exact reporting', () => {
     const adapter = createPiConnectedServiceRuntimeAuthAdapter();
 
     const classification = adapter.classifyRuntimeAuthFailure({
@@ -91,15 +82,7 @@ describe('createPiConnectedServiceRuntimeAuthAdapter', () => {
       ]),
     });
 
-    expect(classification).toMatchObject({
-      kind: 'usage_limit',
-      limitCategory: 'usage_limit',
-      serviceId: 'openai-codex',
-      profileId: 'leeroy',
-      groupId: 'happier',
-      quotaScope: 'account',
-      source: 'stable_provider_message',
-    });
+    expect(classification).toBeNull();
   });
 
   it('classifies Pi auth failures against OpenAI API-key selections', () => {
@@ -133,7 +116,7 @@ describe('createPiConnectedServiceRuntimeAuthAdapter', () => {
       serviceId: 'openai',
     });
 
-    expect(adapter.classifyRuntimeAuthFailure({
+    const classification = adapter.classifyRuntimeAuthFailure({
       target: { agentId: 'pi' },
       error,
       selection: {
@@ -141,12 +124,16 @@ describe('createPiConnectedServiceRuntimeAuthAdapter', () => {
         serviceId: 'openai',
         profileId: 'openai-work',
       },
-    })).toMatchObject({
+    });
+
+    expect(classification).toMatchObject({
       kind: 'rate_limit',
       limitCategory: 'rate_limit',
       serviceId: 'openai',
       profileId: 'openai-work',
+      source: 'structured_provider_error',
     });
+    expect(classification).not.toHaveProperty('quotaScope');
   });
 
   it('classifies Pi compaction dependency failures separately from usage limits', () => {

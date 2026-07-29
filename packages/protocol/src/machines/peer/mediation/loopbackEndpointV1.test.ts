@@ -52,7 +52,28 @@ describe('PeerLoopbackEndpointV1', () => {
       url: 'http://127.0.0.1:3000/peer-mediation/v1/probe',
       endpointFingerprint: 'loopback_endpoint_1',
       expiresAt: 10_000,
-    }).url).toBe('http://127.0.0.1:3000/peer-mediation/v1/probe');
+      directRouteGrantProofVerifierVersions: [2],
+    })).toMatchObject({
+      url: 'http://127.0.0.1:3000/peer-mediation/v1/probe',
+      directRouteGrantProofVerifierVersions: [2],
+    });
+
+    expect(PeerLoopbackEndpointCandidateV1Schema.parse({
+      v: 1,
+      routeKind: 'loopback_direct',
+      url: 'http://127.0.0.1:3000/peer-mediation/v1/probe',
+      endpointFingerprint: 'legacy-endpoint',
+      expiresAt: 10_000,
+    }).directRouteGrantProofVerifierVersions).toEqual([]);
+
+    expect(PeerLoopbackEndpointCandidateV1Schema.safeParse({
+      v: 1,
+      routeKind: 'loopback_direct',
+      url: 'http://127.0.0.1:3000/peer-mediation/v1/probe',
+      endpointFingerprint: 'unknown-verifier',
+      expiresAt: 10_000,
+      directRouteGrantProofVerifierVersions: [3],
+    }).success).toBe(false);
 
     for (const url of [
       'http://192.168.1.20:3000/peer-mediation/v1/probe',

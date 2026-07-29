@@ -2,7 +2,7 @@ import { describe, expect, it, vi, afterEach } from 'vitest';
 import {
   SCM_OPERATION_ERROR_CODES,
   type ScmWorktreeRemoveRequest,
-} from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm';
 
 import {
     runWithGitScmCommandRunner,

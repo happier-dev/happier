@@ -8,11 +8,11 @@ import {
   type ScmPullRequestState,
   type ScmPullRequestSummary,
   type ScmWorkingSnapshot,
-} from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm';
 import {
     readCurrentScmHostingProviderRuntimeServices,
     type ScmHostingProviderRuntimeServices,
-} from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/experimental/scm/hostingProvider';
 
 import type { ScmBackendContext } from '../types.js';
 import { getGitSnapshot } from '../repository.js';
@@ -321,11 +321,16 @@ export function createGitPullRequestOpenOrReuseOperation(
                     ...(requestedHeadRepositoryNameWithOwner ? { headRepositoryNameWithOwner: requestedHeadRepositoryNameWithOwner } : {}),
                     authProfileKey: profileKey,
                 });
-            const readCurrentCacheKey = (): PrStatusCacheKey =>
-                buildResolvedCacheKey(readAuthProfileKey(writeAdapter, resolvedProvider));
+            const readCurrentCacheKey = (): PrStatusCacheKey | null => {
+                const currentAuthProfileKey =
+                    readAuthProfileKey(writeAdapter, resolvedProvider);
+                return currentAuthProfileKey
+                    ? buildResolvedCacheKey(currentAuthProfileKey)
+                    : null;
+            };
             const cacheKey = buildResolvedCacheKey(authProfileKey);
 
-            const cached = cache.getFresh(cacheKey);
+            const cached = authProfileKey ? cache.getFresh(cacheKey) : null;
             if (cached?.kind === 'success') {
                 const cachedMatch = findMatchingPullRequest({
                     pullRequests: cached.pullRequests,
@@ -388,17 +393,22 @@ export function createGitPullRequestOpenOrReuseOperation(
                     ...(requestedHeadRepositoryNameWithOwner ? { headRepositoryNameWithOwner: requestedHeadRepositoryNameWithOwner } : {}),
                 });
                 if (existing) {
-                    cache.setSuccess({ key: readCurrentCacheKey(), pullRequests: [existing] });
+                    const currentCacheKey = readCurrentCacheKey();
+                    if (currentCacheKey) {
+                        cache.setSuccess({ key: currentCacheKey, pullRequests: [existing] });
+                    }
                     return createSuccessfulResponse({ pullRequest: existing, provider: resolvedProvider, reused: true });
                 }
             } catch (error) {
                 const classified = classifyError(error);
-                cache.setError({
-                    key: cacheKey,
-                    error: classified.message,
-                    errorCode: classified.code,
-                    errorKind: classified.cacheKind,
-                });
+                if (authProfileKey) {
+                    cache.setError({
+                        key: cacheKey,
+                        error: classified.message,
+                        errorCode: classified.code,
+                        errorKind: classified.cacheKind,
+                    });
+                }
                 if (classified.code === SCM_OPERATION_ERROR_CODES.REMOTE_AUTH_REQUIRED || classified.code === SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED) {
                     return composeFallback();
                 }
@@ -456,7 +466,10 @@ export function createGitPullRequestOpenOrReuseOperation(
                     context,
                     headBranch: resolvedHeadBranch,
                 });
-                cache.setSuccess({ key: readCurrentCacheKey(), pullRequests: [created] });
+                const currentCacheKey = readCurrentCacheKey();
+                if (currentCacheKey) {
+                    cache.setSuccess({ key: currentCacheKey, pullRequests: [created] });
+                }
                 return createSuccessfulResponse({ pullRequest: created, provider: resolvedProvider, reused: false });
             } catch (error) {
                 const duplicateHint = await readValidatedDuplicateHint({
@@ -468,7 +481,10 @@ export function createGitPullRequestOpenOrReuseOperation(
                     error,
                 });
                 if (duplicateHint) {
-                    cache.setSuccess({ key: readCurrentCacheKey(), pullRequests: [duplicateHint] });
+                    const currentCacheKey = readCurrentCacheKey();
+                    if (currentCacheKey) {
+                        cache.setSuccess({ key: currentCacheKey, pullRequests: [duplicateHint] });
+                    }
                     return createSuccessfulResponse({ pullRequest: duplicateHint, provider: resolvedProvider, reused: true });
                 }
                 let listedAfterDuplicate: ScmPullRequestSummary | null = null;
@@ -484,7 +500,10 @@ export function createGitPullRequestOpenOrReuseOperation(
                     listedAfterDuplicate = null;
                 }
                 if (listedAfterDuplicate) {
-                    cache.setSuccess({ key: readCurrentCacheKey(), pullRequests: [listedAfterDuplicate] });
+                    const currentCacheKey = readCurrentCacheKey();
+                    if (currentCacheKey) {
+                        cache.setSuccess({ key: currentCacheKey, pullRequests: [listedAfterDuplicate] });
+                    }
                     return createSuccessfulResponse({ pullRequest: listedAfterDuplicate, provider: resolvedProvider, reused: true });
                 }
                 const classified = classifyError(error);

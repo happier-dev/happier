@@ -9,7 +9,9 @@ import {
   createProviderEndpointFingerprintV1,
   createProviderEndpointSetFingerprintV1,
   createProviderMachineGrantFingerprintV1,
+  createProviderManagedProbeRequestFingerprintV1,
   createProviderObservationAuthorizationFingerprintV1,
+  createProviderProbeObservationIdentityV1,
   createProviderProbeRequestFingerprintV1,
   createProviderSavedSecretRecordFingerprintV1,
 } from './securityFingerprintsV1.js';
@@ -31,6 +33,53 @@ const connectionInput = {
     destination: { kind: 'httpHeader', name: 'Authorization', format: 'bearer' },
   }],
 } as const;
+
+function managedDeploymentWithPurposes(purposes: readonly string[]) {
+  return {
+    implementationIdentity: {
+      pluginId: 'happier.provider.gateway',
+      localId: 'gateway',
+    },
+    managedEndpoint: {
+      localService: {
+        id: 'gateway',
+        launch: {
+          kind: 'packaged-runtime-binary',
+          directorySegments: ['tools', 'unpacked'],
+          executableBaseName: 'gateway-managed',
+          privateConfigPathFlag: '--config',
+        },
+        launchMode: {
+          kind: 'assignAndInject',
+          portPolicy: { kind: 'allocated' },
+        },
+        hostPolicy: { kind: 'loopback' },
+        name: { strategy: 'fixed', name: 'Gateway' },
+        healthCheck: { kind: 'http', path: '/healthz' },
+        restart: { kind: 'never' },
+        cleanup: { staleAfterMs: 60_000 },
+      },
+      protocols: ['openai-chat', 'openai-responses'],
+    },
+    connectedAccounts: purposes.map((purpose) => ({
+      purpose,
+      service: {
+        pluginId: 'happier.connected-account.example',
+        localId: 'example',
+      },
+      required: true,
+      materializationKinds: ['httpHeaders'],
+    })),
+    requestAuthUses: purposes.map((purpose) => ({
+      purpose,
+      materialization: {
+        kind: 'httpHeaders',
+        origin: 'https://api.example.test',
+        headerNames: ['authorization'],
+      },
+    })),
+  } as const;
+}
 
 describe('typed provider security fingerprints', () => {
   it('binds draft probe authorization to the exact credential destination', () => {
@@ -94,17 +143,193 @@ describe('typed provider security fingerprints', () => {
     expect(createProviderConnectionSecurityFingerprintV1(connectionInput)).not.toBe(base);
   });
 
+  it('uses stable managed declaration facts without accepting a durable endpoint URL', () => {
+    const managedDeployment = managedDeploymentWithPurposes(['upstream']);
+    const input = {
+      securityContractVersion: 1,
+      endpoints: [],
+      catalogProbes: [],
+      credentialTransports: [],
+      managedDeployment,
+    } as const;
+    const fingerprint = createProviderConnectionSecurityFingerprintV1(input);
+
+    expect(createProviderConnectionSecurityFingerprintV1(input)).toBe(fingerprint);
+    expect(createProviderConnectionSecurityFingerprintV1({
+      ...input,
+      managedDeployment: {
+        ...managedDeployment,
+        managedEndpoint: {
+          ...managedDeployment.managedEndpoint,
+          localService: {
+            ...managedDeployment.managedEndpoint.localService,
+            launch: {
+              ...managedDeployment.managedEndpoint.localService.launch,
+              executableBaseName: 'gateway-managed-v2',
+            },
+          },
+        },
+      },
+    })).not.toBe(fingerprint);
+    expect(createProviderConnectionSecurityFingerprintV1({
+      ...input,
+      managedDeployment: {
+        ...managedDeployment,
+        connectedAccounts: [{
+          ...managedDeployment.connectedAccounts[0],
+          purpose: 'different-upstream',
+        }],
+        requestAuthUses: [{
+          ...managedDeployment.requestAuthUses[0],
+          purpose: 'different-upstream',
+        }],
+      },
+    })).not.toBe(fingerprint);
+    expect(createProviderConnectionSecurityFingerprintV1({
+      ...input,
+      managedDeployment: {
+        ...managedDeployment,
+        connectedAccounts: [{
+          ...managedDeployment.connectedAccounts[0],
+          materializationKinds: ['httpHeaders', 'environment'],
+        }],
+      },
+    })).not.toBe(fingerprint);
+    expect(() => createProviderConnectionSecurityFingerprintV1({
+      ...input,
+      managedDeployment: {
+        ...managedDeployment,
+        requestAuthUses: [],
+      },
+    })).toThrowError(/must exactly match/u);
+    expect(() => createProviderConnectionSecurityFingerprintV1({
+      ...input,
+      managedDeployment: {
+        ...managedDeployment,
+        connectedAccounts: [{
+          ...managedDeployment.connectedAccounts[0],
+          materializationKinds: ['files'],
+        }],
+      },
+    })).toThrowError(/materialization kind/u);
+    expect(createProviderConnectionSecurityFingerprintV1({
+      ...input,
+      managedDeployment: {
+        ...managedDeployment,
+        requestAuthUses: [{
+          ...managedDeployment.requestAuthUses[0],
+          materialization: {
+            ...managedDeployment.requestAuthUses[0].materialization,
+            origin: 'https://different.example.test',
+          },
+        }],
+      },
+    })).not.toBe(fingerprint);
+    expect(createProviderConnectionSecurityFingerprintV1({
+      ...input,
+      managedDeployment: {
+        ...managedDeployment,
+        connectedAccounts: [{
+          ...managedDeployment.connectedAccounts[0],
+          service: {
+            ...managedDeployment.connectedAccounts[0].service,
+            localId: 'different-service',
+          },
+        }],
+      },
+    })).not.toBe(fingerprint);
+    expect(() => createProviderConnectionSecurityFingerprintV1({
+      ...input,
+      endpoints: connectionInput.endpoints,
+    })).toThrowError(/must not contain durable endpoints/u);
+  });
+
+  it('orders managed declarations canonically without host locale authority', () => {
+    const forward = {
+      ...connectionInput,
+      endpoints: [],
+      catalogProbes: [],
+      credentialTransports: [],
+      managedDeployment: managedDeploymentWithPurposes(['ä-upstream', 'Z-upstream']),
+    } as const;
+    const reversed = {
+      ...forward,
+      managedDeployment: managedDeploymentWithPurposes(['Z-upstream', 'ä-upstream']),
+    } as const;
+    const originalLocaleCompare = String.prototype.localeCompare;
+    String.prototype.localeCompare = () => {
+      throw new Error('localeCompare must not participate in Provider fingerprint identity');
+    };
+    try {
+      expect(createProviderConnectionSecurityFingerprintV1(forward)).toBe(
+        createProviderConnectionSecurityFingerprintV1(reversed),
+      );
+    } finally {
+      String.prototype.localeCompare = originalLocaleCompare;
+    }
+  });
+
   it('binds an agent/model/materialization without accepting display or secret values', () => {
     const base = {
       agentTargetKey: 'agent:codex', connectionId: 'pc_a', modelId: 'model/a',
       endpointTemplateId: 'responses', endpointUrl: 'https://example.test/v1', protocol: 'openai-responses',
       publicHeaders: {}, materialization: 'engineConfig', adapterBindingKey: 'pc_a',
+      modelCapabilities: {},
       credentialDestination: { kind: 'httpHeader', name: 'Authorization', format: 'bearer' },
       compatibilityFingerprint: 'compatibility:v1:a', adapterVersion: 1,
     } as const;
     expect(createProviderBindingSecurityFingerprintV1({ ...base, modelId: 'model/b' })).not.toBe(
       createProviderBindingSecurityFingerprintV1(base),
     );
+    expect(createProviderBindingSecurityFingerprintV1({
+      ...base,
+      modelCapabilities: { reasoningControls: 'unsupported' },
+    })).toBe(createProviderBindingSecurityFingerprintV1({
+      ...base,
+      modelCapabilities: { reasoningControls: 'supported' },
+    }));
+  });
+
+  it('binds managed sessions to a logical implementation identity and never a realized URL', () => {
+    const base = {
+      agentTargetKey: 'agent:codex',
+      connectionId: 'pc_a',
+      modelId: 'model/a',
+      modelCapabilities: {},
+      deployment: {
+        kind: 'managedLocal',
+        securityFacts: managedDeploymentWithPurposes(['upstream']),
+      },
+      endpointTemplateId: 'responses',
+      protocol: 'openai-responses',
+      publicHeaders: {},
+      materialization: 'engineConfig',
+      compatibilityFingerprint: 'compatibility:v1:a',
+      adapterVersion: 1,
+    } as const;
+    const fingerprint = createProviderBindingSecurityFingerprintV1(base);
+
+    expect(createProviderBindingSecurityFingerprintV1(base)).toBe(fingerprint);
+    expect(createProviderBindingSecurityFingerprintV1({
+      ...base,
+      deployment: {
+        kind: 'managedLocal',
+        securityFacts: {
+          ...base.deployment.securityFacts,
+          requestAuthUses: [{
+            ...base.deployment.securityFacts.requestAuthUses[0],
+            materialization: {
+              ...base.deployment.securityFacts.requestAuthUses[0].materialization,
+              origin: 'https://different.example.test',
+            },
+          }],
+        },
+      },
+    })).not.toBe(fingerprint);
+    expect(() => createProviderBindingSecurityFingerprintV1({
+      ...base,
+      endpointUrl: 'http://127.0.0.1:49152/v1',
+    })).toThrowError(/must not contain a realized endpoint URL/u);
   });
 
   it('treats private DNS answers as a set while preserving endpoint-template order', () => {
@@ -240,7 +465,7 @@ describe('typed provider security fingerprints', () => {
     expect(transportRenamed).toEqual(resolved);
     expect(() => resolveProviderBindingCompatibilityWithFingerprintV1({
       ...base,
-      result: { status: 'incompatible', reasons: ['caller-forged'] },
+      result: { status: 'incompatible', reasons: ['no_compatible_protocol'] },
     } as typeof base)).toThrowError(/derived by the canonical resolver/u);
   });
 
@@ -276,6 +501,216 @@ describe('typed provider security fingerprints', () => {
       ],
     })).not.toBe(catalog);
     expect(catalog).toMatch(/^catalog:v1:/);
+  });
+
+  it('binds managed catalog requests to stable source authority without a realized port or bearer', () => {
+    const input = {
+      implementationIdentity: {
+        pluginId: 'happier.provider.cliproxyapi',
+        localId: 'cliproxyapi',
+      },
+      managedFacet: {
+        managedEndpoint: {
+          localService: {
+            id: 'cliproxyapi',
+            launch: {
+              kind: 'packaged-runtime-binary',
+              directorySegments: ['tools', 'unpacked'],
+              executableBaseName: 'cliproxyapi-managed',
+              privateConfigPathFlag: '--config',
+            },
+            launchMode: {
+              kind: 'assignAndInject',
+              portPolicy: { kind: 'allocated' },
+            },
+            hostPolicy: { kind: 'loopback' },
+            name: { strategy: 'fixed', name: 'CLIProxyAPI' },
+            healthCheck: { kind: 'http', path: '/healthz' },
+            restart: { kind: 'never' },
+            cleanup: { staleAfterMs: 60_000 },
+          },
+          protocols: ['openai-responses'],
+        },
+        connectedAccounts: [
+          {
+            purpose: 'ä-upstream',
+            service: {
+              pluginId: 'happier.connected-account.openai',
+              localId: 'openai',
+            },
+            required: true,
+            materializationKinds: ['httpHeaders'],
+          },
+          {
+            purpose: 'Z-upstream',
+            service: {
+              pluginId: 'happier.connected-account.google',
+              localId: 'google',
+            },
+            required: true,
+            materializationKinds: ['httpHeaders'],
+          },
+        ],
+        requestAuthUses: [
+          {
+            purpose: 'ä-upstream',
+            materialization: {
+              kind: 'httpHeaders',
+              origin: 'https://api.example.test',
+              headerNames: ['authorization'],
+            },
+          },
+          {
+            purpose: 'Z-upstream',
+            materialization: {
+              kind: 'httpHeaders',
+              origin: 'https://api.other.example.test',
+              headerNames: ['authorization'],
+            },
+          },
+        ],
+      },
+      purposeBindings: {
+        v: 1,
+        bindings: [
+          {
+            purpose: {
+              consumer: {
+                pluginId: 'happier.provider.cliproxyapi',
+                localId: 'cliproxyapi',
+              },
+              purpose: 'ä-upstream',
+            },
+            target: {
+              kind: 'account',
+              account: {
+                service: {
+                  pluginId: 'happier.connected-account.openai',
+                  localId: 'openai',
+                },
+                accountId: 'account-a',
+              },
+            },
+          },
+          {
+            purpose: {
+              consumer: {
+                pluginId: 'happier.provider.cliproxyapi',
+                localId: 'cliproxyapi',
+              },
+              purpose: 'Z-upstream',
+            },
+            target: {
+              kind: 'account',
+              account: {
+                service: {
+                  pluginId: 'happier.connected-account.google',
+                  localId: 'google',
+                },
+                accountId: 'account-b',
+              },
+            },
+          },
+        ],
+      },
+      catalogSource: {
+        kind: 'transientModelEndpoint',
+        contractVersion: 'happier.cliproxyapi-managed/v1',
+        sdkVersion: 'v7.2.95',
+      },
+      endpointTemplateId: 'cliproxyapi-openai-responses',
+      protocol: 'openai-responses',
+      method: 'GET',
+      path: '/v1/models',
+      parser: 'openai-models',
+      publicHeaders: {},
+    } as const;
+    const fingerprint = createProviderManagedProbeRequestFingerprintV1(input);
+
+    expect(fingerprint).toMatch(/^probe-request:v1:/);
+    expect(createProviderManagedProbeRequestFingerprintV1(input)).toBe(fingerprint);
+    expect(createProviderManagedProbeRequestFingerprintV1({
+      ...input,
+      catalogSource: { ...input.catalogSource, sdkVersion: 'v7.2.96' },
+    })).not.toBe(fingerprint);
+    expect(createProviderManagedProbeRequestFingerprintV1({
+      ...input,
+      catalogSource: { ...input.catalogSource, contractVersion: 'happier.cliproxyapi-managed/v2' },
+    })).not.toBe(fingerprint);
+    const originalLocaleCompare = String.prototype.localeCompare;
+    String.prototype.localeCompare = () => {
+      throw new Error('localeCompare must not participate in Provider fingerprint identity');
+    };
+    try {
+      expect(createProviderManagedProbeRequestFingerprintV1(input)).toBe(
+        createProviderManagedProbeRequestFingerprintV1({
+          ...input,
+          purposeBindings: {
+            ...input.purposeBindings,
+            bindings: [...input.purposeBindings.bindings].reverse(),
+          },
+        }),
+      );
+      expect(createProviderManagedProbeRequestFingerprintV1(input)).toBe(
+        createProviderManagedProbeRequestFingerprintV1({
+          ...input,
+          managedFacet: {
+            ...input.managedFacet,
+            connectedAccounts: [
+              ...input.managedFacet.connectedAccounts,
+            ].reverse(),
+            requestAuthUses: [
+              ...input.managedFacet.requestAuthUses,
+            ].reverse(),
+          },
+        }),
+      );
+    } finally {
+      String.prototype.localeCompare = originalLocaleCompare;
+    }
+    expect(createProviderManagedProbeRequestFingerprintV1({
+      ...input,
+      purposeBindings: {
+        v: 1,
+        bindings: [{
+          purpose: {
+            consumer: input.implementationIdentity,
+            purpose: 'openai-upstream',
+          },
+          target: {
+            kind: 'account',
+            account: {
+              service: {
+                pluginId: 'happier.connected-account.openai',
+                localId: 'openai',
+              },
+              accountId: 'account-a',
+            },
+          },
+        }],
+      },
+    })).not.toBe(fingerprint);
+    expect(createProviderManagedProbeRequestFingerprintV1({
+      ...input,
+      managedFacet: {
+        ...input.managedFacet,
+        requestAuthUses: input.managedFacet.requestAuthUses.map((use, index) => (
+          index === 0
+            ? {
+                ...use,
+                materialization: {
+                  ...use.materialization,
+                  origin: 'https://different.example.test',
+                },
+              }
+            : use
+        )),
+      },
+    })).not.toBe(fingerprint);
+    expect(createProviderManagedProbeRequestFingerprintV1({
+      ...input,
+      path: '/v1/other-models',
+    })).not.toBe(fingerprint);
   });
 
   it('binds catalog observations to the exact command fallback and resolved endpoint', () => {
@@ -375,6 +810,60 @@ describe('typed provider security fingerprints', () => {
     })).toThrowError(/credential transport requires a selected secret/u);
   });
 
+  it('projects one opaque probe observation identity from exact request, machine, authorization, and grant-event facts', () => {
+    const probeRequestFingerprint = createProviderProbeRequestFingerprintV1({
+      method: 'GET', endpointUrl: 'https://example.test/v1', path: '/v1/models',
+      parser: 'openai-models', publicHeaders: {},
+    });
+    const catalogFingerprint = createProviderCatalogFingerprintV1({ probeRequestFingerprints: [probeRequestFingerprint] });
+    const observationFingerprint = createProviderObservationAuthorizationFingerprintV1({
+      selectedSecretBindingId: null, selectedSecretRecordFingerprint: null, credential: null,
+    });
+    const authorizationGrant = {
+      kind: 'account' as const,
+      fingerprint: createProviderAccountGrantFingerprintV1({
+        v: 1, connectionId: 'pc_a', connectionSecurityFingerprint: 'connection-security:v1:a', confirmedAt: 1,
+      }),
+      confirmedAt: 1,
+    };
+    const base = createProviderProbeObservationIdentityV1({
+      machineId: 'machine_a', connectionId: 'pc_a', catalogFingerprint,
+      observationAuthorizationFingerprints: [observationFingerprint], authorizationGrant,
+    });
+
+    expect(base).toMatch(/^probe-observation:v1:/u);
+    expect(createProviderProbeObservationIdentityV1({
+      machineId: 'machine_a', connectionId: 'pc_a', catalogFingerprint,
+      observationAuthorizationFingerprints: [observationFingerprint], authorizationGrant,
+    })).toBe(base);
+    expect(createProviderProbeObservationIdentityV1({
+      machineId: 'machine_b', connectionId: 'pc_a', catalogFingerprint,
+      observationAuthorizationFingerprints: [observationFingerprint], authorizationGrant,
+    })).not.toBe(base);
+    expect(createProviderProbeObservationIdentityV1({
+      machineId: 'machine_a', connectionId: 'pc_a', catalogFingerprint,
+      observationAuthorizationFingerprints: [observationFingerprint],
+      authorizationGrant: { ...authorizationGrant, confirmedAt: 2 },
+    })).not.toBe(base);
+    expect(createProviderProbeObservationIdentityV1({
+      machineId: 'machine_a', connectionId: 'pc_a', catalogFingerprint,
+      observationAuthorizationFingerprints: [observationFingerprint],
+      authorizationGrant: {
+        kind: 'machine',
+        fingerprint: createProviderMachineGrantFingerprintV1({
+          v: 1, machineId: 'machine_a', connectionId: 'pc_a',
+          endpointSetFingerprint: 'endpoint-set:v1:a',
+          connectionSecurityFingerprint: 'connection-security:v1:a', confirmedAt: 1,
+        }),
+        confirmedAt: 1,
+      },
+    })).not.toBe(base);
+    expect(() => createProviderProbeObservationIdentityV1({
+      machineId: 'machine_a', connectionId: 'pc_a', catalogFingerprint: null,
+      observationAuthorizationFingerprints: [observationFingerprint], authorizationGrant,
+    })).toThrowError(/present together/u);
+  });
+
   it('keeps fixed cross-runtime vectors for every live typed fingerprint domain', () => {
     const agent = {
       acceptsProtocols: ['openai-responses'], required: {},
@@ -392,6 +881,7 @@ describe('typed provider security fingerprints', () => {
       }),
       binding: createProviderBindingSecurityFingerprintV1({
         agentTargetKey: 'agent:codex', connectionId: 'pc_a', modelId: 'model-a',
+        modelCapabilities: {},
         endpointTemplateId: 'responses', endpointUrl: 'https://example.test/v1', protocol: 'openai-responses',
         publicHeaders: {}, materialization: 'engineConfig', compatibilityFingerprint: 'compatibility:v1:a', adapterVersion: 1,
       }),
@@ -427,6 +917,25 @@ describe('typed provider security fingerprints', () => {
       observation: createProviderObservationAuthorizationFingerprintV1({
         selectedSecretBindingId: null, selectedSecretRecordFingerprint: null, credential: null,
       }),
+      probeObservation: createProviderProbeObservationIdentityV1({
+        machineId: 'machine_a', connectionId: 'pc_a',
+        catalogFingerprint: createProviderCatalogFingerprintV1({ probeRequestFingerprints: [
+          createProviderProbeRequestFingerprintV1({
+            method: 'GET', endpointUrl: 'https://example.test/v1', path: '/v1/models',
+            parser: 'openai-models', publicHeaders: {},
+          }),
+        ] }),
+        observationAuthorizationFingerprints: [createProviderObservationAuthorizationFingerprintV1({
+          selectedSecretBindingId: null, selectedSecretRecordFingerprint: null, credential: null,
+        })],
+        authorizationGrant: {
+          kind: 'account',
+          fingerprint: createProviderAccountGrantFingerprintV1({
+            v: 1, connectionId: 'pc_a', connectionSecurityFingerprint: 'connection-security:v1:a', confirmedAt: 1,
+          }),
+          confirmedAt: 1,
+        },
+      }),
       accountGrant: createProviderAccountGrantFingerprintV1({
         v: 1, connectionId: 'pc_a', connectionSecurityFingerprint: 'connection-security:v1:a', confirmedAt: 1,
       }),
@@ -446,6 +955,7 @@ describe('typed provider security fingerprints', () => {
       endpointObservation: 'endpoint-observation:v1:_yXkhiVFToIoMRDJ6g5nl8r9DIBMns6oFbl-Zyi42PE',
       catalog: 'catalog:v1:KzohbZVoZlCNPUK8tpmzxUTMCMebiZEZXiUn-838eK4',
       observation: 'observation-authorization:v1:SuTDmbYo4O0wtiWtbteZ7gaRwUTDQfbATDiF4IuPELc',
+      probeObservation: 'probe-observation:v1:pabrD2k2rZ1bPvKbe8AOzx7I-3J1_0j-ZESeGz22Af0',
       accountGrant: 'account-grant:v1:cI0puTgBEpYij46m9a81N7DXpwvuhKCUCmExkXrSGB8',
       machineGrant: 'machine-grant:v1:47tXQdT5LRTGbhQYMkJvPnCPM_fzgWtpdOpqI5x8SMk',
       savedSecret: 'saved-secret-record:v1:6u_bGJVm5x0_aLGfHoxELsYXFtrzLXglHBO9iLZqSeM',

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   SessionWorkStateGoalCapabilitiesV1Schema,
+  SessionWorkStateStatusReasonV1Schema,
   readDisplayableSessionWorkStateV1,
   readSessionWorkStateV1FromMetadata,
   writeSessionWorkStateV1ToMetadata,
@@ -33,6 +34,12 @@ const snapshot = {
 } as const;
 
 describe('SessionWorkStateV1', () => {
+  it('accepts every frozen provider-neutral blocked status reason', () => {
+    expect(['blocked', 'usageLimited', 'budgetLimited', 'interrupted'].map((reason) => (
+      SessionWorkStateStatusReasonV1Schema.parse(reason)
+    ))).toEqual(['blocked', 'usageLimited', 'budgetLimited', 'interrupted']);
+  });
+
   it('reads displayable work state and preserves unknown envelope fields', () => {
     expect(readDisplayableSessionWorkStateV1(snapshot)).toEqual(snapshot);
   });

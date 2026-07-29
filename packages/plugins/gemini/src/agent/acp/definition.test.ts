@@ -1,66 +1,30 @@
 import { describe, expect, it } from 'vitest';
 
-import { AGENT_DEFINITION } from '../definition.js';
-import { GEMINI_ACP_BACKEND_SPEC } from './definition.js';
+import { GEMINI_ACP_RUNTIME_DEFINITION } from './definition.js';
 
-describe('GEMINI_ACP_BACKEND_SPEC', () => {
-  it('declares Gemini native ACP launch and transport policy in the plugin leaf', () => {
-    expect(GEMINI_ACP_BACKEND_SPEC).toMatchObject({
-      backendId: 'gemini',
-      transport: {
-        kind: 'stdio',
-        launch: {
-          kind: 'agent-cli',
-          agentId: 'gemini',
-          args: ['--acp'],
-        },
-      },
-      transportLifecycle: {
-        initDelayMs: 3_000,
+describe('GEMINI_ACP_RUNTIME_DEFINITION', () => {
+  it('declares the provider-owned native ACP policy', () => {
+    expect(GEMINI_ACP_RUNTIME_DEFINITION).toMatchObject({
+      modelConfigOptionId: 'model',
+      timeouts: {
+        initMs: 120_000,
+        idleMs: 500,
+        toolCallMs: 120_000,
       },
       mcp: {
         policy: 'pass_through',
       },
-      sessionIdHeaderName: 'geminiSessionId',
     });
-  });
-
-  it('keeps Gemini permission mode argv mapping provider-owned', () => {
-    expect(GEMINI_ACP_BACKEND_SPEC.permissionModeArgv).toEqual({
-      flag: '--approval-mode',
-      map: expect.objectContaining({
-        default: null,
-        plan: 'plan',
-        acceptEdits: 'auto_edit',
-        yolo: 'yolo',
-        bypassPermissions: 'yolo',
-      }),
-    });
-  });
-
-  it('uses the canonical Gemini model default for ACP launch metadata', () => {
-    expect(GEMINI_ACP_BACKEND_SPEC.ux.defaultModel).toBe(AGENT_DEFINITION.modelConfig.defaultMode);
-    expect(AGENT_DEFINITION.modelConfig.allowedModes).toContain(GEMINI_ACP_BACKEND_SPEC.ux.defaultModel);
-  });
-
-  it('does not advertise deferred machine-login or OAuth auth as packet closure', () => {
-    expect(GEMINI_ACP_BACKEND_SPEC.auth).toMatchObject({
-      methodId: 'gemini-api-key',
-    });
-    expect(GEMINI_ACP_BACKEND_SPEC.auth?.config).toBeUndefined();
   });
 
   it('keeps Gemini stderr and tool-name dialects provider-owned', () => {
-    const expectedModelDetail = AGENT_DEFINITION.modelConfig.allowedModes.join(', ');
-
-    expect(GEMINI_ACP_BACKEND_SPEC.stderrRules?.statusErrors).toEqual([
+    expect(GEMINI_ACP_RUNTIME_DEFINITION.stderrRules?.statusErrors).toEqual([
       expect.objectContaining({
         includes: ['status 404', 'code":404'],
         detail: expect.stringContaining('Suggested models:'),
       }),
     ]);
-    expect(GEMINI_ACP_BACKEND_SPEC.stderrRules?.statusErrors?.[0]?.detail).toContain(expectedModelDetail);
-    expect(GEMINI_ACP_BACKEND_SPEC.toolNameInference).toMatchObject({
+    expect(GEMINI_ACP_RUNTIME_DEFINITION.toolNameInference).toMatchObject({
       preferLongestPattern: true,
       unknownToolNames: ['other', 'unknown', 'unknown tool', 'Unknown tool'],
       patterns: expect.arrayContaining([

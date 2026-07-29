@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveProviderBindingCompatibilityWithFingerprintV1 } from './resolve.js';
+import {
+  projectProviderBindingCompatibilityForConnectionV1,
+  resolveProviderBindingCompatibilityWithFingerprintV1,
+} from './resolve.js';
 
 const baseEndpoint = {
   id: 'responses',
@@ -116,6 +119,9 @@ describe('resolveProviderBindingCompatibilityWithFingerprintV1', () => {
       endpoints: [baseEndpoint], credential: undefined, agent: baseRequirements,
     });
     expect(result).toEqual({ status: 'incompatible', reasons: ['model_required_for_capability_resolution'] });
+    expect(projectProviderBindingCompatibilityForConnectionV1(result)).toEqual({
+      status: 'experimental', reasons: ['model_capability_evidence_required'],
+    });
   });
 
   it('reports no protocol intersection before requiring model-sensitive evidence', () => {

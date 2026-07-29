@@ -18,6 +18,7 @@ describe('plugin UI artifact SDK helpers', () => {
                 hostUiApiVersion: '1.0.0',
                 reactVersion: '19.0.0',
                 reactNativeVersion: '0.79.0',
+                nativeCapabilities: [],
             },
             byteSize: 1024,
             contentType: 'application/javascript',

@@ -3,6 +3,22 @@ import { describe, expect, it } from 'vitest';
 import { BUNDLED_VOICE_UI_ENTRIES } from './index.js';
 
 describe('Google bundled voice UI contribution', () => {
+  it('advertises only its executable speech roles and no conversation runtime', () => {
+    const stt = BUNDLED_VOICE_UI_ENTRIES.find((entry) => entry.providerId === 'google_gemini');
+    const tts = BUNDLED_VOICE_UI_ENTRIES.find((entry) => entry.providerId === 'google_cloud');
+
+    expect(stt).toMatchObject({
+      role: 'stt',
+      roles: ['dictation_stt', 'conversation_stt'],
+      requirements: ['execution_machine', 'credential', 'runtime'],
+    });
+    expect(tts).toMatchObject({
+      role: 'tts',
+      roles: ['conversation_tts'],
+      requirements: ['execution_machine', 'credential', 'runtime'],
+    });
+  });
+
   it('owns executable settings factories behind the internal first-party boundary', () => {
     const stt = BUNDLED_VOICE_UI_ENTRIES.find((entry) => entry.providerId === 'google_gemini');
     const tts = BUNDLED_VOICE_UI_ENTRIES.find((entry) => entry.providerId === 'google_cloud');

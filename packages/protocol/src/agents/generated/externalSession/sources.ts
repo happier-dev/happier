@@ -8,6 +8,12 @@
 export const GENERATED_EXTERNAL_SESSIONS_SOURCE_DECLARATIONS = [
   {
     "agentId": "claude",
+    "instances": [
+      {
+        "constants": {},
+        "kind": "default"
+      }
+    ],
     "key": {
       "segments": [
         {
@@ -52,6 +58,25 @@ export const GENERATED_EXTERNAL_SESSIONS_SOURCE_DECLARATIONS = [
   },
   {
     "agentId": "codex",
+    "instances": [
+      {
+        "constants": {
+          "home": "user"
+        },
+        "kind": "default"
+      },
+      {
+        "constants": {
+          "home": "connectedService"
+        },
+        "fields": {
+          "profileId": "connectedServiceProfileId",
+          "serviceId": "connectedServiceId"
+        },
+        "kind": "connectedServiceProfiles",
+        "serviceId": "openai-codex"
+      }
+    ],
     "key": {
       "segments": [
         {
@@ -153,6 +178,12 @@ export const GENERATED_EXTERNAL_SESSIONS_SOURCE_DECLARATIONS = [
   },
   {
     "agentId": "opencode",
+    "instances": [
+      {
+        "constants": {},
+        "kind": "default"
+      }
+    ],
     "key": {
       "segments": [
         {
@@ -192,7 +223,52 @@ export const GENERATED_EXTERNAL_SESSIONS_SOURCE_DECLARATIONS = [
     "sourceKind": "opencodeServer"
   },
   {
+    "agentId": "antigravity",
+    "instances": [
+      {
+        "constants": {},
+        "kind": "default"
+      }
+    ],
+    "key": {
+      "segments": [
+        {
+          "kind": "literal",
+          "value": "antigravityCliPrint"
+        },
+        {
+          "field": "brainDir",
+          "kind": "field"
+        }
+      ]
+    },
+    "schema": {
+      "fields": [
+        {
+          "kind": "literal",
+          "name": "kind",
+          "value": "antigravityCliPrint"
+        },
+        {
+          "kind": "string",
+          "max": 10000,
+          "min": 1,
+          "name": "brainDir",
+          "nullish": true
+        }
+      ],
+      "passthrough": true
+    },
+    "sourceKind": "antigravityCliPrint"
+  },
+  {
     "agentId": "ohMyPi",
+    "instances": [
+      {
+        "constants": {},
+        "kind": "default"
+      }
+    ],
     "key": {
       "segments": [
         {
@@ -223,5 +299,44 @@ export const GENERATED_EXTERNAL_SESSIONS_SOURCE_DECLARATIONS = [
       "passthrough": true
     },
     "sourceKind": "ohMyPiAgentDir"
+  },
+  {
+    "agentId": "pi",
+    "instances": [
+      {
+        "constants": {},
+        "kind": "default"
+      }
+    ],
+    "key": {
+      "segments": [
+        {
+          "kind": "literal",
+          "value": "piAgentDir"
+        },
+        {
+          "field": "agentDir",
+          "kind": "field"
+        }
+      ]
+    },
+    "schema": {
+      "fields": [
+        {
+          "kind": "literal",
+          "name": "kind",
+          "value": "piAgentDir"
+        },
+        {
+          "kind": "string",
+          "max": 10000,
+          "min": 1,
+          "name": "agentDir",
+          "nullish": true
+        }
+      ],
+      "passthrough": true
+    },
+    "sourceKind": "piAgentDir"
   },
 ] as const;

@@ -1,4 +1,12 @@
-import type { RuntimeEventV1 } from '@happier-dev/plugin-sdk/experimental/runtime/session';
+import type {
+  AgentSessionCompactRequest,
+  AgentSessionRuntimeEvent,
+} from '@happier-dev/plugin-sdk/agent-runtime';
+import { AgentRuntimeJsonValueSchema } from '@happier-dev/plugin-sdk/agent-runtime';
+import { redactBugReportSensitiveText } from '@happier-dev/plugin-sdk/experimental/diagnostics';
+
+type WithoutSequence<T> = T extends { sequence: number } ? Omit<T, 'sequence'> : never;
+export type PiRuntimeEvent = WithoutSequence<AgentSessionRuntimeEvent>;
 
 type PiRuntimeEventProjectionContext = Readonly<{
   sessionId: string | null;
@@ -7,28 +15,25 @@ type PiRuntimeEventProjectionContext = Readonly<{
   nowMs: () => number;
 }>;
 
-type ContextCompactionEventV1 = Extract<RuntimeEventV1, { kind: 'context-compaction' }>;
-type ContextCompactionTriggerV1 = NonNullable<ContextCompactionEventV1['trigger']>;
-export type PiContextCompactionAcpPayload = Readonly<{
-  type: 'context-compaction';
-  phase: ContextCompactionEventV1['phase'];
-  lifecycleId: string;
-  source: ContextCompactionEventV1['source'];
-  trigger: ContextCompactionTriggerV1;
-  backendId: string;
-  agentId: string;
-  agentEventId?: string;
-  agentSessionId?: string;
-  turnId?: string;
-  tokenCountBefore?: number;
-  tokenCountAfter?: number;
-  retryAttempt?: number;
-  errorCode?: string;
-  sanitizedErrorPreview?: string;
+type ContextCompactionEvent = Extract<PiRuntimeEvent, { kind: 'context-compaction' }>;
+type ContextCompactionTrigger = ContextCompactionEvent['trigger'];
+type PiContextCompactionPayloadBase = Readonly<{
+  compactionId: string;
+  trigger: ContextCompactionTrigger;
 }>;
+export type PiContextCompactionPayload = PiContextCompactionPayloadBase & (
+  | Readonly<{ phase: 'started'; tokenCountBefore?: number }>
+  | Readonly<{ phase: 'completed'; tokenCountBefore?: number; tokenCountAfter?: number }>
+  | Readonly<{ phase: 'cancelled' }>
+  | Readonly<{
+    phase: 'failed';
+    diagnostic: Extract<ContextCompactionEvent, { phase: 'failed' }>['diagnostic'];
+  }>
+);
 
 type PiContextCompactionPayloadOptions = Readonly<{
-  allowAutoTrigger?: boolean;
+  compactionId?: string;
+  trigger?: ContextCompactionTrigger;
 }>;
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -51,8 +56,22 @@ function readNonNegativeNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 }
 
-function readTruncatedNonNegativeInteger(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : null;
+function toJson(value: unknown) {
+  const parsed = AgentRuntimeJsonValueSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+function readSuccessfulCompactionResult(value: unknown): Readonly<Record<string, unknown>> | null {
+  const result = isRecord(value) ? value : null;
+  if (!result) return null;
+  if (readRawString(result.summary) === null) return null;
+  if (!readString(result.firstKeptEntryId)) return null;
+  if (readNonNegativeNumber(result.tokensBefore) === null) return null;
+  if (
+    Object.prototype.hasOwnProperty.call(result, 'estimatedTokensAfter')
+    && readNonNegativeNumber(result.estimatedTokensAfter) === null
+  ) return null;
+  return result;
 }
 
 function baseEvent(context: PiRuntimeEventProjectionContext) {
@@ -73,20 +92,6 @@ function turnEventBase(context: PiRuntimeEventProjectionContext) {
   };
 }
 
-function extractAssistantText(message: unknown): string | null {
-  const record = isRecord(message) ? message : null;
-  if (!record || record.role !== 'assistant' || !Array.isArray(record.content)) return null;
-  let text = '';
-  for (const item of record.content) {
-    const entry = isRecord(item) ? item : null;
-    if (!entry || entry.type !== 'text') continue;
-    const chunk = readRawString(entry.text);
-    if (chunk === null) continue;
-    text += chunk;
-  }
-  return text.length > 0 ? text : null;
-}
-
 function extractToolText(value: unknown): string | null {
   const record = isRecord(value) ? value : null;
   if (!record || !Array.isArray(record.content)) return null;
@@ -104,34 +109,26 @@ function extractToolText(value: unknown): string | null {
 function projectMessageEvent(
   record: Readonly<Record<string, unknown>>,
   context: PiRuntimeEventProjectionContext,
-): RuntimeEventV1[] {
+): PiRuntimeEvent[] {
   const base = turnEventBase(context);
   if (!base) return [];
-  const type = readString(record.type);
-  if (type === 'message_update') {
-    const assistantMessageEvent = isRecord(record.assistantMessageEvent) ? record.assistantMessageEvent : null;
-    const assistantEventType = readString(assistantMessageEvent?.type);
-    if (
-      assistantEventType !== 'text_start'
-      && assistantEventType !== 'text_delta'
-      && assistantEventType !== 'text_end'
-    ) {
-      return [];
-    }
-  }
-  const text = extractAssistantText(record.message);
-  if (text === null) return [];
+  if (readString(record.type) !== 'message_update') return [];
+  const assistantMessageEvent = isRecord(record.assistantMessageEvent) ? record.assistantMessageEvent : null;
+  if (readString(assistantMessageEvent?.type) !== 'text_delta') return [];
+  const text = readRawString(assistantMessageEvent?.delta);
+  if (text === null || text.length === 0) return [];
   return [{
     ...base,
     kind: 'message-delta',
-    delta: { text },
+    channel: 'assistant',
+    text,
   }];
 }
 
 function projectToolStartEvent(
   record: Readonly<Record<string, unknown>>,
   context: PiRuntimeEventProjectionContext,
-): RuntimeEventV1[] {
+): PiRuntimeEvent[] {
   const base = turnEventBase(context);
   if (!base) return [];
   const toolCallId = readString(record.toolCallId);
@@ -142,14 +139,14 @@ function projectToolStartEvent(
     kind: 'tool-call',
     toolCallId,
     toolName,
-    toolInput: isRecord(record.args) ? record.args : {},
+    input: toJson(isRecord(record.args) ? record.args : {}),
   }];
 }
 
 function projectToolEndEvent(
   record: Readonly<Record<string, unknown>>,
   context: PiRuntimeEventProjectionContext,
-): RuntimeEventV1[] {
+): PiRuntimeEvent[] {
   const base = turnEventBase(context);
   if (!base) return [];
   const toolCallId = readString(record.toolCallId);
@@ -160,7 +157,7 @@ function projectToolEndEvent(
     ...base,
     kind: 'tool-result',
     toolCallId,
-    output: record.result,
+    output: toJson(record.result),
     ...(isError === null ? {} : { isError }),
   }];
 }
@@ -168,7 +165,7 @@ function projectToolEndEvent(
 function projectToolUpdateEvent(
   record: Readonly<Record<string, unknown>>,
   context: PiRuntimeEventProjectionContext,
-): RuntimeEventV1[] {
+): PiRuntimeEvent[] {
   const base = turnEventBase(context);
   if (!base) return [];
   const toolCallId = readString(record.toolCallId);
@@ -183,98 +180,84 @@ function projectToolUpdateEvent(
   }];
 }
 
-function readCompactionTrigger(
-  value: unknown,
-  options: PiContextCompactionPayloadOptions = {},
-): ContextCompactionTriggerV1 {
+function readCompactionTrigger(value: unknown): ContextCompactionTrigger {
   const trigger = readString(value);
-  if (
-    trigger === 'manual'
-    || trigger === 'threshold'
-    || trigger === 'overflow'
-    || trigger === 'unknown'
-  ) {
+  if (trigger === 'manual' || trigger === 'threshold' || trigger === 'overflow') {
     return trigger;
   }
-  if (trigger === 'auto' && options.allowAutoTrigger === true) return trigger;
   return 'unknown';
 }
 
 function readCompactionPhase(record: Readonly<Record<string, unknown>>): 'started' | 'completed' | 'failed' | 'cancelled' {
   if (record.type === 'compaction_start') return 'started';
-  const result = isRecord(record.result) ? record.result : {};
-  const terminalPhase = readString(record.phase ?? result.phase ?? record.status ?? result.status);
-  if (terminalPhase === 'cancelled' || terminalPhase === 'canceled') return 'cancelled';
-  if (terminalPhase === 'failed') return 'failed';
-  if (
-    record.cancelled === true
-    || record.canceled === true
-    || result.cancelled === true
-    || result.canceled === true
-  ) return 'cancelled';
-  if (
-    record.aborted === true
-    || readString(record.errorCode ?? result.errorCode)
-    || readString(record.errorMessage)
-    || readString(record.sanitizedErrorPreview ?? result.sanitizedErrorPreview)
-  ) return 'failed';
-  return 'completed';
+  if (record.aborted === true) return 'cancelled';
+  return readSuccessfulCompactionResult(record.result) ? 'completed' : 'failed';
 }
 
-function readCompactionLifecycleId(record: Readonly<Record<string, unknown>>): string {
-  const result = isRecord(record.result) ? record.result : {};
-  return readString(record.lifecycleId)
-    ?? readString(record.compactionId)
-    ?? readString(record.compaction_id)
-    ?? readString(result.lifecycleId)
-    ?? readString(result.compactionId)
-    ?? readString(result.compaction_id)
-    ?? readString(record.id)
-    ?? readString(record.turnId)
-    ?? readString(record.turn_id)
-    ?? 'pi:context-compaction';
+function readPiCompactionErrorPreview(value: unknown): string {
+  const raw = readRawString(value)?.trim();
+  if (!raw) return 'Pi compaction ended without a successful result.';
+  const jsonStart = raw.indexOf('{');
+  if (jsonStart >= 0) {
+    try {
+      const parsed = JSON.parse(raw.slice(jsonStart));
+      const parsedRecord = isRecord(parsed) ? parsed : null;
+      const nestedError = isRecord(parsedRecord?.error) ? parsedRecord.error : null;
+      const message = readString(nestedError?.message) ?? readString(parsedRecord?.message);
+      if (message) return redactBugReportSensitiveText(message).slice(0, 2_000);
+    } catch {
+      // Fall through to a stable non-provider-text diagnostic.
+    }
+  }
+  return 'Pi compaction failed; provider details were redacted.';
 }
 
 export function buildPiContextCompactionPayload(
   record: unknown,
   options: PiContextCompactionPayloadOptions = {},
-): PiContextCompactionAcpPayload | null {
+): PiContextCompactionPayload | null {
   if (!isRecord(record)) return null;
   const type = readString(record.type);
   if (type !== 'compaction_start' && type !== 'compaction_end') return null;
-  const result = isRecord(record.result) ? record.result : {};
-  const agentEventId = readString(record.id);
-  const tokenCountBefore = readNonNegativeNumber(result.tokensBefore ?? result.tokenCountBefore ?? record.tokensBefore);
-  const tokenCountAfter = readNonNegativeNumber(result.tokensAfter ?? result.tokenCountAfter ?? record.tokensAfter);
-  const retryAttempt = readTruncatedNonNegativeInteger(
-    result.retryAttempt
-      ?? result.retry_attempt
-      ?? record.retryAttempt
-      ?? record.retry_attempt,
-  );
-  const errorCode = readString(record.errorCode ?? result.errorCode);
-  const sanitizedErrorPreview = readString(record.sanitizedErrorPreview ?? result.sanitizedErrorPreview);
+  const result = readSuccessfulCompactionResult(record.result) ?? {};
+  const phase = readCompactionPhase(record);
+  const tokenCountBefore = readNonNegativeNumber(result.tokensBefore);
+  const tokenCountAfter = readNonNegativeNumber(result.estimatedTokensAfter);
+  const common = {
+    compactionId: options.compactionId ?? 'pi:context-compaction',
+    trigger: options.trigger ?? readCompactionTrigger(record.reason),
+  };
+  if (phase === 'failed') {
+    return {
+      ...common,
+      phase,
+      diagnostic: {
+        code: 'pi_compaction_failed',
+        severity: 'error',
+        message: readPiCompactionErrorPreview(record.errorMessage),
+      },
+    };
+  }
+  if (phase === 'cancelled') return { ...common, phase };
+  if (phase === 'started') {
+    return {
+      ...common,
+      phase,
+      ...(tokenCountBefore === null ? {} : { tokenCountBefore }),
+    };
+  }
   return {
-    type: 'context-compaction',
-    phase: readCompactionPhase(record),
-    lifecycleId: readCompactionLifecycleId(record),
-    source: 'agent-event',
-    trigger: readCompactionTrigger(record.reason, options),
-    backendId: 'pi',
-    agentId: 'pi',
-    ...(agentEventId ? { agentEventId } : {}),
+    ...common,
+    phase,
     ...(tokenCountBefore === null ? {} : { tokenCountBefore }),
     ...(tokenCountAfter === null ? {} : { tokenCountAfter }),
-    ...(retryAttempt === null ? {} : { retryAttempt }),
-    ...(errorCode ? { errorCode } : {}),
-    ...(sanitizedErrorPreview ? { sanitizedErrorPreview } : {}),
   };
 }
 
 export function buildPiCompletedContextCompactionPayload(
   record: unknown,
   options: PiContextCompactionPayloadOptions = {},
-): PiContextCompactionAcpPayload | null {
+): PiContextCompactionPayload | null {
   if (!isRecord(record) || readString(record.type) !== 'compaction_end') return null;
   return buildPiContextCompactionPayload(record, options);
 }
@@ -282,29 +265,97 @@ export function buildPiCompletedContextCompactionPayload(
 function projectCompactionEvent(
   record: Readonly<Record<string, unknown>>,
   context: PiRuntimeEventProjectionContext,
-): RuntimeEventV1[] {
+  options: PiContextCompactionPayloadOptions = {},
+): PiRuntimeEvent[] {
   const base = baseEvent(context);
   if (!base) return [];
-  const payload = buildPiContextCompactionPayload(record, { allowAutoTrigger: true });
+  const payload = buildPiContextCompactionPayload(record, options);
   if (!payload) return [];
-  return [{
+  const common = {
     ...base,
     kind: 'context-compaction',
-    phase: payload.phase,
-    lifecycleId: payload.lifecycleId,
-    source: payload.source,
+    compactionId: payload.compactionId,
     trigger: payload.trigger,
-    backendId: payload.backendId,
-    agentId: payload.agentId,
-    ...(payload.agentEventId ? { agentEventId: payload.agentEventId } : {}),
+    ...(context.turnId ? { turnId: context.turnId } : {}),
+  } as const;
+  if (payload.phase === 'failed') return [{ ...common, phase: payload.phase, diagnostic: payload.diagnostic }];
+  if (payload.phase === 'cancelled') return [{ ...common, phase: payload.phase }];
+  if (payload.phase === 'started') {
+    return [{
+      ...common,
+      phase: payload.phase,
+      ...(payload.tokenCountBefore === undefined ? {} : {
+        tokenCountBefore: payload.tokenCountBefore,
+        tokenCountSource: 'providerReported' as const,
+      }),
+    }];
+  }
+  return [{
+    ...common,
+    phase: payload.phase,
     ...(payload.tokenCountBefore === undefined ? {} : { tokenCountBefore: payload.tokenCountBefore }),
     ...(payload.tokenCountAfter === undefined ? {} : { tokenCountAfter: payload.tokenCountAfter }),
-    ...(payload.retryAttempt === undefined ? {} : { retryAttempt: payload.retryAttempt }),
-    ...(payload.errorCode ? { errorCode: payload.errorCode } : {}),
-    ...(payload.sanitizedErrorPreview ? { sanitizedErrorPreview: payload.sanitizedErrorPreview } : {}),
-    ...(context.agentSessionId ? { agentSessionId: context.agentSessionId } : {}),
-    ...(context.turnId ? { turnId: context.turnId } : {}),
+    ...((payload.tokenCountBefore !== undefined || payload.tokenCountAfter !== undefined)
+      ? { tokenCountSource: 'providerReported' as const }
+      : {}),
   }];
+}
+
+type ActivePiCompaction = {
+  compactionId: string;
+  trigger: ContextCompactionTrigger;
+  terminal: boolean;
+};
+
+export function createPiRuntimeEventProjector(): Readonly<{
+  project(record: unknown, context: PiRuntimeEventProjectionContext): PiRuntimeEvent[];
+  expectHostCompaction(request: Pick<AgentSessionCompactRequest, 'compactionId' | 'trigger'>): void;
+  clearExpectedHostCompaction(compactionId: string): void;
+  resetTurn(): void;
+}> {
+  let compactionOrdinal = 0;
+  let activeCompaction: ActivePiCompaction | null = null;
+  let expectedHostCompaction: Pick<AgentSessionCompactRequest, 'compactionId' | 'trigger'> | null = null;
+
+  return {
+    project(record, context) {
+      const raw = isRecord(record) ? record : null;
+      const type = readString(raw?.type);
+      if (!raw || (type !== 'compaction_start' && type !== 'compaction_end')) {
+        return projectPiRuntimeEvents(record, context);
+      }
+
+      const trigger = readCompactionTrigger(raw.reason);
+      if (type === 'compaction_start') {
+        if (activeCompaction && !activeCompaction.terminal) return [];
+        compactionOrdinal += 1;
+        activeCompaction = {
+          compactionId: expectedHostCompaction?.compactionId
+            ?? `pi:${context.agentSessionId ?? 'session'}:${context.turnId ?? 'turn'}:compaction:${compactionOrdinal}`,
+          trigger: expectedHostCompaction?.trigger ?? trigger,
+          terminal: false,
+        };
+        expectedHostCompaction = null;
+        return projectCompactionEvent(raw, context, activeCompaction);
+      }
+
+      if (!activeCompaction || activeCompaction.terminal || activeCompaction.trigger !== trigger) return [];
+      const events = projectCompactionEvent(raw, context, activeCompaction);
+      activeCompaction.terminal = true;
+      return events;
+    },
+    expectHostCompaction(request) {
+      expectedHostCompaction = request;
+    },
+    clearExpectedHostCompaction(compactionId) {
+      if (expectedHostCompaction?.compactionId === compactionId) expectedHostCompaction = null;
+    },
+    resetTurn() {
+      compactionOrdinal = 0;
+      activeCompaction = null;
+      expectedHostCompaction = null;
+    },
+  };
 }
 
 export function readPiProviderTurnId(record: unknown): string | null {
@@ -321,14 +372,13 @@ export function readPiRuntimeRecordType(record: unknown): string | null {
 export function projectPiRuntimeEvents(
   record: unknown,
   context: PiRuntimeEventProjectionContext,
-): RuntimeEventV1[] {
+): PiRuntimeEvent[] {
   const raw = isRecord(record) ? record : null;
   if (!raw) return [];
   const type = readString(raw.type);
-  if (type === 'message_update' || type === 'message_end') return projectMessageEvent(raw, context);
+  if (type === 'message_update') return projectMessageEvent(raw, context);
   if (type === 'tool_execution_start') return projectToolStartEvent(raw, context);
   if (type === 'tool_execution_end') return projectToolEndEvent(raw, context);
   if (type === 'tool_execution_update') return projectToolUpdateEvent(raw, context);
-  if (type === 'compaction_start' || type === 'compaction_end') return projectCompactionEvent(raw, context);
   return [];
 }

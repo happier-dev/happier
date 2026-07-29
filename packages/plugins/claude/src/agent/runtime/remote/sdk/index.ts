@@ -6,6 +6,3 @@ export {
     type ClaudePermissionModeInput,
     type ClaudeProviderPermissionMode as ClaudeSdkPermissionMode,
 } from '../../permissionMode.js';
-export {
-    bindClaudeAgentSdkFallbackSession,
-} from './session.js';

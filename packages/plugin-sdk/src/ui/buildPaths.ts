@@ -1,3 +1,5 @@
+import { readPortablePathSegmentViolation } from '@happier-dev/protocol/filesystem/portablePathSegment';
+
 const SAFE_OUTPUT_SEGMENT_PATTERN = /^[A-Za-z0-9._-]+$/u;
 
 export function readRequiredString(value: string, field: string): string {
@@ -14,6 +16,7 @@ export function readOutputPathSegment(value: string, field: string): string {
         trimmed === '.'
         || trimmed === '..'
         || !SAFE_OUTPUT_SEGMENT_PATTERN.test(trimmed)
+        || readPortablePathSegmentViolation(trimmed) !== null
     ) {
         throw new Error(`${field} must be a safe output path segment`);
     }

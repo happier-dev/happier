@@ -1,5 +1,7 @@
 import { raceWithTimeout } from '@happier-dev/plugin-sdk/experimental/timeout';
 
+import type { OpenCodeNativeFetch } from './transport.js';
+
 export type SseJsonSubscription<T> = Readonly<{
   close: () => void;
   done: Promise<void>;
@@ -13,6 +15,16 @@ export class OpenCodeSseReadIdleTimeoutError extends Error {
     super(`OpenCode SSE read idle timeout after ${timeoutMs}ms`);
     this.name = 'OpenCodeSseReadIdleTimeoutError';
     this.timeoutMs = timeoutMs;
+  }
+}
+
+export class OpenCodeSseHttpError extends Error {
+  readonly status: number;
+
+  constructor(status: number, statusText: string) {
+    super(`OpenCode SSE failed: ${status} ${statusText}`);
+    this.name = 'OpenCodeSseHttpError';
+    this.status = status;
   }
 }
 
@@ -56,6 +68,7 @@ function normalizeReadIdleTimeoutMs(value: number | null | undefined): number | 
 export async function subscribeSseJson<T>(params: Readonly<{
   url: string;
   headers?: Record<string, string>;
+  fetch?: OpenCodeNativeFetch;
   signal: AbortSignal;
   readIdleTimeoutMs?: number | null;
   onMessage: (msg: T, meta: { id?: string }) => void;
@@ -69,13 +82,13 @@ export async function subscribeSseJson<T>(params: Readonly<{
 
   const done = (async () => {
     try {
-      const response = await fetch(params.url, {
+      const response = await (params.fetch ?? globalThis.fetch)(params.url, {
         method: 'GET',
         headers: params.headers,
         signal: controller.signal,
       });
       if (!response.ok) {
-        throw new Error(`OpenCode SSE failed: ${response.status} ${response.statusText}`);
+        throw new OpenCodeSseHttpError(response.status, response.statusText);
       }
       if (!response.body) {
         throw new Error('OpenCode SSE response missing body');

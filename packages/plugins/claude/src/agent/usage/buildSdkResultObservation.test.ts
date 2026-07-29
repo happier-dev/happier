@@ -44,14 +44,16 @@ describe('buildClaudeSdkResultUsageObservation', () => {
                 total: 40,
                 input: 11,
                 output: 22,
-                cache_read: 3,
-                cache_creation: 4,
+                reasoning: 0,
+                cacheRead: 3,
+                cacheWrite: 4,
             },
             cost: {
                 reportedUsd: 0.123,
-                total: 0.123,
+                estimatedUsd: 0,
                 billingContext: 'unknown',
                 costSource: 'provider_reported',
+                currency: 'USD',
             },
             contextUsedTokens: null,
             contextWindowTokens: 1_000_000,
@@ -116,8 +118,8 @@ describe('buildClaudeSdkResultUsageObservation', () => {
         expect(observation?.contextWindowTokens).toBe(1_000_000);
         expect(observation?.tokens?.total).toBe(44_025_000);
         expect(observation?.cost).toMatchObject({
-            total: 100,
             reportedUsd: 100,
+            estimatedUsd: 0,
             costSource: 'provider_reported',
         });
         expect(observation?.contextSnapshot).toEqual({
@@ -190,12 +192,58 @@ describe('buildClaudeSdkResultUsageObservation', () => {
         });
 
         expect(observation?.cost).toMatchObject({
-            total: expect.any(Number),
             estimatedUsd: expect.any(Number),
+            reportedUsd: 0,
             costSource: 'pricing_estimate',
         });
-        expect(observation?.cost?.total).toBeGreaterThan(0);
-        expect(observation?.cost).not.toHaveProperty('reportedUsd');
+        expect(observation?.cost?.estimatedUsd).toBeGreaterThan(0);
+        expect(observation?.cost?.reportedUsd).toBe(0);
+    });
+
+    it('keeps Provider-bound cost unavailable when the upstream omits it', () => {
+        const observation = buildClaudeSdkResultUsageObservation({
+            modelId: 'deepseek-ai/DeepSeek-V3.1',
+            modelSource: 'provider',
+            result: {
+                type: 'result',
+                subtype: 'success',
+                usage: {
+                    input_tokens: 1_000_000,
+                    output_tokens: 100_000,
+                },
+                modelUsage: {},
+            },
+        });
+
+        expect(observation).toMatchObject({
+            modelId: 'deepseek-ai/DeepSeek-V3.1',
+            cost: null,
+        });
+    });
+
+    it('preserves trustworthy upstream cost for a Provider-bound model', () => {
+        const observation = buildClaudeSdkResultUsageObservation({
+            modelId: 'deepseek-ai/DeepSeek-V3.1',
+            modelSource: 'provider',
+            result: {
+                type: 'result',
+                subtype: 'success',
+                usage: {
+                    input_tokens: 10,
+                    output_tokens: 5,
+                },
+                modelUsage: {},
+                total_cost_usd: 0.25,
+            },
+        });
+
+        expect(observation?.cost).toEqual({
+            reportedUsd: 0.25,
+            estimatedUsd: 0,
+            billingContext: 'unknown',
+            costSource: 'provider_reported',
+            currency: 'USD',
+        });
     });
 
     it('drops a result with no tokens, cost, or context usage', () => {

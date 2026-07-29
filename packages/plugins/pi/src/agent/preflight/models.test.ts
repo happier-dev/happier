@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type {
-  ExecLaunchInputV1,
-  ExecRunOptionsV1,
-  ExecRuntimeServiceV1,
-} from '@happier-dev/plugin-sdk';
+  PluginExecService,
+  PluginExecSpawnRequest,
+} from '@happier-dev/plugin-sdk/runtime';
 
 import {
   buildPiPreflightModelsFromListModelsOutput,
@@ -16,31 +15,49 @@ function createExecRunFixture(params: Readonly<{
   stderr?: string;
 }> = {}) {
   const runs: Array<Readonly<{
-    input: ExecLaunchInputV1;
-    options: ExecRunOptionsV1 | undefined;
+    input: PluginExecSpawnRequest & { timeoutMs?: number };
+    options: { signal?: AbortSignal } | undefined;
   }>> = [];
-  const exec: ExecRuntimeServiceV1 = {
+  const resolvedExecutable = Object.freeze({
+    kind: 'systemTool' as const,
+    id: 'pi-cli',
+  });
+  const exec = {
     systemTools: {
-      resolve: async () => {
-        throw new Error('system tools should not be used for Pi model preflight');
-      },
+      resolve: async () => ({
+        executable: resolvedExecutable,
+        executablePath: '/managed/pi',
+      }),
     },
     run: async (input, options) => {
       runs.push({ input, options });
       return {
-        exitCode: params.exitCode ?? 0,
-        signal: null,
-        stdout: params.stdout ?? '',
-        stderr: params.stderr ?? '',
+        termination: {
+          observed: params.exitCode === null
+            ? { kind: 'signal' as const, signal: 'SIGTERM' }
+            : { kind: 'exit' as const, exitCode: params.exitCode ?? 0 },
+          requestedBy: { kind: 'none' as const },
+        },
+        stdout: new TextEncoder().encode(params.stdout ?? ''),
+        stderr: new TextEncoder().encode(params.stderr ?? ''),
+        stdoutTruncated: false,
+        stderrTruncated: false,
       };
     },
     spawn: async () => {
       throw new Error('spawn should not be used for Pi model preflight');
     },
-    spawnClient: (async () => {
-      throw new Error('spawnClient should not be used for Pi model preflight');
-    }) as ExecRuntimeServiceV1['spawnClient'],
-  };
+    clients: {
+      spawn: async () => {
+        throw new Error('protocol clients should not be used for Pi model preflight');
+      },
+    },
+    agentCli: {
+      checkReadiness: async () => {
+        throw new Error('agent CLI readiness should not be used for Pi model preflight');
+      },
+    },
+  } satisfies PluginExecService;
   return { exec, runs };
 }
 
@@ -100,6 +117,13 @@ describe('Pi preflight model parsing', () => {
         CI: '0',
         OPENAI_API_KEY: 'sk-test',
         ANTHROPIC_API_KEY: undefined,
+        GEMINI_API_KEY: undefined,
+        PI_CODING_AGENT_DIR: '/isolated/pi-agent-dir',
+        HOME: '/isolated/home',
+        XDG_CONFIG_HOME: '/isolated/xdg',
+        USERPROFILE: 'C:\\isolated\\home',
+        HAPPIER_PI_THINKING_LEVEL: 'high',
+        UNRELATED_SECRET: 'must-not-reach-pi',
       },
     })).resolves.toEqual([{
       id: 'openai-codex/gpt-5.4',
@@ -122,20 +146,23 @@ describe('Pi preflight model parsing', () => {
     }]);
     expect(fixture.runs).toEqual([{
       input: {
-        kind: 'agent-cli',
-        agentId: 'pi',
+        executable: { kind: 'systemTool', id: 'pi-cli' },
         args: ['--list-models'],
-        cwd: '/workspace',
+        cwd: { root: 'workspace', relativePath: '' },
         env: {
           CI: '1',
           OPENAI_API_KEY: 'sk-test',
+          PI_CODING_AGENT_DIR: '/isolated/pi-agent-dir',
+          HOME: '/isolated/home',
+          XDG_CONFIG_HOME: '/isolated/xdg',
+          USERPROFILE: 'C:\\isolated\\home',
+          HAPPIER_PI_THINKING_LEVEL: 'high',
         },
-      },
-      options: {
         maxStderrBytes: 262_144,
         maxStdoutBytes: 262_144,
         timeoutMs: 2_500,
       },
+      options: undefined,
     }]);
   });
 

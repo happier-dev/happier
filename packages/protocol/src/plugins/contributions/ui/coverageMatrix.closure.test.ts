@@ -181,8 +181,6 @@ type CoverageItem = Readonly<{
 const IN_SCOPE_FAMILY_OWNERS: Readonly<
   Record<string, Readonly<{ status: CoverageStatus; owner: string }>>
 > = Object.freeze({
-  uiDescriptors: { status: 'plugin-host-owned', owner: 'projection: uiDescriptors family' },
-  uiTranslations: { status: 'plugin-host-owned', owner: 'projection: translations family' },
   structuredMessages: {
     status: 'plugin-host-owned',
     owner: 'projection: structuredMessage family + UI structured-message renderer allowlist',
@@ -190,26 +188,6 @@ const IN_SCOPE_FAMILY_OWNERS: Readonly<
   sessionHeaderActions: {
     status: 'plugin-host-owned',
     owner: 'projection: sessionHeaderAction family + UI pluginHeaderActions menu items',
-  },
-  surfacePlacements: {
-    status: 'plugin-host-owned',
-    owner: 'projection: surfacePlacement family + PluginSurfaceHost mount dispatch',
-  },
-  hostedWeb: {
-    status: 'plugin-host-owned',
-    owner: 'projection: hostedWeb family + PluginHostedWebPane host',
-  },
-  embeddedWebBundles: {
-    status: 'plugin-host-owned',
-    owner: 'projection: embeddedWebBundle family + PluginEmbeddedWebSurface host',
-  },
-  reactNativeBundles: {
-    status: 'plugin-host-owned',
-    owner: 'projection: reactNativeBundle family + PluginReactNativeSurfaceHost host',
-  },
-  uiArtifacts: {
-    status: 'plugin-host-owned',
-    owner: 'projection: uiArtifact/digest family (RN/embedded/hosted artifact integrity)',
   },
   browserTargets: {
     status: 'plugin-host-owned',

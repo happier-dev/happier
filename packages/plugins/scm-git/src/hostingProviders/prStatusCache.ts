@@ -3,7 +3,7 @@ import type {
   ScmOperationErrorCode,
   ScmPullRequestState,
   ScmPullRequestSummary,
-} from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm';
 
 export type PrStatusCacheConfig = Readonly<{
     successTtlMs: number;

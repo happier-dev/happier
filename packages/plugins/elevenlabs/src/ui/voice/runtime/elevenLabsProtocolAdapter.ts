@@ -2,8 +2,9 @@ import {
   VoiceRealtimeJsonValueSchema,
   type VoiceRealtimeJsonValue,
 } from '@happier-dev/protocol';
+import type { PluginVoiceProviderProtocol } from '@happier-dev/plugin-sdk/runtime';
+import type { PluginVoiceHostedConversationService } from '@happier-dev/plugin-sdk/runtime';
 
-import type { ProtocolAdapter } from './types.js';
 import type { ElevenLabsEventMapper } from './elevenLabsEventMapper.js';
 import type { ElevenLabsSessionLifecycle } from './elevenLabsSessionLifecycle.js';
 import type { ElevenLabsSessionPreparationService } from './elevenLabsSessionPreparation.js';
@@ -25,37 +26,43 @@ export function createElevenLabsProtocolAdapter(input: Readonly<{
   lifecycle: ElevenLabsSessionLifecycle;
   eventMapper: ElevenLabsEventMapper;
   onDiagnosticError: (reason: string) => void;
-  getSettings: () => unknown;
+  rememberHostedConversation: (
+    leaseId: string,
+    service: Pick<PluginVoiceHostedConversationService, 'complete' | 'abort'>,
+  ) => void;
 }>): Readonly<{
-  adapter: ProtocolAdapter;
+  adapter: PluginVoiceProviderProtocol;
   handleSessionIdentity: (input: Readonly<{
     controlSessionId: string;
     conversationId: string;
   }>) => void;
   endSession: () => Promise<void>;
 }> {
-  const preparedByControlSessionId = new Map<string, ElevenLabsPreparedSession>();
+  const preparedByAttemptId = new Map<number, Readonly<{
+    controlSessionId: string;
+    session: ElevenLabsPreparedSession;
+  }>>();
+  const currentAttemptIdByControlSessionId = new Map<string, number>();
 
-  const adapter: ProtocolAdapter = {
-    id: 'realtime_elevenlabs',
-    turnControls: {
-      cancelResponse: 'unsupported',
-      truncatePlayback: 'unsupported',
-      clearInput: false,
-      stopSession: true,
-      resumption: 'none',
-      replay: 'none',
-      exactMessage: true,
-    },
-    async prepare({ controlSessionId, request, signal }) {
+  const adapter: PluginVoiceProviderProtocol = {
+    async prepare({
+      controlSessionId,
+      attemptId,
+      request,
+      providerConfig,
+      accountOperations,
+      hostedConversation,
+      signal,
+    }) {
       const requestRecord = readObject(request);
-      const settings = input.getSettings();
       const preparation = await input.preparation.prepare({
         controlSessionId,
         initialContext: readOptionalString(requestRecord.initialContext),
         requestedTargetSessionId: readOptionalString(requestRecord.requestedTargetSessionId) ?? null,
         retryAfterPaywall: requestRecord.retryAfterPaywall === true,
-        settings,
+        settings: providerConfig,
+        accountOperations,
+        hostedConversation,
         signal,
         textOnly: requestRecord.textOnly === true,
       });
@@ -64,14 +71,35 @@ export function createElevenLabsProtocolAdapter(input: Readonly<{
         input.onDiagnosticError(preparation.error.reason);
         return { kind: 'declined', code: preparation.error.reason };
       }
+      let config: VoiceRealtimeJsonValue;
+      try {
+        config = VoiceRealtimeJsonValueSchema.parse(
+          input.preparation.buildStartConfig({
+            prepared: preparation.session,
+            settings: providerConfig,
+          }),
+        );
+      } catch (error) {
+        if (preparation.session.sessionState.billingMode === 'happier') {
+          await hostedConversation?.abort();
+        }
+        throw error;
+      }
       input.eventMapper.beginConversation();
-      preparedByControlSessionId.set(controlSessionId, preparation.session);
-      const config = VoiceRealtimeJsonValueSchema.parse(
-        input.preparation.buildStartConfig({
-          prepared: preparation.session,
-          settings,
-        }),
-      );
+      if (preparation.session.sessionState.billingMode === 'happier'
+        && preparation.session.sessionState.leaseId
+        && hostedConversation) {
+        input.rememberHostedConversation(
+          preparation.session.sessionState.leaseId,
+          hostedConversation,
+        );
+      }
+      input.lifecycle.prepared(attemptId, preparation.session);
+      preparedByAttemptId.set(attemptId, {
+        controlSessionId,
+        session: preparation.session,
+      });
+      currentAttemptIdByControlSessionId.set(controlSessionId, attemptId);
       const state = preparation.session.sessionState;
       return {
         kind: 'prepared',
@@ -80,37 +108,63 @@ export function createElevenLabsProtocolAdapter(input: Readonly<{
           safeMetadata: {
             billingMode: state.billingMode,
             expiresAtMs: state.expiresAtMs,
-            leaseId: state.leaseId,
           },
         },
       };
     },
     decodeControl: (event) => {
+      const record = readObject(event);
       const transcript = input.eventMapper.map(event);
-      return transcript
-        ? [{ type: 'provider_event', event }, { type: 'transcript', event: transcript }]
-        : [{ type: 'provider_event', event }];
+      const outputEvent = record.type === 'elevenlabs.mode'
+        ? record.mode === 'speaking'
+          ? { type: 'assistant_output_started' as const }
+          : record.mode === 'listening'
+            ? { type: 'assistant_output_stopped' as const }
+            : null
+        : null;
+      return [
+        ...(outputEvent ? [outputEvent] : []),
+        ...(transcript ? [{ type: 'transcript' as const, event: transcript }] : []),
+      ];
     },
     encodeTurnControl: (action) => action === 'stop_session'
       ? { type: 'voice.stop_session' }
       : action === 'send_exact_message'
         ? { type: 'voice.user_text' }
         : null,
-    releasePrepared: ({ controlSessionId }) => {
-      preparedByControlSessionId.delete(controlSessionId);
+    async releasePrepared({ controlSessionId, attemptId }) {
+      const prepared = preparedByAttemptId.get(attemptId);
+      if (prepared?.controlSessionId !== controlSessionId) return;
+      preparedByAttemptId.delete(attemptId);
+      if (currentAttemptIdByControlSessionId.get(controlSessionId) === attemptId) {
+        currentAttemptIdByControlSessionId.delete(controlSessionId);
+      }
+      await input.lifecycle.releasePrepared(attemptId, prepared.session);
     },
   };
 
   return Object.freeze({
     adapter,
     handleSessionIdentity({ controlSessionId, conversationId }) {
-      const preparedStart = preparedByControlSessionId.get(controlSessionId);
+      const attemptId = currentAttemptIdByControlSessionId.get(controlSessionId);
+      if (attemptId === undefined) return;
+      const preparedStart = preparedByAttemptId.get(attemptId);
       if (!preparedStart) return;
-      preparedByControlSessionId.delete(controlSessionId);
-      input.lifecycle.started({ controlSessionId, conversationId, prepared: preparedStart });
+      preparedByAttemptId.delete(attemptId);
+      currentAttemptIdByControlSessionId.delete(controlSessionId);
+      input.lifecycle.started({
+        controlSessionId,
+        conversationId,
+        attemptId,
+        prepared: preparedStart.session,
+      });
     },
     async endSession() {
-      preparedByControlSessionId.clear();
+      for (const [attemptId, prepared] of preparedByAttemptId) {
+        await input.lifecycle.releasePrepared(attemptId, prepared.session);
+      }
+      preparedByAttemptId.clear();
+      currentAttemptIdByControlSessionId.clear();
       await input.lifecycle.ended();
     },
   });

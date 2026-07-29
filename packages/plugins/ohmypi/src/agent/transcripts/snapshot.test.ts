@@ -3,6 +3,92 @@ import { describe, expect, it } from 'vitest';
 import { projectOhMyPiSessionSnapshotToDirectMessages } from './snapshot.js';
 
 describe('projectOhMyPiSessionSnapshotToDirectMessages', () => {
+  it('projects the current v3 title slot and canonical tool message shapes', () => {
+    const projected = projectOhMyPiSessionSnapshotToDirectMessages({
+      sessionFilePath: '/tmp/current-omp-session.jsonl',
+      sessionId: 'sess-current',
+      lines: [
+        {
+          type: 'title',
+          v: 1,
+          title: 'Current slot title',
+          updatedAt: '2026-07-21T10:00:00.000Z',
+          pad: ' ',
+        },
+        {
+          type: 'session',
+          version: 3,
+          id: 'sess-current',
+          timestamp: '2026-07-21T09:59:00.000Z',
+          cwd: '/repo/current',
+          title: 'Stale header title',
+        },
+        {
+          type: 'message',
+          id: 'assistant-1',
+          parentId: null,
+          timestamp: '2026-07-21T10:00:01.000Z',
+          message: {
+            role: 'assistant',
+            content: [
+              { type: 'toolCall', id: 'tool-1', name: 'read', arguments: { path: 'README.md' } },
+            ],
+            usage: { input: 12, output: 4 },
+          },
+        },
+        {
+          type: 'message',
+          id: 'tool-result-1',
+          parentId: 'assistant-1',
+          timestamp: '2026-07-21T10:00:02.000Z',
+          message: {
+            role: 'toolResult',
+            toolCallId: 'tool-1',
+            toolName: 'read',
+            content: [{ type: 'text', text: 'file contents' }],
+            isError: false,
+          },
+        },
+      ],
+    });
+
+    expect(projected).toMatchObject({
+      title: 'Current slot title',
+      workingDirectory: '/repo/current',
+      createdAtMs: Date.parse('2026-07-21T09:59:00.000Z'),
+    });
+    expect(projected.items.map((item) => item.raw)).toEqual([
+      {
+        role: 'agent',
+        content: {
+          type: 'acp',
+          agentId: 'ohMyPi',
+          data: {
+            type: 'tool-call',
+            callId: 'tool-1',
+            id: 'omp:/tmp/current-omp-session.jsonl:assistant-1:toolCall:0',
+            name: 'read',
+            input: { path: 'README.md' },
+          },
+        },
+      },
+      {
+        role: 'agent',
+        content: {
+          type: 'acp',
+          agentId: 'ohMyPi',
+          data: {
+            type: 'tool-result',
+            callId: 'tool-1',
+            id: 'omp:/tmp/current-omp-session.jsonl:tool-result-1:toolResult',
+            output: [{ type: 'text', text: 'file contents' }],
+            isError: false,
+          },
+        },
+      },
+    ]);
+  });
+
   it('projects the persisted visible root-to-leaf path and ignores off-path branches', () => {
     const projected = projectOhMyPiSessionSnapshotToDirectMessages({
       sessionFilePath: '/tmp/omp-session.jsonl',

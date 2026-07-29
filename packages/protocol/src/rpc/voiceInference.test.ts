@@ -7,6 +7,7 @@ describe('RPC_METHODS (daemon voice inference)', () => {
     expect((RPC_METHODS as any).DAEMON_VOICE_INFERENCE_STATUS).toBe('daemon.voiceInference.status');
     expect((RPC_METHODS as any).DAEMON_VOICE_INFERENCE_MODELS_LIST).toBe('daemon.voiceInference.models.list');
     expect((RPC_METHODS as any).DAEMON_VOICE_INFERENCE_MODELS_INSTALL).toBe('daemon.voiceInference.models.install');
+    expect((RPC_METHODS as any).DAEMON_VOICE_INFERENCE_MODELS_LICENSE_ACCEPT).toBe('daemon.voiceInference.models.license.accept');
     expect((RPC_METHODS as any).DAEMON_VOICE_INFERENCE_MODELS_REMOVE).toBe('daemon.voiceInference.models.remove');
     expect((RPC_METHODS as any).DAEMON_VOICE_INFERENCE_MODELS_STATUS).toBe('daemon.voiceInference.models.status');
     expect((RPC_METHODS as any).DAEMON_VOICE_INFERENCE_MODELS_WARM).toBe('daemon.voiceInference.models.warm');

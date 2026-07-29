@@ -182,6 +182,8 @@ describe('createActionExecutor (review.start)', () => {
         permissionMode: 'read_only',
         changeType: 'committed',
         base: { kind: 'none' },
+        profileId: 'review.coderabbit/review',
+        profileGenerationId: 'generation-4',
       },
       { defaultSessionId: 's1' },
     );
@@ -194,6 +196,8 @@ describe('createActionExecutor (review.start)', () => {
         backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
         retentionPolicy: 'resumable',
         ioMode: 'streaming',
+        profileId: 'review.coderabbit/review',
+        profileGenerationId: 'generation-4',
       }),
       undefined,
     );

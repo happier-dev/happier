@@ -1,8 +1,6 @@
 import type {
-  AcpStderrRulesV1,
-  AcpToolNameInferenceV1,
-  AcpToolNameResolverV1,
-} from '@happier-dev/plugin-sdk/experimental/acp';
+  AgentAcpRuntimeDefinition,
+} from '@happier-dev/plugin-sdk/agent-runtime';
 
 export const KIMI_ACP_TIMEOUTS = Object.freeze({
   initMs: 90_000,
@@ -27,7 +25,7 @@ export const KIMI_TOOL_NAME_INFERENCE = Object.freeze({
   ],
   preferLongestPattern: true,
   unknownToolNames: ['other', 'unknown', 'unknown tool'],
-} satisfies AcpToolNameInferenceV1);
+} satisfies NonNullable<AgentAcpRuntimeDefinition['toolNameInference']>);
 
 export const KIMI_STDERR_RULES = Object.freeze({
   statusErrors: [
@@ -48,7 +46,7 @@ export const KIMI_STDERR_RULES = Object.freeze({
       detail: 'Authentication error. Run `kimi login` to re-authenticate, then retry.',
     },
   ],
-} satisfies AcpStderrRulesV1);
+} satisfies NonNullable<AgentAcpRuntimeDefinition['stderrRules']>);
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -67,7 +65,9 @@ function mapTitleToToolName(title: string): string | null {
   return null;
 }
 
-export const resolveKimiAcpToolName: AcpToolNameResolverV1 = ({ input }) => {
+export const resolveKimiAcpToolName: NonNullable<
+  AgentAcpRuntimeDefinition['toolNameResolver']
+> = ({ input }) => {
   const acp = asRecord(input._acp);
   const candidates = [input.title, input.description, acp?.title];
   for (const candidate of candidates) {

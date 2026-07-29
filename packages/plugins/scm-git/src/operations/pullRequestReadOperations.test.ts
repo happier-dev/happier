@@ -6,8 +6,8 @@ import type {
   ScmHostingProviderRef,
   ScmPullRequestSummary,
   ScmWorkingSnapshot,
-} from '@happier-dev/plugin-sdk/scm';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/experimental/scm';
 
 import type { ScmBackendContext } from '../types.js';
 import { createPrStatusCache } from '../hostingProviders/prStatusCache.js';
@@ -280,6 +280,62 @@ describe('git pull request read operations', () => {
             headBranch: 'feature/pr-cache',
             state: 'open',
         })).toBeNull();
+    });
+
+    it('does not reuse or publish auth-sensitive PR rows without a safe auth identity key', async () => {
+        const cache = createPrStatusCache({ now: () => 1000 });
+        const priorPullRequest = {
+            ...pullRequest,
+            number: 41,
+            title: 'Prior account row',
+            url: 'https://github.com/happier-dev/happier/pull/41',
+        };
+        cache.setSuccess({
+            key: {
+                workspaceKey: context.projectKey,
+                repoRootPath: '/repo',
+                provider,
+                baseBranch: 'main',
+                headBranch: 'feature/pr-cache',
+                state: 'open',
+            },
+            pullRequests: [priorPullRequest],
+        });
+        const listPullRequests = vi.fn(async () => [pullRequest]);
+        const operations = createGitPullRequestReadOperations({
+            cache,
+            registry: createRegistry({
+                getPullRequestAuthProfileKey: () => null,
+                listPullRequests,
+            }),
+            readSnapshot: async () => createSnapshot(),
+            now: () => 1000,
+        });
+
+        await expect(operations.list({
+            context,
+            request: {
+                cwd: '/repo',
+                base: 'main',
+                head: 'feature/pr-cache',
+                state: 'open',
+            },
+        })).resolves.toMatchObject({
+            success: true,
+            pullRequests: [pullRequest],
+        });
+        expect(listPullRequests).toHaveBeenCalledOnce();
+        expect(cache.getFresh({
+            workspaceKey: context.projectKey,
+            repoRootPath: '/repo',
+            provider,
+            baseBranch: 'main',
+            headBranch: 'feature/pr-cache',
+            state: 'open',
+        })).toMatchObject({
+            kind: 'success',
+            pullRequests: [priorPullRequest],
+        });
     });
 
     it('prepares no-auth compose actions from compare URLs without mutating provider state', async () => {

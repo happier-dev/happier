@@ -73,8 +73,8 @@ const CODEX_SESSION_CONTROL_ADAPTER_PROJECTION = {
       { path: ['codexRuntimeDescriptorV1', 'backendMode'] },
       { path: ['affinity', 'backendMode'] },
       { path: ['codexBackendMode'] },
-      { path: ['directSessionV1', 'codexBackendMode'] },
-      { providerId: 'codex', path: ['externalSessionV1', 'codexBackendMode'] },
+      { providerId: 'codex', path: ['directSessionV1', 'codexBackendMode'] },
+      { path: ['externalSessionV1', 'codexBackendMode'] },
     ],
     genericState: {
       providerId: 'codex',
@@ -193,47 +193,9 @@ export const AGENT_DEFINITION = Object.freeze({
     defaultMode: 'default',
     allowedModes: ['default'],
   },
-  authProbeConfig: {
-    agentId: 'codex',
-    binaryNames: ['codex'],
-    statusCommand: ['login', 'status'],
-    parser: 'codexLoginStatus',
-    backgroundChecks: 'safe',
-    envVars: ['OPENAI_API_KEY', 'CODEX_API_KEY'],
-    credentialPaths: ['~/.codex/auth.json'],
-  },
-  localCli: {
-    agentId: 'codex',
-    detectKey: 'codex',
-    machineLoginKey: 'codex',
-    supportKind: 'login_terminal',
-    loginLaunch: {
-      command: 'codex',
-      args: ['login'],
-    },
-  },
-  agentCliRuntime: {
-    id: CODEX_AGENT_ID,
-    title: 'OpenAI Codex CLI',
-    binaryName: 'codex',
-    knownUserBinDirSuffixes: null,
-    sourcePreferenceDefault: 'system-first',
-    managedInstall: {
-      kind: 'github_release_binary',
-      githubRepo: 'openai/codex',
-      binaryName: 'codex',
-    },
-    manualInstallKind: 'command',
-    manualInstallRecipes: null,
-    acceptsJavaScriptFileOverride: false,
-    setupRecommendation: { order: 20 },
-    installGuideUrl: null,
-    docsUrl: 'https://github.com/openai/codex',
-  },
   commandPolicy: {
     daemonAutostartDefault: 'preferLocalTui',
   },
-  agentSettings: null,
   runtimeContributions: {
     agentCatalogEntry: {
       importName: 'CODEX_AGENT_RUNTIME_CONTRIBUTION',

@@ -7,6 +7,7 @@ import {
   RuntimeDescriptorV1Schema,
   readCanonicalRuntimeDescriptorV1ForAgent,
   readRuntimeDescriptorV1ForAgent,
+  writeRuntimeDescriptorV1ForPersistence,
 } from './runtimeDescriptorV1.js';
 
 describe('runtimeDescriptorV1 aliases', () => {
@@ -211,5 +212,31 @@ describe('runtimeDescriptorV1 aliases', () => {
       backendMode: 'appServer',
       providerSessionId: 'canonical-thread',
     });
+  });
+
+  it('reads legacy flat Oh My Pi runtime identity and persists only the structured contribution identity', () => {
+    const runtimeDescriptor = RuntimeDescriptorV1Schema.parse({
+      v: 1,
+      agentId: 'ohMyPi',
+      agent: {
+        backendMode: 'acp',
+        providerSessionId: 'omp-session-1',
+      },
+    });
+
+    const persisted = writeRuntimeDescriptorV1ForPersistence(runtimeDescriptor);
+    expect(persisted).toEqual({
+      v: 1,
+      agentIdentity: {
+        pluginId: 'happier.agent.ohmypi',
+        localId: 'ohmypi',
+      },
+      agent: {
+        backendMode: 'acp',
+        providerSessionId: 'omp-session-1',
+      },
+    });
+    expect(RuntimeDescriptorV1Schema.parse(persisted)).toEqual(runtimeDescriptor);
+    expect(persisted).not.toHaveProperty('agentId');
   });
 });

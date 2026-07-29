@@ -4,7 +4,7 @@ import type {
   ScmBackendCapabilityLeaf,
   ScmBackendCapabilityUnavailableReason,
   ScmRepoMode,
-} from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm';
 
 type ResolveScmBackendCapabilitiesInput = Readonly<{
   declaredCapabilities: ScmBackendCapabilities;

@@ -1,36 +1,21 @@
-import type { AcpPermissionModeArgvSpecV1 } from '@happier-dev/plugin-sdk/experimental/acp';
+import type { AgentPermissionIntent } from '@happier-dev/plugin-sdk/agent-runtime';
 
-export const QWEN_PERMISSION_MODE_ARGV = Object.freeze({
-  flag: '--approval-mode',
-  map: Object.freeze({
-    default: null,
-    ask: null,
-    prompt: null,
-    normal: null,
-    plan: 'plan',
-    'read-only': 'plan',
-    read_only: 'plan',
-    readonly: 'plan',
-    read: 'plan',
-    ro: 'plan',
-    acceptEdits: 'auto-edit',
-    'accept-edits': 'auto-edit',
-    'safe-yolo': 'auto-edit',
-    safeyolo: 'auto-edit',
-    safe: 'auto-edit',
-    'workspace-write': 'auto-edit',
-    workspace: 'auto-edit',
-    'auto-edit': 'auto-edit',
-    auto: 'auto-edit',
-    yolo: 'yolo',
-    bypassPermissions: 'yolo',
-    'bypass-permissions': 'yolo',
-    bypass: 'yolo',
-    full: 'yolo',
-    'full-access': 'yolo',
-    dontask: 'yolo',
-    'dont-ask': 'yolo',
-    danger: 'yolo',
-    'danger-full-access': 'yolo',
-  }),
-} satisfies AcpPermissionModeArgvSpecV1);
+const QWEN_APPROVAL_MODE_BY_PERMISSION_INTENT = Object.freeze({
+  default: null,
+  'read-only': 'plan',
+  'safe-yolo': 'auto-edit',
+  yolo: 'yolo',
+  plan: 'plan',
+} satisfies Readonly<Record<AgentPermissionIntent, string | null>>);
+
+export function buildQwenAcpArgv(params: Readonly<{
+  baseArgs: readonly string[];
+  permissionIntent: AgentPermissionIntent | null;
+}>): readonly string[] {
+  const approvalMode = params.permissionIntent
+    ? QWEN_APPROVAL_MODE_BY_PERMISSION_INTENT[params.permissionIntent]
+    : null;
+  return approvalMode
+    ? [...params.baseArgs, '--approval-mode', approvalMode]
+    : [...params.baseArgs];
+}

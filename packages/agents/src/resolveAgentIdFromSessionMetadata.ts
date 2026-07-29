@@ -1,4 +1,7 @@
-import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol';
+import {
+  readLinkedExternalSessionV1FromMetadata,
+  readRuntimeDescriptorV1FromMetadata,
+} from '@happier-dev/protocol';
 import type { AgentId } from './types.js';
 import { AGENT_IDS, isAgentId } from './types.js';
 import { isLegacyConfiguredBackendSentinelId } from './compat/legacyConfiguredBackend.js';
@@ -28,18 +31,6 @@ function normalizeResolvedAgentId(value: unknown): AgentId | null {
   return isAgentId(value) ? value : null;
 }
 
-function readDirectSessionAgentId(metadata: Record<string, unknown>): AgentId | null {
-  for (const key of ['directSessionV1', 'externalSessionV1'] as const) {
-    const directSession = asRecord(metadata[key]);
-    // legacy `providerId` external-link read-compat (pre-rename persisted metadata)
-    const rawAgentId = directSession?.agentId ?? directSession?.providerId;
-    const agentId = typeof rawAgentId === 'string' ? rawAgentId.trim() : null;
-    const resolvedAgentId = normalizeResolvedAgentId(agentId);
-    if (resolvedAgentId) return resolvedAgentId;
-  }
-  return null;
-}
-
 export function resolveDeclaredAgentIdFromSessionMetadata(metadata: unknown): AgentId | null {
   const record = asRecord(metadata);
   if (!record) return null;
@@ -50,9 +41,11 @@ export function resolveDeclaredAgentIdFromSessionMetadata(metadata: unknown): Ag
     return runtimeDescriptorProviderId;
   }
 
-  const directSessionProviderId = readDirectSessionAgentId(record);
-  if (directSessionProviderId) {
-    return directSessionProviderId;
+  const linkedAgentId = normalizeResolvedAgentId(
+    readLinkedExternalSessionV1FromMetadata(record)?.agentId,
+  );
+  if (linkedAgentId) {
+    return linkedAgentId;
   }
 
   return null;

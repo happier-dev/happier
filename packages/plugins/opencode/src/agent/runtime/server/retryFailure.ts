@@ -1,6 +1,3 @@
-import type { PluginContextV1 } from '@happier-dev/plugin-sdk';
-import type { RuntimeEventV1, SessionRuntimeIssueV1 } from '@happier-dev/plugin-sdk/experimental/runtime/session';
-
 import { buildOpenCodeRuntimeIssue, publishOpenCodeTurnFailed } from './openCodeRuntimeEvents.js';
 import {
   buildOpenCodeRetryStatusError,
@@ -11,6 +8,8 @@ import {
   claimOpenCodeActiveTurnForTerminalEvent,
   type OpenCodeServerRuntimeState,
 } from './state.js';
+import type { OpenCodeRuntimeContext } from './runtimeContext.js';
+import type { OpenCodeRuntimeEvent, OpenCodeRuntimeIssue } from './runtimeEvents.js';
 
 function normalizeRetryAfterMs(value: number | undefined): number | null {
   if (typeof value !== 'number' || !Number.isFinite(value)) return null;
@@ -19,7 +18,7 @@ function normalizeRetryAfterMs(value: number | undefined): number | null {
 
 function buildOpenCodeRetryUsageLimitDetails(
   retryError: OpenCodeRetryStatusError,
-): NonNullable<SessionRuntimeIssueV1['usageLimit']> {
+): NonNullable<OpenCodeRuntimeIssue['usageLimit']> {
   return {
     v: 1,
     resetAtMs: null,
@@ -31,11 +30,12 @@ function buildOpenCodeRetryUsageLimitDetails(
 }
 
 export async function maybeFailOnOpenCodeRetryStatus(params: Readonly<{
-  ctx: PluginContextV1;
-  publishRuntimeEvent: (event: RuntimeEventV1) => void;
+  ctx: OpenCodeRuntimeContext;
+  publishRuntimeEvent: (event: OpenCodeRuntimeEvent) => void;
   status: unknown;
   state: OpenCodeServerRuntimeState;
   happierSessionId: string;
+  stopNativeRetry: () => Promise<void>;
 }>): Promise<boolean> {
   const retryError = buildOpenCodeRetryStatusError(params.status);
   if (!retryError || !params.state.activeTurnId) return false;
@@ -57,6 +57,7 @@ export async function maybeFailOnOpenCodeRetryStatus(params: Readonly<{
   if (!turnId) return false;
   params.state.currentTurnObservedMessageIds.clear();
   params.state.currentTurnObservedToolCallKeys.clear();
+  await params.stopNativeRetry();
   await publishOpenCodeTurnFailed({
     publishRuntimeEvent: params.publishRuntimeEvent,
     sessionId: params.happierSessionId,

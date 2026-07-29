@@ -1,481 +1,330 @@
+import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agent-runtime';
+import { PluginError } from '@happier-dev/plugin-sdk';
+import { type PluginUiQuestionsResult } from '@happier-dev/plugin-sdk/runtime';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { PluginContextV1 } from '@happier-dev/plugin-sdk';
+import { createCursorAcpRuntimeExtensions } from './extensions/index.js';
 
-import { createCursorAcpRuntimeExtensions } from './extensions.js';
+const SIGNAL = new AbortController().signal;
 
-type PermissionDecisionFixture = Readonly<{
-  decision: 'approved' | 'approved_for_session' | 'approved_execpolicy_amendment' | 'denied' | 'abort';
-  rationale?: string;
-  answers?: Readonly<Record<string, string>>;
-}>;
+function extensionContext(method: string, requestId = 'request-1') {
+  return { method, requestId, signal: SIGNAL };
+}
 
-function createPluginContextFixture(params?: Readonly<{
-  initialMetadata?: Readonly<Record<string, unknown>>;
-  requestDecision?: (request: unknown) => Promise<PermissionDecisionFixture>;
-  writeMetadata?: (request: Parameters<PluginContextV1['sessions']['current']['writeMetadata']>[0]) => Promise<void>;
-  writeStateField?: (request: Parameters<PluginContextV1['sessions']['writeStateField']>[0]) => Promise<void>;
+function createFixture(params?: Readonly<{
+  questionsResult?: PluginUiQuestionsResult;
+  confirm?: () => Promise<boolean>;
+  publish?: (...args: unknown[]) => Promise<unknown>;
+  publishGenerated?: (...args: unknown[]) => Promise<unknown>;
 }>) {
-  const requestDecision = vi.fn(params?.requestDecision ?? (async () => ({ decision: 'approved' as const })));
-  const sent: unknown[] = [];
-  let metadata: Readonly<Record<string, unknown>> = Object.freeze(params?.initialMetadata ?? {});
-  const metadataWrites: unknown[] = [];
-  const writeMetadata = vi.fn(async (request: Parameters<PluginContextV1['sessions']['current']['writeMetadata']>[0]) => {
-    metadataWrites.push(request);
-    if (params?.writeMetadata) {
-      await params.writeMetadata(request);
-      return;
-    }
-    if (request.kind === 'set') {
-      metadata = request.metadata;
-      return;
-    }
-    metadata = request.handler(metadata);
-  });
-  const writeStateField = vi.fn(async (request: Parameters<PluginContextV1['sessions']['writeStateField']>[0]) => {
-    if (params?.writeStateField) {
-      await params.writeStateField(request);
-      return;
-    }
-    if (request.fieldId === 'runtime.workState') {
-      metadata = {
-        ...metadata,
-        sessionWorkStateV1: request.value,
-      };
-    }
-  });
+  const askQuestions = vi.fn(async () => params?.questionsResult ?? ({
+    status: 'answered' as const,
+    answers: {},
+  }));
+  const confirm = vi.fn(params?.confirm ?? (async () => true));
+  const publish = vi.fn(params?.publish ?? (async () => ({
+    status: 'applied' as const,
+    revision: 'work-state-1',
+    sourceSequence: 1,
+  })));
+  const publisher = vi.fn(() => ({ publish }));
+  const publishGenerated = vi.fn(params?.publishGenerated ?? (async () => ({ status: 'published' as const })));
+  const disposeMediaRoot = vi.fn();
+  const registerSourceRoot = vi.fn(async () => ({ publishGenerated, dispose: disposeMediaRoot }));
+  const observe = vi.fn(async (value: unknown) => value);
   const debug = vi.fn();
-  const ctx = {
-    logger: {
-      info: vi.fn(),
-      warn: vi.fn(),
-      error: vi.fn(),
-      debug,
-    },
-    session: {
-      send: vi.fn(async (request: unknown) => {
-        sent.push(request);
-        return { ok: true };
-      }),
-      permissions: {
-        requestDecision,
-        getMode: vi.fn(() => 'default'),
+  const context = {
+    session: { id: 'happier-session-1' },
+    ui: { askQuestions, confirm },
+    workState: { publisher },
+    services: {
+      logger: { debug },
+      sessions: {
+        current: { media: { registerSourceRoot } },
+        subagents: { observe },
       },
-      writeMetadata,
-      writeStateField,
     },
-    sessions: {
-      current: {
-        send: vi.fn(async (request: unknown) => {
-          sent.push(request);
-          return { ok: true };
-        }),
-        permissions: {
-          requestDecision,
-          getMode: vi.fn(() => 'default'),
-        },
-        writeMetadata,
-        writeStateField,
-      },
-      list: vi.fn(async () => [
-        {
-          sessionId: HANDLER_CONTEXT.sessionId,
-          metadata,
-        },
-      ]),
-      writeStateField,
-    },
-  } as unknown as PluginContextV1; // Boundary fixture: only the SDK services used by Cursor extensions are needed.
+  } as unknown as AgentSessionRuntimeContext;
   return {
-    ctx,
-    requestDecision,
-    sent,
+    context,
+    askQuestions,
+    confirm,
+    publish,
+    publisher,
+    publishGenerated,
+    disposeMediaRoot,
+    registerSourceRoot,
+    observe,
     debug,
-    writeMetadata,
-    writeStateField,
-    metadataWrites,
-    readMetadata: () => metadata,
-  };
-}
-
-const HANDLER_CONTEXT = {
-  method: 'cursor/update_todos',
-  sessionId: 'happier-session-1',
-  backendId: 'cursor',
-  agentName: 'Cursor',
-  signal: new AbortController().signal,
-};
-
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function handlerContext(method: string, requestId: string) {
-  return {
-    ...HANDLER_CONTEXT,
-    method,
-    requestId,
   };
 }
 
 describe('createCursorAcpRuntimeExtensions', () => {
-  it('maps ask_question through the real host permission route before returning answers', async () => {
-    const { ctx, requestDecision } = createPluginContextFixture({
-      requestDecision: async (request) => {
-        if (
-          isRecord(request)
-          && typeof request.toolCallId === 'string'
-          && request.toolName === 'AskUserQuestion'
-        ) {
-          return {
-            decision: 'approved',
-            answers: {
-              choice: 'Beta',
-              'Free form': 'typed answer',
-            },
-          };
-        }
-        return { decision: 'approved_for_session' };
+  it('uses the host question owner and preserves opaque choice ids and custom text', async () => {
+    const fixture = createFixture({
+      questionsResult: {
+        status: 'answered',
+        answers: {
+          choice: {
+            type: 'multiple',
+            answers: [
+              { type: 'choice', choiceId: 'beta|opaque' },
+              { type: 'custom', value: 'something else' },
+            ],
+          },
+          free: { type: 'text', value: 'typed answer' },
+        },
       },
     });
-    const extensions = createCursorAcpRuntimeExtensions({ ctx });
+    const extensions = createCursorAcpRuntimeExtensions({ context: fixture.context });
 
     await expect(extensions.requests?.['cursor/ask_question']?.({
       title: 'Need input',
       questions: [
         {
           id: 'choice',
-          prompt: 'Pick one',
-          options: [{ label: 'Alpha' }, { label: 'Beta' }],
-        },
-        {
-          id: 'free',
-          prompt: 'Free form',
+          prompt: 'Pick values',
           allowMultiple: true,
-          options: [],
+          options: [
+            { id: 'alpha', label: 'Alpha' },
+            { id: 'beta|opaque', label: 'Beta' },
+          ],
         },
+        { id: 'free', prompt: 'Explain' },
       ],
-    }, handlerContext('cursor/ask_question', 'ask-rpc-1'))).resolves.toEqual({
-      answers: {
-        choice: 'Beta',
-        free: 'typed answer',
-      },
-    });
-
-    expect(requestDecision).toHaveBeenCalledWith({
-      provider: 'cursor',
-      requestId: 'ask-rpc-1',
-      toolCallId: 'cursor:cursor/ask_question:AskUserQuestion:ask-rpc-1',
-      toolName: 'AskUserQuestion',
-      input: {
-        questions: [
-          {
-            id: 'choice',
-            header: 'Need input',
-            question: 'Pick one',
-            multiSelect: false,
-            options: [
-              { label: 'Alpha', description: 'Alpha' },
-              { label: 'Beta', description: 'Beta' },
-            ],
-          },
-          {
-            id: 'free',
-            header: 'Need input',
-            question: 'Free form',
-            multiSelect: true,
-            options: [{ label: 'OK', description: 'Continue' }],
-          },
+    }, extensionContext('cursor/ask_question'))).resolves.toEqual({
+      outcome: {
+        outcome: 'answered',
+        answers: [
+          { questionId: 'choice', selectedOptionIds: ['beta|opaque', 'something else'] },
+          { questionId: 'free', selectedOptionIds: ['typed answer'] },
         ],
       },
-    }, {
-      signal: HANDLER_CONTEXT.signal,
+    });
+    expect(fixture.askQuestions).toHaveBeenCalledWith([
+      {
+        id: 'choice',
+        prompt: 'Pick values',
+        type: 'multiple',
+        choices: [
+          { id: 'alpha', label: 'Alpha', description: 'Alpha' },
+          { id: 'beta|opaque', label: 'Beta', description: 'Beta' },
+        ],
+      },
+      { id: 'free', prompt: 'Explain', type: 'text' },
+    ], { title: 'Need input' });
+  });
+
+  it('maps cancelled and unavailable host question outcomes without another custody path', async () => {
+    const cancelled = createFixture({ questionsResult: { status: 'cancelled' } });
+    const cancelledExtensions = createCursorAcpRuntimeExtensions({ context: cancelled.context });
+    await expect(cancelledExtensions.requests?.['cursor/ask_question']?.({
+      questions: [{ id: 'q', prompt: 'Question' }],
+    }, extensionContext('cursor/ask_question'))).resolves.toEqual({
+      outcome: { outcome: 'cancelled' },
+    });
+
+    const unavailable = createFixture({
+      questionsResult: {
+        status: 'unavailable',
+        diagnostic: { code: 'no_present_client', message: 'No present client' },
+      },
+    });
+    const unavailableExtensions = createCursorAcpRuntimeExtensions({ context: unavailable.context });
+    await expect(unavailableExtensions.requests?.['cursor/ask_question']?.({
+      questions: [{ id: 'q', prompt: 'Question' }],
+    }, extensionContext('cursor/ask_question'))).resolves.toEqual({
+      outcome: { outcome: 'skipped', reason: 'No present client' },
     });
   });
 
-  it('maps update_todos request and notification to canonical work-state telemetry with merge state', async () => {
-    const { ctx, requestDecision, writeMetadata, writeStateField, readMetadata } = createPluginContextFixture();
-    const extensions = createCursorAcpRuntimeExtensions({ ctx });
+  it('publishes plan work-state before asking the host for approval', async () => {
+    const fixture = createFixture();
+    const extensions = createCursorAcpRuntimeExtensions({ context: fixture.context });
 
-    await expect(extensions.requests?.['cursor/update_todos']?.({
-      todos: [{ id: 'a', content: 'ship cursor', status: 'in_progress' }],
-    }, handlerContext('cursor/update_todos', 'todos-rpc-1'))).resolves.toEqual({});
+    await expect(extensions.requests?.['cursor/create_plan']?.({
+      name: 'Ship it',
+      overview: 'Overview',
+      plan: 'Detailed plan',
+      phases: [{
+        name: 'Migration',
+        todos: [{ id: 'native', content: 'Use native runtime', status: 'inProgress' }],
+      }],
+    }, extensionContext('cursor/create_plan'))).resolves.toEqual({
+      outcome: { outcome: 'accepted' },
+    });
+    expect(fixture.publisher).toHaveBeenCalledWith('todos');
+    expect(fixture.publish).toHaveBeenCalledWith(expect.objectContaining({
+      sourceSequence: 1,
+      primaryLocalId: 'todo:cursor:native',
+      items: [expect.objectContaining({
+        providerRef: 'native',
+        status: 'active',
+        providerData: { phaseName: 'Migration' },
+      })],
+    }), { signal: SIGNAL });
+    expect(fixture.confirm).toHaveBeenCalledWith(
+      'Overview\n\nDetailed plan',
+      { title: 'Ship it' },
+    );
+    expect(fixture.publish.mock.invocationCallOrder[0]).toBeLessThan(
+      fixture.confirm.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it('maps plan rejection and host cancellation to Cursor outcomes', async () => {
+    const rejected = createFixture({ confirm: async () => false });
+    await expect(createCursorAcpRuntimeExtensions({ context: rejected.context })
+      .requests?.['cursor/create_plan']?.(
+        { plan: 'Plan' },
+        extensionContext('cursor/create_plan'),
+      )).resolves.toEqual({ outcome: { outcome: 'rejected' } });
+
+    const cancelled = createFixture({
+      confirm: async () => {
+        throw new PluginError({ code: 'plugin_ui_cancelled' });
+      },
+    });
+    await expect(createCursorAcpRuntimeExtensions({ context: cancelled.context })
+      .requests?.['cursor/create_plan']?.(
+        { plan: 'Plan' },
+        extensionContext('cursor/create_plan'),
+      )).resolves.toEqual({ outcome: { outcome: 'cancelled' } });
+  });
+
+  it('does not approve a plan when required work-state publication is unavailable', async () => {
+    const fixture = createFixture({
+      publish: async () => ({
+        status: 'unavailable',
+        diagnostic: {
+          code: 'agent_work_state_generation_retired',
+          message: 'Session generation retired',
+        },
+      }),
+    });
+    const extensions = createCursorAcpRuntimeExtensions({ context: fixture.context });
+
+    await expect(extensions.requests?.['cursor/create_plan']?.({
+      plan: 'Plan',
+      todos: [{ id: 'required', content: 'Required', status: 'pending' }],
+    }, extensionContext('cursor/create_plan'))).rejects.toMatchObject({
+      code: 'cursor_work_state_publish_unavailable',
+    });
+    expect(fixture.confirm).not.toHaveBeenCalled();
+  });
+
+  it('publishes replacement and merged todo snapshots while ignoring malformed payloads', async () => {
+    const fixture = createFixture();
+    const extensions = createCursorAcpRuntimeExtensions({ context: fixture.context });
+
+    await extensions.requests?.['cursor/update_todos']?.({
+      todos: [{ id: 'a', content: 'First', status: 'pending' }],
+    }, extensionContext('cursor/update_todos'));
     await extensions.notifications?.['cursor/update_todos']?.({
       merge: true,
       todos: [
-        { id: 'a', content: 'ship cursor', status: 'completed' },
-        { id: 'b', content: 'verify cursor', status: 'pending' },
+        { id: 'a', content: 'First', status: 'done' },
+        { id: 'b', content: 'Second', status: 'blocked' },
       ],
-    }, {
-      ...HANDLER_CONTEXT,
-      method: 'cursor/update_todos',
-    });
+    }, extensionContext('cursor/update_todos'));
+    await extensions.notifications?.['cursor/update_todos']?.({ todos: 'invalid' }, extensionContext('cursor/update_todos'));
 
-    expect(requestDecision).not.toHaveBeenCalled();
-    expect(writeMetadata).not.toHaveBeenCalled();
-    expect(writeStateField).toHaveBeenCalledTimes(2);
-    expect(writeStateField).toHaveBeenLastCalledWith(expect.objectContaining({
-      fieldId: 'runtime.workState',
-      reason: 'cursor_todos_updated',
-    }));
-    expect(readMetadata()).toMatchObject({
-      sessionWorkStateV1: {
-        v: 1,
-        backendId: 'cursor',
-        agentId: 'cursor',
-        items: [
-          {
-            id: 'todo:cursor:b',
-            kind: 'todo',
-            origin: 'vendor',
-            status: 'pending',
-            title: 'verify cursor',
-            backendId: 'cursor',
-            agentId: 'cursor',
-            vendorRef: 'b',
-            order: 1,
-          },
-          {
-            id: 'todo:cursor:a',
-            kind: 'todo',
-            origin: 'vendor',
-            status: 'complete',
-            title: 'ship cursor',
-            backendId: 'cursor',
-            agentId: 'cursor',
-            vendorRef: 'a',
-            order: 0,
-          },
-        ],
-        primaryItemId: 'todo:cursor:b',
-      },
-    });
+    expect(fixture.publish).toHaveBeenCalledTimes(2);
+    expect(fixture.publish).toHaveBeenLastCalledWith(expect.objectContaining({
+      sourceSequence: 2,
+      primaryLocalId: 'todo:cursor:b',
+      items: [
+        expect.objectContaining({ localId: 'todo:cursor:b', status: 'blocked' }),
+        expect.objectContaining({ localId: 'todo:cursor:a', status: 'complete' }),
+      ],
+    }), { signal: SIGNAL });
+    expect(fixture.debug).toHaveBeenCalledWith(
+      'Cursor ACP update_todos ignored malformed payload',
+      { keys: ['todos'] },
+    );
   });
 
-  it('clears stale Cursor-owned work-state when update_todos sends an empty replacement snapshot', async () => {
-    const { ctx, requestDecision, readMetadata } = createPluginContextFixture({
-      initialMetadata: {
-        sessionWorkStateV1: {
-          v: 1,
-          backendId: 'cursor',
-          updatedAt: 50,
-          items: [
-            {
-              id: 'todo:cursor:stale',
-              kind: 'todo',
-              origin: 'vendor',
-              backendId: 'cursor',
-              status: 'active',
-              title: 'Stale Cursor todo',
-              updatedAt: 50,
-            },
-            {
-              id: 'todo:claude:keep',
-              kind: 'todo',
-              origin: 'vendor',
-              backendId: 'claude',
-              status: 'pending',
-              title: 'Keep Claude todo',
-              updatedAt: 50,
-            },
-          ],
+  it('projects source-identified tasks through the scoped subagent service', async () => {
+    const fixture = createFixture();
+    const extensions = createCursorAcpRuntimeExtensions({ context: fixture.context });
+
+    await extensions.requests?.['cursor/task']?.({
+      toolCallId: 'tool-1',
+      agentId: 'agent-1',
+      description: 'Research',
+      subagentType: { custom: 'researcher' },
+      model: 'composer',
+      durationMs: 123,
+    }, extensionContext('cursor/task'));
+    await extensions.notifications?.['cursor/task']?.({
+      agentId: 'missing-tool-call',
+    }, extensionContext('cursor/task'));
+
+    expect(fixture.observe).toHaveBeenCalledTimes(1);
+    expect(fixture.observe).toHaveBeenCalledWith(expect.objectContaining({
+      observationId: expect.stringMatching(/^cursor-native:/),
+      status: 'completed',
+      detail: expect.objectContaining({
+        kind: 'custom',
+        label: 'Research',
+        spawnRef: { toolCallId: 'tool-1' },
+        agentMetadata: {
+          model: 'composer',
+          agentId: 'agent-1',
+          subagentType: { custom: 'researcher' },
+          durationMs: 123,
         },
-      },
-    });
-    const extensions = createCursorAcpRuntimeExtensions({ ctx });
-
-    await expect(extensions.requests?.['cursor/update_todos']?.({
-      todos: [{ id: 'a', content: 'ship cursor', status: 'pending' }],
-    }, handlerContext('cursor/update_todos', 'todos-rpc-2'))).resolves.toEqual({});
-    await expect(extensions.requests?.['cursor/update_todos']?.({
-      todos: [],
-    }, handlerContext('cursor/update_todos', 'todos-rpc-3'))).resolves.toEqual({});
-
-    expect(requestDecision).not.toHaveBeenCalled();
-    expect(readMetadata()).toMatchObject({
-      sessionWorkStateV1: {
-        items: [
-          {
-            id: 'todo:claude:keep',
-            kind: 'todo',
-            origin: 'vendor',
-            backendId: 'claude',
-            status: 'pending',
-            title: 'Keep Claude todo',
-          },
-        ],
-      },
-    });
-    expect(JSON.stringify(readMetadata())).not.toContain('todo:cursor:');
+      }),
+    }), { signal: SIGNAL });
+    expect(fixture.debug).toHaveBeenCalledWith(
+      'Cursor ACP task ignored without source identifiers',
+      { keys: ['agentId'] },
+    );
   });
 
-  it('normalizes source-real Cursor todo statuses before writing work-state', async () => {
-    const { ctx, readMetadata } = createPluginContextFixture();
-    const extensions = createCursorAcpRuntimeExtensions({ ctx });
-
-    await expect(extensions.requests?.['cursor/update_todos']?.({
-      todos: [
-        { id: 'active', content: 'active Cursor todo', status: 'inProgress' },
-        { id: 'fallback', content: 'fallback Cursor todo', status: 'waiting_on_vendor' },
-      ],
-    }, handlerContext('cursor/update_todos', 'todos-rpc-4'))).resolves.toEqual({});
-
-    expect(readMetadata()).toMatchObject({
-      sessionWorkStateV1: {
-        items: [
-          {
-            id: 'todo:cursor:active',
-            status: 'active',
-            title: 'active Cursor todo',
-          },
-          {
-            id: 'todo:cursor:fallback',
-            status: 'pending',
-            title: 'fallback Cursor todo',
-          },
-        ],
-        primaryItemId: 'todo:cursor:active',
+  it('coalesces request and notification generated-media delivery through the scoped media service', async () => {
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const fixture = createFixture({
+      publishGenerated: async () => {
+        await pending;
+        return { status: 'published' };
       },
     });
-  });
-
-  it('ignores malformed update_todos payloads without clearing current work-state', async () => {
-    const { ctx, debug, readMetadata, writeMetadata, writeStateField } = createPluginContextFixture();
-    const extensions = createCursorAcpRuntimeExtensions({ ctx });
-
-    await expect(extensions.requests?.['cursor/update_todos']?.({
-      todos: [{ id: 'a', content: 'ship cursor', status: 'pending' }],
-    }, handlerContext('cursor/update_todos', 'todos-rpc-5'))).resolves.toEqual({});
-    await expect(extensions.requests?.['cursor/update_todos']?.({
-      reason: 'bad provider payload',
-    }, handlerContext('cursor/update_todos', 'todos-rpc-6'))).resolves.toEqual({});
-
-    expect(writeMetadata).not.toHaveBeenCalled();
-    expect(writeStateField).toHaveBeenCalledTimes(1);
-    expect(readMetadata()).toMatchObject({
-      sessionWorkStateV1: {
-        items: [
-          {
-            id: 'todo:cursor:a',
-            status: 'pending',
-            title: 'ship cursor',
-          },
-        ],
-      },
+    const extensions = createCursorAcpRuntimeExtensions({
+      context: fixture.context,
+      mediaSourceRoot: '/tmp/cursor-media',
     });
-    expect(debug).toHaveBeenCalledWith('Cursor ACP update_todos ignored malformed payload', {
-      keys: ['reason'],
+    const payload = {
+      toolCallId: 'image-1',
+      filePath: 'image.png',
+      description: 'Generated image',
+      referenceImagePaths: ['reference.png'],
+    };
+
+    const request = extensions.requests?.['cursor/generate_image']?.(
+      payload,
+      extensionContext('cursor/generate_image'),
+    );
+    const notification = extensions.notifications?.['cursor/generate_image']?.(
+      payload,
+      extensionContext('cursor/generate_image'),
+    );
+    await vi.waitFor(() => expect(fixture.publishGenerated).toHaveBeenCalledOnce());
+    release();
+    await Promise.all([request, notification]);
+
+    expect(fixture.registerSourceRoot).toHaveBeenCalledOnce();
+    expect(fixture.registerSourceRoot).toHaveBeenCalledWith({ rootPath: '/tmp/cursor-media' });
+    expect(fixture.publishGenerated).toHaveBeenCalledWith({
+      localId: 'image-1',
+      path: 'image.png',
+      description: 'Generated image',
+      referencePaths: ['reference.png'],
+      toolCallId: 'image-1',
     });
-  });
-
-  it('maps create_plan to work-state todo projection plus ExitPlanMode approval surface', async () => {
-    const { ctx, requestDecision, writeMetadata, writeStateField, readMetadata } = createPluginContextFixture();
-    const extensions = createCursorAcpRuntimeExtensions({ ctx });
-
-    await expect(extensions.requests?.['cursor/create_plan']?.({
-      title: 'Implement Cursor',
-      name: 'Cursor Runtime',
-      overview: 'Shared ACP runtime composition',
-      isProject: true,
-      phases: [
-        {
-          name: 'Runtime',
-          todos: [{ id: 'runtime', content: 'compose ACP runtime', status: 'pending' }],
-        },
-      ],
-      text: 'Proceed with the Cursor plan?',
-    }, handlerContext('cursor/create_plan', 'plan-rpc-1'))).resolves.toEqual({ accepted: true });
-
-    expect(writeMetadata).not.toHaveBeenCalled();
-    expect(writeStateField).toHaveBeenCalledTimes(1);
-    expect(readMetadata()).toMatchObject({
-      sessionWorkStateV1: {
-        backendId: 'cursor',
-        items: [
-          {
-            id: 'todo:cursor:runtime',
-            title: 'Runtime: compose ACP runtime',
-            status: 'pending',
-          },
-        ],
-      },
-    });
-    expect(requestDecision).toHaveBeenCalledTimes(1);
-    expect(requestDecision).toHaveBeenNthCalledWith(1, {
-      provider: 'cursor',
-      requestId: 'plan-rpc-1',
-      toolCallId: 'cursor:cursor/create_plan:ExitPlanMode:plan-rpc-1',
-      toolName: 'ExitPlanMode',
-      input: {
-        title: 'Implement Cursor',
-        name: 'Cursor Runtime',
-        overview: 'Shared ACP runtime composition',
-        isProject: true,
-        plan: 'Proceed with the Cursor plan?',
-      },
-    }, {
-      signal: HANDLER_CONTEXT.signal,
-    });
-  });
-
-  it('keeps create_plan approval available when optional todo metadata projection fails', async () => {
-    const { ctx, requestDecision } = createPluginContextFixture({
-      writeStateField: async () => {
-        throw new Error('todo metadata unavailable');
-      },
-    });
-    const extensions = createCursorAcpRuntimeExtensions({ ctx });
-
-    await expect(extensions.requests?.['cursor/create_plan']?.({
-      title: 'Implement Cursor',
-      phases: [
-        {
-          name: 'Runtime',
-          todos: [{ id: 'runtime', content: 'compose ACP runtime', status: 'pending' }],
-        },
-      ],
-      plan: '# Plan\n\nProceed with the Cursor plan?',
-    }, handlerContext('cursor/create_plan', 'plan-rpc-2'))).resolves.toEqual({ accepted: true });
-
-    expect(requestDecision).toHaveBeenNthCalledWith(1, {
-      provider: 'cursor',
-      requestId: 'plan-rpc-2',
-      toolCallId: 'cursor:cursor/create_plan:ExitPlanMode:plan-rpc-2',
-      toolName: 'ExitPlanMode',
-      input: {
-        title: 'Implement Cursor',
-        plan: '# Plan\n\nProceed with the Cursor plan?',
-      },
-    }, {
-      signal: HANDLER_CONTEXT.signal,
-    });
-  });
-
-  it('keeps diagnostic-only extension logs bounded to payload keys', async () => {
-    const { ctx, debug } = createPluginContextFixture();
-    const extensions = createCursorAcpRuntimeExtensions({ ctx });
-
-    await expect(extensions.requests?.['cursor/task']?.({
-      taskId: 'task-1',
-      secretPrompt: 'do not log this prompt',
-    }, {
-      ...HANDLER_CONTEXT,
-      method: 'cursor/task',
-    })).resolves.toEqual({});
-    await extensions.notifications?.['cursor/generate_image']?.({
-      prompt: 'do not log this image prompt',
-      seed: 123,
-    }, {
-      ...HANDLER_CONTEXT,
-      method: 'cursor/generate_image',
-    });
-
-    expect(debug).toHaveBeenNthCalledWith(1, 'Cursor ACP task extension is diagnostic-only in V1', {
-      keys: ['secretPrompt', 'taskId'],
-    });
-    expect(debug).toHaveBeenNthCalledWith(2, 'Cursor ACP image generation notification is diagnostic-only in V1', {
-      keys: ['prompt', 'seed'],
-    });
-    expect(JSON.stringify(debug.mock.calls)).not.toContain('do not log');
+    expect(fixture.disposeMediaRoot).toHaveBeenCalledOnce();
   });
 });

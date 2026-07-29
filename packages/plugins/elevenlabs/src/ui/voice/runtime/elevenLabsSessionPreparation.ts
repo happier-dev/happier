@@ -4,8 +4,17 @@ import {
   VoiceRealtimeJsonValueSchema,
   type VoiceRealtimeJsonValue,
 } from '@happier-dev/protocol';
+import type {
+  VoiceMachineError,
+  VoiceMachineErrorKind,
+} from '@happier-dev/bundled-voice-runtime-contract';
+import type {
+  PluginVoiceAccountOperationService,
+  PluginVoiceHostedConversationService,
+} from '@happier-dev/plugin-sdk/runtime';
 
-import type { ElevenLabsVoiceProviderSettings } from '../../../protocol/voice/index.js';
+import { ElevenLabsVoiceProviderSettingsSchema } from '../../../protocol/voice/index.js';
+import { mintElevenLabsConversationAuthWithAccountOperations } from '../providerOperations.js';
 import type {
   ElevenLabsPreparedSession,
   ElevenLabsSessionPreparation,
@@ -37,36 +46,14 @@ export function createElevenLabsSessionPreparationService(deps: Readonly<{
     providerId: string | null;
     assistantLanguage: string | null;
     welcome: WelcomeConfig;
-    providerConfig: ElevenLabsVoiceProviderSettings | null;
+    providerConfig: unknown;
   }> | null;
-  createProviderClient: (providerId: string) => Readonly<{
-    credentialStatus: () => Promise<Readonly<{ exists: boolean }>>;
-    mintConversationAuth: (input: Readonly<{
-      agentId: string;
-      textOnly: boolean;
-      signal?: AbortSignal | null;
-    }>) => Promise<Readonly<{ kind: 'token' | 'signed_url'; value: string }>>;
-  }>;
-  getCredentials: () => Promise<unknown | null>;
-  fetchHostedVoiceToken: (credentials: unknown, input: Readonly<{
-    sessionId: string | null;
-    signal: AbortSignal;
-  }>) => Promise<
-    | Readonly<{
-        allowed: true;
-        leaseId: string;
-        bindingNonce: string;
-        token: string;
-        expiresAtMs: number;
-      }>
-    | Readonly<{
-        allowed: false;
-        reason: string;
-      }>
-  >;
   presentPaywall: () => Promise<Readonly<{ purchased: boolean }>>;
   alert: (titleKey: string, bodyKey: string) => void;
-  createMachineError: (input: Readonly<{ kind: string; reason: string }>) => Readonly<{ kind: string; reason: string }>;
+  createMachineError: (input: Readonly<{
+    kind: VoiceMachineErrorKind;
+    reason: string;
+  }>) => VoiceMachineError;
 }>) {
   const isSelected = (settings: unknown): boolean =>
     deps.projectVoiceSettings(settings, deps.providerId)?.providerId === deps.providerId;
@@ -77,11 +64,16 @@ export function createElevenLabsSessionPreparationService(deps: Readonly<{
     requestedTargetSessionId: string | null;
     retryAfterPaywall: boolean;
     settings: unknown;
+    accountOperations: PluginVoiceAccountOperationService;
+    hostedConversation: PluginVoiceHostedConversationService | null;
     signal: AbortSignal;
     textOnly: boolean;
   }>): Promise<ElevenLabsSessionPreparation> => {
     const voiceSettings = deps.projectVoiceSettings(input.settings, deps.providerId);
-    const providerSettings = voiceSettings?.providerConfig ?? null;
+    const parsedProviderSettings = ElevenLabsVoiceProviderSettingsSchema.safeParse(
+      voiceSettings?.providerConfig,
+    );
+    const providerSettings = parsedProviderSettings.success ? parsedProviderSettings.data : null;
     if (voiceSettings && !providerSettings) {
       return {
         kind: 'declined',
@@ -103,17 +95,9 @@ export function createElevenLabsSessionPreparationService(deps: Readonly<{
           error: deps.createMachineError({ kind: 'provider_error', reason: 'realtime_byo_not_configured' }),
         };
       }
-      const providerClient = deps.createProviderClient(deps.providerId);
-      const status = await providerClient.credentialStatus();
       if (input.signal.aborted) return { kind: 'aborted' };
-      if (!status.exists) {
-        deps.alert('common.error', 'settingsVoice.byo.notConfigured');
-        return {
-          kind: 'declined',
-          error: deps.createMachineError({ kind: 'provider_error', reason: 'realtime_byo_not_configured' }),
-        };
-      }
-      const auth = await providerClient.mintConversationAuth({
+      const auth = await mintElevenLabsConversationAuthWithAccountOperations({
+        accountOperations: input.accountOperations,
         agentId,
         textOnly: input.textOnly,
         signal: input.signal,
@@ -133,23 +117,25 @@ export function createElevenLabsSessionPreparationService(deps: Readonly<{
       };
     }
 
-    const credentials = await deps.getCredentials();
-    if (input.signal.aborted) return { kind: 'aborted' };
-    if (!credentials) {
-      deps.alert('common.error', 'errors.authenticationFailed');
+    if (!input.hostedConversation) {
       return {
         kind: 'declined',
-        error: deps.createMachineError({ kind: 'provider_auth_invalid', reason: 'realtime_authentication_required' }),
+        error: deps.createMachineError({
+          kind: 'provider_error',
+          reason: 'realtime_hosted_conversation_unavailable',
+        }),
       };
     }
 
     let retriedAfterPaywall = input.retryAfterPaywall;
     for (;;) {
-      const response = await deps.fetchHostedVoiceToken(credentials, {
+      const response = await input.hostedConversation.start({
         sessionId: input.requestedTargetSessionId,
-        signal: input.signal,
       });
-      if (input.signal.aborted) return { kind: 'aborted' };
+      if (input.signal.aborted) {
+        await input.hostedConversation.abort();
+        return { kind: 'aborted' };
+      }
       if (response.allowed) {
         return {
           kind: 'prepared',
@@ -170,8 +156,20 @@ export function createElevenLabsSessionPreparationService(deps: Readonly<{
           },
         };
       }
+      if (response.reason === 'authentication_required') {
+        await input.hostedConversation.abort();
+        deps.alert('common.error', 'errors.authenticationFailed');
+        return {
+          kind: 'declined',
+          error: deps.createMachineError({
+            kind: 'provider_auth_invalid',
+            reason: 'realtime_authentication_required',
+          }),
+        };
+      }
       if (response.reason === 'subscription_required' || response.reason === 'quota_exceeded') {
         if (retriedAfterPaywall) {
+          await input.hostedConversation.abort();
           deps.alert('common.error', 'errors.voiceServiceUnavailable');
           return {
             kind: 'declined',
@@ -179,13 +177,18 @@ export function createElevenLabsSessionPreparationService(deps: Readonly<{
           };
         }
         const result = await deps.presentPaywall();
-        if (input.signal.aborted) return { kind: 'aborted' };
+        if (input.signal.aborted) {
+          await input.hostedConversation.abort();
+          return { kind: 'aborted' };
+        }
         if (result.purchased) {
           retriedAfterPaywall = true;
           continue;
         }
+        await input.hostedConversation.abort();
         return { kind: 'aborted' };
       }
+      await input.hostedConversation.abort();
       deps.alert('common.error', 'errors.voiceServiceUnavailable');
       return {
         kind: 'declined',

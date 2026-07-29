@@ -2,14 +2,13 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
-import type {
-  McpServerSpecV1,
-  PluginApiMcpDiscoveryProviderRegistrationV1,
-} from '@happier-dev/plugin-sdk';
+import type { McpServerSpecV1 } from '@happier-dev/plugin-sdk/experimental/mcp';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 
 import { activate } from './activate.js';
+import { PLUGIN_MANIFEST } from './manifest.js';
 
 describe('OpenCode plugin activation MCP discovery', () => {
   it('maps recovered remote OpenCode MCP config entries into endpoint MCP specs', async () => {
@@ -35,19 +34,13 @@ describe('OpenCode plugin activation MCP discovery', () => {
       }),
       'utf8',
     );
-    let registration: PluginApiMcpDiscoveryProviderRegistrationV1 | null = null;
-    activate({
-      registerAgentRuntime: vi.fn(),
-      registerMcpDiscoveryProvider: vi.fn((nextRegistration) => {
-        registration = nextRegistration;
-      }),
-    });
-
-    expect(registration).not.toBeNull();
-    const result = await registration!.discover({
+    const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    const registration = activation.registration('mcp.discoveryProviders', 'config');
+    if (!registration) throw new Error('Missing OpenCode MCP discovery registration');
+    const result = await Reflect.apply(registration, undefined, [{
       sessionId: 'session_1',
       directory: projectRoot,
-    });
+    }]);
 
     expect(result.warnings).toEqual([]);
     expect(result.servers).toEqual(expect.arrayContaining<McpServerSpecV1>([
@@ -73,6 +66,7 @@ describe('OpenCode plugin activation MCP discovery', () => {
         id: 'opencode.config.disabledDocs',
       }),
     ]));
+    await activation.dispose();
   });
 
   it('normalizes discovered OpenCode MCP server names before using them in spec ids', async () => {
@@ -90,20 +84,16 @@ describe('OpenCode plugin activation MCP discovery', () => {
       }),
       'utf8',
     );
-    let registration: PluginApiMcpDiscoveryProviderRegistrationV1 | null = null;
-    activate({
-      registerAgentRuntime: vi.fn(),
-      registerMcpDiscoveryProvider: vi.fn((nextRegistration) => {
-        registration = nextRegistration;
-      }),
-    });
-
-    const result = await registration!.discover({
+    const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    const registration = activation.registration('mcp.discoveryProviders', 'config');
+    if (!registration) throw new Error('Missing OpenCode MCP discovery registration');
+    const result = await Reflect.apply(registration, undefined, [{
       sessionId: 'session_1',
       directory: projectRoot,
-    });
+    }]);
 
     expect(result).toEqual({
+      items: [],
       servers: [
         expect.objectContaining({
           id: 'opencode.config.team-docs',
@@ -112,6 +102,7 @@ describe('OpenCode plugin activation MCP discovery', () => {
       ],
       warnings: [],
     });
+    await activation.dispose();
   });
 
   it('skips OpenCode MCP config entries whose normalized ids collide', async () => {
@@ -132,22 +123,19 @@ describe('OpenCode plugin activation MCP discovery', () => {
       }),
       'utf8',
     );
-    let registration: PluginApiMcpDiscoveryProviderRegistrationV1 | null = null;
-    activate({
-      registerAgentRuntime: vi.fn(),
-      registerMcpDiscoveryProvider: vi.fn((nextRegistration) => {
-        registration = nextRegistration;
-      }),
-    });
-
-    const result = await registration!.discover({
+    const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    const registration = activation.registration('mcp.discoveryProviders', 'config');
+    if (!registration) throw new Error('Missing OpenCode MCP discovery registration');
+    const result = await Reflect.apply(registration, undefined, [{
       sessionId: 'session_1',
       directory: projectRoot,
-    });
+    }]);
 
     expect(result).toEqual({
+      items: [],
       servers: [],
       warnings: [],
     });
+    await activation.dispose();
   });
 });

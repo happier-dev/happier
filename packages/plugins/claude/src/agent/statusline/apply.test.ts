@@ -3,41 +3,25 @@ import { describe, expect, it, vi } from 'vitest';
 import { createClaudeStatuslineApplier } from './apply.js';
 import type { ClaudeStatuslinePayload } from './payload.js';
 
-type MetadataRecord = Record<string, unknown>;
-
-function createHarness(identity?: Readonly<{ providerSessionId?: string | null; transcriptPath?: string | null }>) {
-    let metadata: MetadataRecord = {};
-    const writeMetadata = vi.fn(async (request: Readonly<{
-        kind: 'update';
-        handler: (current: Readonly<MetadataRecord>) => Readonly<MetadataRecord>;
-        reason?: string;
-    }>) => {
-        metadata = { ...request.handler(metadata) };
-    });
-    const logger = { debug: vi.fn(), warn: vi.fn(), info: vi.fn(), error: vi.fn() };
+function createHarness(identity?: Readonly<{
+    providerSessionId?: string | null;
+    transcriptPath?: string | null;
+}>) {
+    const logger = { debug: vi.fn(), warn: vi.fn() };
     const onRuntimeTruth = vi.fn();
+    const onEffectiveModel = vi.fn();
     const onModelChanged = vi.fn();
     const applier = createClaudeStatuslineApplier({
         logger,
-        writeMetadata,
         readIdentity: () => ({
             providerSessionId: identity?.providerSessionId ?? null,
             transcriptPath: identity?.transcriptPath ?? null,
         }),
         onRuntimeTruth,
+        onEffectiveModel,
         onModelChanged,
     });
-    return {
-        applier,
-        writeMetadata,
-        logger,
-        onRuntimeTruth,
-        onModelChanged,
-        readMetadata: () => metadata,
-        seedMetadata: (value: MetadataRecord) => {
-            metadata = value;
-        },
-    };
+    return { applier, logger, onRuntimeTruth, onEffectiveModel, onModelChanged };
 }
 
 const basePayload: ClaudeStatuslinePayload = {
@@ -48,189 +32,110 @@ const basePayload: ClaudeStatuslinePayload = {
     version: '2.1.170',
 };
 
-async function flush(): Promise<void> {
-    await new Promise((resolve) => setTimeout(resolve, 0));
-}
-
 describe('createClaudeStatuslineApplier', () => {
-    it('adopts model id, display name, and the direct context window into sessionModelsV1', async () => {
-        const harness = createHarness();
-
-        harness.applier.apply(basePayload);
-        await flush();
-
-        expect(harness.writeMetadata).toHaveBeenCalledTimes(1);
-        const state = harness.readMetadata().sessionModelsV1 as {
-            v: number;
-            provider: string;
-            currentModelId: string;
-            availableModels: Array<{ id: string; name: string; contextWindowTokens?: number }>;
-        };
-        expect(state.v).toBe(1);
-        expect(state.agentId).toBe('claude');
-        expect(state.currentModelId).toBe('claude-fable-5');
-        const entry = state.availableModels.find((model) => model.id === 'claude-fable-5');
-        expect(entry).toMatchObject({ name: 'Fable 5', contextWindowTokens: 1_000_000 });
-    });
-
-    it('dedupes identical payloads to a single metadata write', async () => {
+    it('publishes effective model identity and the direct context window once', () => {
         const harness = createHarness();
 
         harness.applier.apply(basePayload);
         harness.applier.apply(basePayload);
-        harness.applier.apply(basePayload);
-        await flush();
 
-        expect(harness.writeMetadata).toHaveBeenCalledTimes(1);
-    });
-
-    it('emits one model-changed event when effective model evidence changes the active model', async () => {
-        const harness = createHarness();
-        harness.seedMetadata({
-            sessionModelsV1: {
-                v: 1,
-                agentId: 'claude',
-                updatedAt: 1,
-                currentModelId: 'claude-sonnet-4-6',
-                availableModels: [{ id: 'claude-sonnet-4-6', name: 'Sonnet 4.6' }],
-            },
-        });
-
-        harness.applier.apply(basePayload);
-        harness.applier.apply(basePayload);
-        await flush();
-
-        expect((harness.readMetadata().sessionModelsV1 as { currentModelId: string }).currentModelId)
-            .toBe('claude-fable-5');
-        expect(harness.onModelChanged).toHaveBeenCalledTimes(1);
-        expect(harness.onModelChanged).toHaveBeenCalledWith(expect.objectContaining({
+        expect(harness.onEffectiveModel).toHaveBeenCalledTimes(1);
+        expect(harness.onEffectiveModel).toHaveBeenCalledWith({
             modelId: 'claude-fable-5',
-            previousModelId: 'claude-sonnet-4-6',
-        }));
+            displayName: 'Fable 5',
+            contextWindowTokens: 1_000_000,
+        });
     });
 
-    it('writes again when the model or window changes', async () => {
+    it('emits model changes through the semantic sink without a metadata writer', () => {
         const harness = createHarness();
 
         harness.applier.apply(basePayload);
         harness.applier.apply({
             ...basePayload,
-            model: { id: 'claude-sonnet-4-6', display_name: 'Sonnet 4.6' },
+            model: { id: 'claude-opus-4-8', display_name: 'Opus 4.8' },
+        });
+
+        expect(harness.onModelChanged).toHaveBeenCalledWith(expect.objectContaining({
+            previousModelId: 'claude-fable-5',
+            modelId: 'claude-opus-4-8',
+        }));
+    });
+
+    it('publishes new effective evidence when the model or window changes', () => {
+        const harness = createHarness();
+
+        harness.applier.apply(basePayload);
+        harness.applier.apply({
+            ...basePayload,
             context_window: { context_window_size: 200_000 },
         });
-        await flush();
 
-        expect(harness.writeMetadata).toHaveBeenCalledTimes(2);
-        const state = harness.readMetadata().sessionModelsV1 as {
-            currentModelId: string;
-            availableModels: Array<{ id: string; contextWindowTokens?: number }>;
-        };
-        expect(state.currentModelId).toBe('claude-sonnet-4-6');
-        expect(state.availableModels.map((model) => model.id)).toEqual(
-            expect.arrayContaining(['claude-fable-5', 'claude-sonnet-4-6']),
-        );
+        expect(harness.onEffectiveModel).toHaveBeenCalledTimes(2);
+        expect(harness.onEffectiveModel).toHaveBeenLastCalledWith(expect.objectContaining({
+            modelId: 'claude-fable-5',
+            contextWindowTokens: 200_000,
+        }));
     });
 
-    it('preserves existing availableModels entry facts when upserting the window', async () => {
-        const harness = createHarness();
-        harness.seedMetadata({
-            sessionModelsV1: {
-                v: 1,
-                agentId: 'claude',
-                updatedAt: 1,
-                currentModelId: 'claude-fable-5',
-                availableModels: [{
-                    id: 'claude-fable-5',
-                    name: 'Fable 5',
-                    description: 'Most capable model',
-                }],
-            },
+    it('ignores payloads from a foreign Claude session when identity is known', () => {
+        const harness = createHarness({
+            providerSessionId: 'other-session',
+            transcriptPath: '/other/transcript.jsonl',
         });
 
         harness.applier.apply(basePayload);
-        await flush();
 
-        const state = harness.readMetadata().sessionModelsV1 as {
-            availableModels: Array<{ id: string; description?: string; contextWindowTokens?: number }>;
-        };
-        const entry = state.availableModels.find((model) => model.id === 'claude-fable-5');
-        expect(entry).toMatchObject({ description: 'Most capable model', contextWindowTokens: 1_000_000 });
+        expect(harness.onEffectiveModel).not.toHaveBeenCalled();
+        expect(harness.onRuntimeTruth).not.toHaveBeenCalled();
     });
 
-    it('ignores payloads from a foreign Claude session when identity is known', async () => {
-        const harness = createHarness({ providerSessionId: 'other-session', transcriptPath: '/other/transcript.jsonl' });
+    it('accepts payloads before session identity is adopted', () => {
+        const harness = createHarness();
 
         harness.applier.apply(basePayload);
-        await flush();
 
-        expect(harness.writeMetadata).not.toHaveBeenCalled();
+        expect(harness.onEffectiveModel).toHaveBeenCalledTimes(1);
     });
 
-    it('accepts payloads before session identity is adopted (statusline fires at TUI start)', async () => {
-        const harness = createHarness({ providerSessionId: null, transcriptPath: null });
-
-        harness.applier.apply(basePayload);
-        await flush();
-
-        expect(harness.writeMetadata).toHaveBeenCalledTimes(1);
-    });
-
-    it('matches on the transcript path when the Claude session id rotated (fork/compact)', async () => {
+    it('matches on transcript path after provider identity rotates', () => {
         const harness = createHarness({
             providerSessionId: 'pre-rotation-id',
             transcriptPath: '/projects/demo/transcript.jsonl',
         });
 
         harness.applier.apply(basePayload);
-        await flush();
 
-        expect(harness.writeMetadata).toHaveBeenCalledTimes(1);
+        expect(harness.onEffectiveModel).toHaveBeenCalledTimes(1);
     });
 
-    it('tolerates payloads without model facts and never throws', async () => {
+    it('tolerates payloads without model facts', () => {
         const harness = createHarness();
 
         expect(() => harness.applier.apply({ version: '2.1.170' })).not.toThrow();
-        await flush();
-
-        expect(harness.writeMetadata).not.toHaveBeenCalled();
+        expect(harness.onEffectiveModel).not.toHaveBeenCalled();
     });
 
-    it('feeds verified model/effort runtime truth with its own model|effort dedup key (Y)', async () => {
+    it('feeds verified model and effort truth with a separate dedupe key', () => {
         const harness = createHarness();
 
-        // The metadata dedup key is model|window and cannot see effort changes; the runtime-truth
-        // feed must have its OWN model|effort key so an effort-only change still reconciles.
         harness.applier.apply({ ...basePayload, effort: { level: 'high' } });
         harness.applier.apply({ ...basePayload, effort: { level: 'high' } });
-        expect(harness.onRuntimeTruth).toHaveBeenCalledTimes(1);
-        expect(harness.onRuntimeTruth).toHaveBeenCalledWith({ modelId: 'claude-fable-5', effortLevel: 'high' });
-
         harness.applier.apply({ ...basePayload, effort: { level: 'medium' } });
+
         expect(harness.onRuntimeTruth).toHaveBeenCalledTimes(2);
-        expect(harness.onRuntimeTruth).toHaveBeenLastCalledWith({ modelId: 'claude-fable-5', effortLevel: 'medium' });
-        await flush();
-
-        // The truth feed never adds metadata writes beyond the model|window dedup.
-        expect(harness.writeMetadata).toHaveBeenCalledTimes(1);
+        expect(harness.onRuntimeTruth).toHaveBeenLastCalledWith({
+            modelId: 'claude-fable-5',
+            effortLevel: 'medium',
+        });
     });
 
-    it('never feeds runtime truth from a foreign Claude session (Y)', async () => {
-        const harness = createHarness({ providerSessionId: 'other-session', transcriptPath: '/other/transcript.jsonl' });
-
-        harness.applier.apply({ ...basePayload, effort: { level: 'high' } });
-        await flush();
-
-        expect(harness.onRuntimeTruth).not.toHaveBeenCalled();
-    });
-
-    it('logs a change-only runtime canary line', async () => {
+    it('logs a change-only runtime canary line', () => {
         const harness = createHarness();
 
         harness.applier.apply(basePayload);
         harness.applier.apply(basePayload);
         harness.applier.apply({ ...basePayload, fast_mode: true });
-        await flush();
 
         const canaryCalls = harness.logger.debug.mock.calls.filter(
             (call) => typeof call[0] === 'string' && call[0].includes('statusline runtime state'),

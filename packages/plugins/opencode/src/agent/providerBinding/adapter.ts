@@ -1,25 +1,29 @@
 import { createHash } from 'node:crypto';
 
 import type {
-  AgentProviderBindingAdapterV1,
-  AgentProviderBindingMaterializeInputV1,
-  AgentProviderBindingPrepareInputV1,
-  AgentProviderBindingPreparedV1,
-} from '@happier-dev/plugin-sdk';
+  AgentProviderBindingAdapter,
+  AgentProviderBindingMaterializeInput,
+  AgentProviderBindingPrepareInput,
+  AgentProviderBindingPrepared,
+} from '@happier-dev/plugin-sdk/agent-runtime';
 
-type ProviderBindingMaterialization = Awaited<ReturnType<AgentProviderBindingAdapterV1['materialize']>>;
+type ProviderBindingMaterialization = Awaited<ReturnType<AgentProviderBindingAdapter['materialize']>>;
 type ProviderBindingEnvOverlay = Extract<ProviderBindingMaterialization, { kind: 'configFile' }>['env'];
 type ProviderCredentialTransport = NonNullable<
-  AgentProviderBindingMaterializeInputV1['binding']['runtimeCredentialTransport']
+  AgentProviderBindingMaterializeInput['binding']['runtimeCredentialTransport']
 >;
 
 const OPENCODE_PROVIDER_SECRET_ENV_KEY = 'HAPPIER_OPENCODE_PROVIDER_API_KEY';
+const OPENCODE_OPENAI_NO_AUTH_DRIVER_PLACEHOLDER = 'happier-no-auth';
 export const OPENCODE_PROVIDER_BINDING_ADAPTER_VERSION_V1 = 1;
+export const OPENCODE_PROVIDER_CONFIG_RELATIVE_PATH = 'opencode/opencode.json';
 
 export const OPENCODE_PROVIDER_OWNED_ENV_KEYS = Object.freeze([
   OPENCODE_PROVIDER_SECRET_ENV_KEY,
   'OPENCODE_AUTH_CONTENT',
   'OPENCODE_CONFIG_CONTENT',
+  'OPENAI_API_KEY',
+  'ANTHROPIC_API_KEY',
 ] as const);
 
 const DRIVER_BY_PROTOCOL = Object.freeze({
@@ -45,8 +49,8 @@ function createOpenCodeProviderKey(input: Readonly<{
 }
 
 function prepareOpenCodeProviderBindingV1(
-  input: AgentProviderBindingPrepareInputV1,
-): AgentProviderBindingPreparedV1 {
+  input: AgentProviderBindingPrepareInput,
+): AgentProviderBindingPrepared {
   return {
     v: 1,
     materialization: 'configFile',
@@ -54,7 +58,7 @@ function prepareOpenCodeProviderBindingV1(
   };
 }
 
-function assertPreparedBindingMatches(input: AgentProviderBindingMaterializeInputV1): string {
+function assertPreparedBindingMatches(input: AgentProviderBindingMaterializeInput): string {
   const expected = createOpenCodeProviderKey({
     agentTargetKey: input.binding.agentTargetKey,
     connectionId: input.binding.selection.connectionId,
@@ -85,7 +89,7 @@ function sortHeaders(headers: Readonly<Record<string, string>>): Record<string, 
   return Object.fromEntries(Object.entries(headers).sort(([left], [right]) => compareText(left, right)));
 }
 
-function resolveCredentialOptions(input: AgentProviderBindingMaterializeInputV1): Readonly<{
+function resolveCredentialOptions(input: AgentProviderBindingMaterializeInput): Readonly<{
   secretValue: string | null;
   apiKey?: string;
   header?: Readonly<{ name: string; value: string }>;
@@ -95,7 +99,12 @@ function resolveCredentialOptions(input: AgentProviderBindingMaterializeInputV1)
     if (input.binding.runtimeCredentialTransport !== null) {
       throw new Error('OpenCode provider binding credential does not match its selected transport');
     }
-    return { secretValue: null };
+    return {
+      secretValue: null,
+      ...(input.binding.endpoint.protocol === 'openai-responses'
+        ? { apiKey: OPENCODE_OPENAI_NO_AUTH_DRIVER_PLACEHOLDER }
+        : {}),
+    };
   }
 
   const { transport, value } = input.credential;
@@ -136,7 +145,7 @@ function buildOwnedEnvironment(secretValue: string | null): ProviderBindingEnvOv
 }
 
 async function materializeOpenCodeProviderBindingV1(
-  input: AgentProviderBindingMaterializeInputV1,
+  input: AgentProviderBindingMaterializeInput,
 ): Promise<ProviderBindingMaterialization> {
   const adapterBindingKey = assertPreparedBindingMatches(input);
   const protocol = input.binding.endpoint.protocol;
@@ -161,14 +170,14 @@ async function materializeOpenCodeProviderBindingV1(
   const config = {
     $schema: 'https://opencode.ai/config.json',
     enabled_providers: [adapterBindingKey],
-    model: `${adapterBindingKey}/${input.binding.selection.modelId}`,
+    model: `${adapterBindingKey}/${input.binding.selection.model.id}`,
     provider: {
       [adapterBindingKey]: {
         npm: DRIVER_BY_PROTOCOL[protocol],
         name: 'Happier provider',
         options,
         models: {
-          [input.binding.selection.modelId]: { name: input.binding.selection.modelId },
+          [input.binding.selection.model.id]: { name: input.binding.selection.model.name },
         },
       },
     },
@@ -179,7 +188,7 @@ async function materializeOpenCodeProviderBindingV1(
     kind: 'configFile',
     env: buildOwnedEnvironment(credential.secretValue),
     files: [{
-      relativePath: 'opencode/opencode.json',
+      relativePath: OPENCODE_PROVIDER_CONFIG_RELATIVE_PATH,
       utf8: `${JSON.stringify(config, null, 2)}\n`,
     }],
     ...(credential.additionalRedactionValues
@@ -193,4 +202,4 @@ export const OPENCODE_PROVIDER_BINDING_ADAPTER_V1 = Object.freeze({
   adapterVersion: OPENCODE_PROVIDER_BINDING_ADAPTER_VERSION_V1,
   prepare: prepareOpenCodeProviderBindingV1,
   materialize: materializeOpenCodeProviderBindingV1,
-} satisfies AgentProviderBindingAdapterV1);
+} satisfies AgentProviderBindingAdapter);

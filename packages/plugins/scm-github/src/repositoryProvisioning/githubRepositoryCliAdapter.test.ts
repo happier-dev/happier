@@ -1,4 +1,4 @@
-import type { ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm';
+import type { ScmHostingProviderRef } from '@happier-dev/plugin-sdk/experimental/scm';
 import { describe, expect, it } from 'vitest';
 
 const provider: ScmHostingProviderRef = {
@@ -82,7 +82,10 @@ describe('GitHub CLI repository provisioning adapter', () => {
     expect(mod).not.toBeNull();
     if (!mod) return;
 
-    const calls: Array<Readonly<{ binPath: string; args: readonly string[] }>> = [];
+    const calls: Array<Readonly<{
+      executable: Readonly<{ kind: 'systemTool'; id: string }>;
+      args: readonly string[];
+    }>> = [];
     const adapter = mod.createGithubRepositoryCliAdapter();
 
     await expect(adapter.createRepository({
@@ -91,12 +94,10 @@ describe('GitHub CLI repository provisioning adapter', () => {
       repositoryName: 'happier',
       visibility: 'public',
       runtimeServices: {
-        resolveInstallableCommand: async () => ({
-          kind: 'available',
-          source: 'managed',
-          binPath: '/managed/gh/current/bin/gh',
-        }),
-        runCommand: async (request: Readonly<{ binPath: string; args: readonly string[] }>) => {
+        executeCommand: async (request: Readonly<{
+          executable: Readonly<{ kind: 'systemTool'; id: string }>;
+          args: readonly string[];
+        }>) => {
           calls.push(request);
           if (request.args[0] === 'auth') {
             return { ok: true, stdout: '', stderr: '', exitCode: 0 };
@@ -117,7 +118,7 @@ describe('GitHub CLI repository provisioning adapter', () => {
       ['auth', 'status', '--hostname', 'ghe.internal.test'],
       ['repo', 'create', 'ghe.internal.test/happier-dev/happier', '--public'],
     ]);
-    expect(calls[0]?.binPath).toBe('/managed/gh/current/bin/gh');
+    expect(calls[0]?.executable).toEqual({ kind: 'systemTool', id: 'github-cli' });
   });
 
   it('keeps github.com repository creation selectors unqualified by host', async () => {

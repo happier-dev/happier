@@ -103,6 +103,25 @@ describe('session runner control contract', () => {
       sessionId: 'sess_with_spaces',
       mode: 'force_current_cli',
     });
+
+    expect(schema.parse({
+      sessionId: 'sess_with_provider_change',
+      mode: 'force_current_cli',
+      reason: 'provider_binding_change_recovery',
+      providerBindingSecurityChangeConfirmationV1: {
+        v: 1,
+        sessionId: 'sess_with_provider_change',
+        connectionId: 'pc_gateway',
+        previousBindingSecurityFingerprint: 'binding-security:v1:a',
+        nextBindingSecurityFingerprint: 'binding-security:v1:b',
+      },
+    })).toMatchObject({
+      reason: 'provider_binding_change_recovery',
+      providerBindingSecurityChangeConfirmationV1: {
+        previousBindingSecurityFingerprint: 'binding-security:v1:a',
+        nextBindingSecurityFingerprint: 'binding-security:v1:b',
+      },
+    });
   });
 
   it('rejects malformed planned restart requests', () => {
@@ -117,6 +136,29 @@ describe('session runner control contract', () => {
       sessionId: 'sess_123',
       reason: 'doctor_repair',
       expectedRunnerPid: -1,
+    }).success).toBe(false);
+    expect(schema.safeParse({
+      sessionId: 'sess_123',
+      mode: 'if_stale',
+      reason: 'provider_binding_change_recovery',
+    }).success).toBe(false);
+    expect(schema.safeParse({
+      sessionId: 'sess_123',
+      mode: 'force_current_cli',
+      reason: 'provider_binding_change_recovery',
+      providerBindingSecurityChangeConfirmationV1: {
+        v: 1,
+        sessionId: 'another_session',
+        connectionId: 'pc_gateway',
+        previousBindingSecurityFingerprint: 'binding-security:v1:a',
+        nextBindingSecurityFingerprint: 'binding-security:v1:b',
+      },
+    }).success).toBe(false);
+
+    const bulkSchema = protocolSchema('RestartAllSessionRunnersRequestV1Schema');
+    expect(bulkSchema.safeParse({
+      mode: 'force_current_cli',
+      reason: 'provider_binding_change_recovery',
     }).success).toBe(false);
   });
 

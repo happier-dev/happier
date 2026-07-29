@@ -1,215 +1,123 @@
-import { randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { readFile, writeFile } from 'node:fs/promises';
 
 import type {
-  CreateExecutionRunBackendParamsV1,
-  ExecLaunchInputV1,
-  ExecRunResultV1,
-  ExecutionRunHostMessageV1,
-  PluginContextV1,
-  PluginReviewCommentCreateRequestV1,
-  PluginReviewCommentCreateResultV1,
-  RegisterAgentRuntimeV1,
-  ReviewCommentSnapshotV1,
-  ReviewCommentV1,
-  SystemToolLaunchGrantV1,
-  SystemToolResolveRequestV1,
-} from '@happier-dev/plugin-sdk';
-import { ReviewFindingsV2Schema } from '@happier-dev/plugin-sdk/reviews';
-import { describe, expect, it, vi } from 'vitest';
+  AgentExecutionRunEvent,
+  AgentExecutionRunOpenRequest,
+  AgentExecutionRunRuntime,
+  AgentRuntimeContext,
+} from '@happier-dev/plugin-sdk/agent-runtime';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import type {
+  PluginExecSpawnRequest,
+  PluginProcessResult,
+  PluginResolvedSystemTool,
+  PluginServices,
+} from '@happier-dev/plugin-sdk/runtime';
+import { ReviewFindingsV2Schema } from '@happier-dev/plugin-sdk/experimental/reviews';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { activate } from './activate.js';
+import { PLUGIN_MANIFEST } from './manifest.js';
 
-function readRegisteredBackend(registerAgentRuntime: ReturnType<typeof vi.fn>): RegisterAgentRuntimeV1 {
-  const registration = registerAgentRuntime.mock.calls[0]?.[0];
-  if (!registration || typeof registration !== 'object') {
-    throw new Error('Expected DeepSec activation to register a backend engine');
-  }
-  return registration as RegisterAgentRuntimeV1;
-}
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
-function createDeepSecComment(
-  request: PluginReviewCommentCreateRequestV1,
-  id = 'deepsec-comment-1',
-): ReviewCommentV1 {
-  const now = 123;
+function processResult(exitCode = 0): PluginProcessResult {
   return {
-    v: 1,
-    id,
-    accountId: 'account-1',
-    projectId: request.projectId,
-    workspaceId: request.workspaceId,
-    sessionId: request.sessionId,
-    runId: request.runId,
-    engineId: request.engineId,
-    findingId: request.findingId,
-    state: 'proposed',
-    body: request.body,
-    bodyVersion: 1,
-    anchor: request.anchor,
-    snapshot: request.snapshot,
-    author: { kind: 'plugin', pluginId: 'review-deepsec', engineRunId: request.runId },
-    flags: {},
-    dispositions: {},
-    threadId: id,
-    evidence: request.evidence,
-    transitions: [],
-    fingerprint: request.fingerprint,
-    createdAt: now,
-    updatedAt: now,
-    serverRevision: 1,
-    edits: [],
-    metadata: request.metadata,
+    termination: {
+      observed: { kind: 'exit', exitCode },
+      requestedBy: { kind: 'none' },
+    },
+    stdout: new Uint8Array(),
+    stderr: new Uint8Array(),
+    stdoutTruncated: false,
+    stderrTruncated: false,
   };
 }
 
-function createContextFixture(params?: Readonly<{
-  grant?: SystemToolLaunchGrantV1;
-  run?: (input: ExecLaunchInputV1) => Promise<ExecRunResultV1>;
-  checkAgentCliReadiness?: (
-    request: Readonly<{
-      candidates: readonly string[];
-      requirement: 'any' | 'all';
-      cwd?: string;
-      projectId?: string;
-      workspaceId?: string;
-    }>,
-  ) => Promise<unknown>;
-  createComment?: (
-    request: PluginReviewCommentCreateRequestV1,
-  ) => Promise<PluginReviewCommentCreateResultV1>;
-  resolveSnapshot?: () => Promise<ReviewCommentSnapshotV1 | null>;
+function createRuntimeContext(params?: Readonly<{
+  resolvedTool?: PluginResolvedSystemTool;
+  run?: (request: PluginExecSpawnRequest & { timeoutMs?: number }, options?: { signal?: AbortSignal }) => Promise<PluginProcessResult>;
+  checkReadiness?: (request: Readonly<{
+    candidates: readonly string[];
+    requirement: 'any' | 'all';
+    cwd?: string;
+    projectId?: string;
+    workspaceId?: string;
+    signal?: AbortSignal;
+  }>) => Promise<Readonly<{ launchable: readonly Readonly<{ agentId: string }>[] }>>;
 }>): Readonly<{
-  ctx: PluginContextV1;
+  context: AgentRuntimeContext;
   resolve: ReturnType<typeof vi.fn>;
   run: ReturnType<typeof vi.fn>;
-  checkAgentCliReadiness: ReturnType<typeof vi.fn>;
-  createComment: ReturnType<typeof vi.fn>;
-  resolveSnapshot: ReturnType<typeof vi.fn>;
-  readText: ReturnType<typeof vi.fn>;
+  checkReadiness: ReturnType<typeof vi.fn>;
 }> {
-  const grant = params?.grant ?? {
-    grantId: 'grant-1',
-    toolId: 'deepsec',
-    displayName: 'DeepSec',
-    source: 'user_config' as const,
+  const resolvedTool = params?.resolvedTool ?? {
+    executable: { kind: 'systemTool', id: 'deepsec-cli' },
     executablePath: '/usr/local/bin/deepsec',
-    launch: {
-      kind: 'binary' as const,
-      executablePath: '/usr/local/bin/deepsec',
-      args: ['--quiet'],
-    },
-    expiresAt: null,
   };
-  const resolve = vi.fn(async (_request: SystemToolResolveRequestV1) => grant);
-  const run = vi.fn(params?.run ?? (async () => ({
-    exitCode: 0,
-    signal: null,
-    stdout: '',
-    stderr: '',
+  const resolve = vi.fn(async () => resolvedTool);
+  const run = vi.fn(params?.run ?? (async () => processResult()));
+  const checkReadiness = vi.fn(params?.checkReadiness ?? (async () => ({
+    launchable: [{ agentId: 'claude' }],
   })));
-  const checkAgentCliReadiness = vi.fn(params?.checkAgentCliReadiness ?? (async () => ({
-    status: 'launchable',
-    launchable: [{
-      agentId: 'claude',
-      status: 'launchable',
-      source: 'system',
-      scope: 'launch',
-      checks: { launch: 'passed', auth: 'not_checked', buildPolicy: 'not_checked' },
-    }],
-    missing: [],
-    blocked: [],
-  })));
-  const createComment = vi.fn(params?.createComment ?? (async (request) => ({
-    comment: createDeepSecComment(request),
-  })));
-  const resolveSnapshot = vi.fn(params?.resolveSnapshot ?? (async () => ({
-    kind: 'text' as const,
-    selectedLines: ['  res.redirect(next);'],
-    beforeContext: ['export function redirect(next: string) {'],
-    afterContext: ['}'],
-    selectedLinesHash: 'selected-hash',
-    contextWindowHash: 'context-hash',
-    capturedAt: 123,
-    fileLength: 3,
-    source: 'workingTree' as const,
-    isUncommitted: true,
-    isUntracked: false,
-    truncated: false,
-    hasBidiControls: false,
-    likelyMinified: false,
-  })));
-    const readText = vi.fn(async () => [
-        'export function redirect(next: string) {',
-        '  res.redirect(next);',
-        '}',
-    ].join('\n'));
-    const createTempDirectory = vi.fn(async () => {
-      const directory = await mkdtemp(join(tmpdir(), 'happier-deepsec-test-'));
-      return {
-        path: directory,
-        async createTextFile(input: { suffix?: string; contents: string }) {
-          const path = join(directory, `${randomUUID()}${input.suffix ?? ''}`);
-          await writeFile(path, input.contents, 'utf8');
-          return path;
-        },
-        async createScopedPathListFile(input: { suffix?: string; paths: readonly string[] }) {
-          const path = join(directory, `${randomUUID()}${input.suffix ?? ''}`);
-          await writeFile(path, `${input.paths.join('\n')}\n`, 'utf8');
-          return {
-            status: 'created' as const,
-            path,
-            paths: input.paths,
-          };
-        },
-        async readText(input: { path: string }) {
-          return await readFile(input.path, 'utf8');
-        },
-        async cleanup() {
-          await rm(directory, { recursive: true, force: true });
-        },
-      };
-    });
-
-  // Boundary fixture: the activation path uses only these PluginContext services.
-  const ctx = {
-    agentRuntime: {
-      exec: {
-        systemTools: { resolve },
-        run,
-      },
-      agents: {
-        cli: {
-          checkReadiness: checkAgentCliReadiness,
-        },
-      },
+  const services = {
+    availability: (id: string) => id === 'exec'
+      ? { status: 'available' as const }
+      : { status: 'unavailable' as const },
+    exec: {
+      agentCli: { checkReadiness },
+      systemTools: { resolve },
+      run,
     },
-    reviews: {
-      comments: {
-        create: createComment,
-        resolveSnapshot,
+  } as unknown as PluginServices;
+  const unavailable = async (): Promise<never> => {
+    throw new Error('unavailable');
+  };
+  return {
+    context: {
+      plugin: { id: 'happier.review.deepsec', version: '0.0.0' },
+      contribution: {
+        id: 'deepsec',
+        qualifiedId: 'happier.review.deepsec/agents/deepsec',
       },
+      surface: 'agent',
+      signal: new AbortController().signal,
+      services,
+      ui: {
+        askQuestions: unavailable,
+        confirm: unavailable,
+        notify: unavailable,
+        status: { set: unavailable },
+        widget: { set: unavailable },
+        title: { set: unavailable },
+        composer: { replace: unavailable },
+      },
+      agent: { id: 'deepsec' },
+      protocols: { acp: { open: unavailable } },
     },
-    fs: {
-      readText,
-      createTempDirectory,
-    },
-  } as unknown as PluginContextV1;
-
-  return { ctx, resolve, run, checkAgentCliReadiness, createComment, resolveSnapshot, readText };
+    resolve,
+    run,
+    checkReadiness,
+  };
 }
 
-function modelOutput(messages: readonly ExecutionRunHostMessageV1[]): string {
-  const output = messages.find((message): message is { type: 'model-output'; fullText: string } => (
-    typeof message === 'object'
-    && message !== null
-    && (message as { type?: unknown }).type === 'model-output'
-    && typeof (message as { fullText?: unknown }).fullText === 'string'
-  ));
-  if (!output) throw new Error('Expected a model-output message');
-  return output.fullText;
+async function createNativeDeepSecRuntime() {
+  const activation = await createPluginTestkit({
+    manifest: PLUGIN_MANIFEST,
+    module: { activate },
+  });
+  const factory = activation.registration('agents', 'deepsec')?.factory;
+  if (!factory) throw new Error('Expected DeepSec Agent registration');
+  const runtime = await factory({
+    plugin: { id: 'happier.review.deepsec', version: '0.0.0' },
+    agent: { id: 'deepsec' },
+    signal: new AbortController().signal,
+  });
+  const registrations = activation.registrations();
+  await activation.dispose();
+  return { registrations, runtime };
 }
 
 function createSupportedScmReviewScope(paths: readonly string[] = ['src/auth.ts']): unknown {
@@ -238,322 +146,290 @@ function createSupportedScmReviewScope(paths: readonly string[] = ['src/auth.ts'
   };
 }
 
-describe('activate', () => {
-  it('registers DeepSec as a review-only backend engine', async () => {
-    const registerAgentRuntime = vi.fn();
-
-    activate({ registerAgentRuntime });
-
-    const registration = readRegisteredBackend(registerAgentRuntime);
-    expect(registration.agentId).toBe('deepsec');
-
-    const { ctx } = createContextFixture();
-    const engine = await registration.create(ctx);
-    await expect(engine.runtimeCore?.createSessionRuntime({
-      sessionId: 'session-1',
-      cwd: '/repo',
-    })).rejects.toThrow(/review-only/i);
-    expect(engine.runtimeCore?.createExecutionRunBackend({ cwd: '/repo' })).toMatchObject({
-      readResumeSupport: expect.any(Function),
-      provisionSession: expect.any(Function),
-      sendPrompt: expect.any(Function),
-      cancel: expect.any(Function),
-      subscribeMessages: expect.any(Function),
-      dispose: expect.any(Function),
-    });
-  });
-
-  it('runs the DeepSec review pipeline through the activation backend', async () => {
-    const commentOutMarkdown = `
-### src/auth.ts:2
-
-**Severity:** critical
-**Rule:** CWE-601
-**Category:** open_redirect
-
-Validate redirect destinations before use.
-`;
-    const { ctx, resolve, run, createComment, resolveSnapshot, readText } = createContextFixture({
-      async run(input) {
-        if (input.kind !== 'binary') throw new Error('Expected DeepSec to launch as a binary');
-        const commentOutIndex = input.args?.indexOf('--comment-out') ?? -1;
-        const commentOutPath = commentOutIndex >= 0 ? input.args?.[commentOutIndex + 1] : undefined;
-        if (commentOutPath) await writeFile(commentOutPath, commentOutMarkdown);
-        return {
-          exitCode: 0,
-          signal: null,
-          stdout: 'DeepSec completed',
-          stderr: '',
-        };
-      },
-    });
-    const registerAgentRuntime = vi.fn();
-    activate({ registerAgentRuntime });
-    const registration = readRegisteredBackend(registerAgentRuntime);
-    const engine = await registration.create(ctx);
-    const executionRunParams = {
-      cwd: '/repo',
-      runId: 'run-1',
-      start: {
-        intentInput: {
-          sessionId: 'session-1',
-          projectId: 'project-1',
-          workspaceId: 'workspace-1',
-          engineIds: ['deepsec'],
-          instructions: 'Review the current diff.',
-          changeType: 'uncommitted',
-          base: { kind: 'none' },
-          scmReviewScope: createSupportedScmReviewScope(['src/auth.ts']),
-          engines: {
-            deepsec: { mode: 'current_diff', agentCli: 'both' },
+function createOpenRequest(params?: Readonly<{
+  runId?: string;
+  mode?: 'current_diff' | 'selected_files';
+  includeExplicitMode?: boolean;
+  confirmedCostWarning?: boolean;
+  profileLocalId?: string;
+  paths?: readonly string[];
+  scmReviewScope?: unknown;
+}>): Extract<AgentExecutionRunOpenRequest, { kind: 'create' }> {
+  const paths = params?.paths ?? ['src/auth.ts'];
+  return {
+    kind: 'create',
+    runId: params?.runId ?? 'run-1',
+    cwd: '/repo',
+    profile: {
+      pluginId: 'happier.review.deepsec',
+      localId: params?.profileLocalId ?? 'review',
+    },
+    launchEnvironment: {
+      values: { AI_GATEWAY_API_KEY: 'gateway-key' },
+      unset: [],
+    },
+    input: {
+      text: 'Review the current diff.',
+      structuredInput: {
+        projectId: 'project-1',
+        workspaceId: 'workspace-1',
+        engineIds: ['deepsec'],
+        instructions: 'Review the current diff.',
+        changeType: 'uncommitted',
+        base: { kind: 'none' },
+        scmReviewScope: params?.scmReviewScope ?? createSupportedScmReviewScope(paths),
+        engines: {
+          deepsec: {
+            ...(params?.includeExplicitMode === false
+              ? {}
+              : { mode: params?.mode ?? 'current_diff' }),
+            ...(params?.confirmedCostWarning ? { confirmedCostWarning: true } : {}),
           },
         },
       },
-    } satisfies CreateExecutionRunBackendParamsV1 & {
-      start: { intentInput: unknown };
-    };
-    const backend = engine.runtimeCore?.createExecutionRunBackend(executionRunParams);
-    if (!backend || !('subscribeMessages' in backend)) {
-      throw new Error('Expected DeepSec activation to create a host execution-run backend');
-    }
-    const messages: ExecutionRunHostMessageV1[] = [];
-    const unsubscribe = backend.subscribeMessages((message) => {
-      messages.push(message);
+    },
+  };
+}
+
+async function watchToTerminal(runtime: AgentExecutionRunRuntime): Promise<readonly AgentExecutionRunEvent[]> {
+  const events: AgentExecutionRunEvent[] = [];
+  runtime.watch((event) => events.push(event));
+  await vi.waitFor(() => expect(['run-complete', 'run-failed', 'run-cancelled']).toContain(events.at(-1)?.kind));
+  return events;
+}
+
+function readStructuredOutput(events: readonly AgentExecutionRunEvent[]) {
+  const output = events.find((event): event is Extract<AgentExecutionRunEvent, { kind: 'output-delta' }> => (
+    event.kind === 'output-delta' && event.channel === 'assistant'
+  ));
+  if (!output) throw new Error('Expected DeepSec output event');
+  return ReviewFindingsV2Schema.parse(JSON.parse(output.text));
+}
+
+describe('activate', () => {
+  it('registers a native execution-run runtime without a V1 compatibility session', async () => {
+    const { registrations, runtime } = await createNativeDeepSecRuntime();
+
+    expect(registrations).toContainEqual({ family: 'agents', localId: 'deepsec' });
+    expect(runtime.sessions).toBeUndefined();
+    expect(runtime.executionRuns).toEqual(expect.objectContaining({ open: expect.any(Function) }));
+  });
+
+  it('runs the DeepSec pipeline through native events and the resolved managed executable', async () => {
+    const commentOutMarkdown = [
+      '### src/auth.ts:2',
+      '',
+      '**Severity:** critical',
+      '**Rule:** CWE-601',
+      '**Category:** open_redirect',
+      '',
+      'Validate redirect destinations before use.',
+    ].join('\n');
+    const fixture = createRuntimeContext({
+      async run(request) {
+        const commentOutIndex = request.args?.indexOf('--comment-out') ?? -1;
+        const commentOutPath = commentOutIndex >= 0 ? request.args?.[commentOutIndex + 1] : undefined;
+        if (commentOutPath) await writeFile(commentOutPath, commentOutMarkdown, 'utf8');
+        return processResult();
+      },
     });
+    const { runtime } = await createNativeDeepSecRuntime();
+    const opened = await runtime.executionRuns?.open(createOpenRequest(), fixture.context);
+    if (!opened) throw new Error('Expected native DeepSec execution run');
 
-    await expect(backend.provisionSession({ initialPrompt: 'Review the current diff.' }))
-      .resolves.toEqual({ sessionId: expect.stringMatching(/^deepsec_/) });
-    unsubscribe();
-    await backend.dispose();
+    const events = await watchToTerminal(opened);
+    await opened.dispose();
 
-    expect(resolve).toHaveBeenCalledWith(expect.objectContaining({
-      toolId: 'deepsec',
+    expect(events.map((event) => event.kind)).toEqual(['run-start', 'output-delta', 'run-complete']);
+    expect(fixture.resolve).toHaveBeenCalledWith(expect.objectContaining({
+      toolId: 'deepsec-cli',
       purpose: 'review security findings',
       cwd: '/repo',
     }));
-    expect(resolve.mock.calls.map(([request]) => request.toolId)).toEqual(['deepsec']);
-    expect(run).toHaveBeenCalledWith(expect.objectContaining({
-      kind: 'binary',
-      executablePath: '/usr/local/bin/deepsec',
-      cwd: '/repo',
+    expect(fixture.run).toHaveBeenCalledWith(expect.objectContaining({
+      executable: { kind: 'systemTool', id: 'deepsec-cli' },
+      cwd: { root: 'workspace', relativePath: '' },
+      env: { AI_GATEWAY_API_KEY: 'gateway-key' },
       args: expect.arrayContaining(['process', '--diff', '--comment-out']),
     }), expect.objectContaining({ signal: expect.any(AbortSignal) }));
-    expect(readText).not.toHaveBeenCalled();
-    expect(resolveSnapshot).toHaveBeenCalledWith({
-      projectId: 'project-1',
-      workspaceId: 'workspace-1',
-      sessionId: 'session-1',
-      runId: 'run-1',
-      engineId: 'deepsec',
-      anchor: { kind: 'line', filePath: 'src/auth.ts', line: 2 },
-    });
-    expect(createComment).toHaveBeenCalledWith(expect.objectContaining({
-      projectId: 'project-1',
-      workspaceId: 'workspace-1',
-      sessionId: 'session-1',
-      runId: 'run-1',
-      engineId: 'deepsec',
-      authorIntent: 'propose',
-      anchor: { kind: 'line', filePath: 'src/auth.ts', line: 2 },
-      metadata: expect.objectContaining({
+    expect(readStructuredOutput(events)).toMatchObject({
+      runRef: { runId: 'run-1', callId: 'deepsec:run-1' },
+      findings: [expect.objectContaining({
+        severity: 'blocker',
+        category: 'security',
+        filePath: 'src/auth.ts',
+        startLine: 2,
+        ruleId: 'CWE-601',
+      })],
+      proposedComments: [expect.objectContaining({
+        body: 'Validate redirect destinations before use.',
+        anchor: { kind: 'line', filePath: 'src/auth.ts', line: 2 },
         severity: 'critical',
-        taxonomyIds: ['CWE-601', 'open_redirect'],
-      }),
-    }));
-
-    const structuredOutput = ReviewFindingsV2Schema.parse(JSON.parse(modelOutput(messages)));
-    expect(structuredOutput).toMatchObject({
-      runRef: {
-        runId: 'run-1',
-        callId: 'deepsec:run-1',
-      },
-      summary: expect.stringContaining('1'),
-      findings: [
-        expect.objectContaining({
-          severity: 'blocker',
-          category: 'security',
-          filePath: 'src/auth.ts',
-          startLine: 2,
-          ruleId: 'CWE-601',
-        }),
-      ],
+        tags: ['deepsec'],
+      })],
     });
+  });
+
+  it('selects repository audit mode from the canonical execution-run profile', async () => {
+    const fixture = createRuntimeContext();
+    const { runtime } = await createNativeDeepSecRuntime();
+    const opened = await runtime.executionRuns?.open(createOpenRequest({
+      runId: 'run-repository-audit-profile',
+      profileLocalId: 'repository-security-audit',
+      includeExplicitMode: false,
+      confirmedCostWarning: true,
+    }), fixture.context);
+    if (!opened) throw new Error('Expected native DeepSec execution run');
+
+    const events = await watchToTerminal(opened);
+    await opened.dispose();
+
+    expect(events.at(-1)?.kind).toBe('run-complete');
+    expect(fixture.run.mock.calls.map(([request]) => request.args)).toEqual([
+      ['scan'],
+      expect.arrayContaining(['process', '--comment-out']),
+    ]);
   });
 
   it('uses host-resolved selected review-scope paths for selected-file reviews', async () => {
     let filesFromContents = '';
-    const { ctx, run } = createContextFixture({
-      async run(input) {
-        if (input.kind !== 'binary') throw new Error('Expected DeepSec to launch as a binary');
-        const filesFromIndex = input.args?.indexOf('--files-from') ?? -1;
-        if (filesFromIndex >= 0) {
-          const filesFromPath = input.args?.[filesFromIndex + 1];
-          if (!filesFromPath) throw new Error('Expected --files-from path');
-          filesFromContents = await readFile(filesFromPath, 'utf8');
-        }
-        return {
-          exitCode: 0,
-          signal: null,
-          stdout: 'DeepSec completed',
-          stderr: '',
-        };
+    const fixture = createRuntimeContext({
+      async run(request) {
+        const filesFromIndex = request.args?.indexOf('--files-from') ?? -1;
+        const filesFromPath = filesFromIndex >= 0 ? request.args?.[filesFromIndex + 1] : undefined;
+        if (filesFromPath) filesFromContents = await readFile(filesFromPath, 'utf8');
+        return processResult();
       },
     });
-    const registerAgentRuntime = vi.fn();
-    activate({ registerAgentRuntime });
-    const registration = readRegisteredBackend(registerAgentRuntime);
-    const engine = await registration.create(ctx);
-    const backend = engine.runtimeCore?.createExecutionRunBackend({
-      cwd: '/repo',
+    const { runtime } = await createNativeDeepSecRuntime();
+    const opened = await runtime.executionRuns?.open(createOpenRequest({
       runId: 'run-selected-scope',
-      start: {
-        intentInput: {
-          sessionId: 'session-1',
-          projectId: 'project-1',
-          workspaceId: 'workspace-1',
-          engineIds: ['deepsec'],
-          instructions: 'Review selected files.',
-          changeType: 'uncommitted',
-          base: { kind: 'none' },
-          engines: {
-            deepsec: { mode: 'selected_files' },
-          },
-          scmReviewScope: createSupportedScmReviewScope(['src/auth.ts', 'src/api.ts']),
-        },
-      },
-    } satisfies CreateExecutionRunBackendParamsV1 & {
-      start: { intentInput: unknown };
-    });
-    if (!backend || !('provisionSession' in backend)) {
-      throw new Error('Expected DeepSec activation to create a host execution-run backend');
-    }
+      mode: 'selected_files',
+      paths: ['src/auth.ts', 'src/api.ts'],
+    }), fixture.context);
+    if (!opened) throw new Error('Expected native DeepSec execution run');
 
-    await expect(backend.provisionSession({ initialPrompt: 'Review selected files.' }))
-      .resolves.toEqual({ sessionId: expect.stringMatching(/^deepsec_/) });
-    await backend.dispose();
+    const events = await watchToTerminal(opened);
+    await opened.dispose();
 
-    expect(run).toHaveBeenCalledWith(expect.objectContaining({
-      args: expect.arrayContaining(['process', '--files-from']),
-    }), expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    expect(events.at(-1)?.kind).toBe('run-complete');
     expect(filesFromContents).toBe('src/auth.ts\nsrc/api.ts\n');
   });
 
-  it('rejects unsupported host SCM scope before resolving the DeepSec executable', async () => {
-    const { ctx, resolve, run } = createContextFixture();
-    const registerAgentRuntime = vi.fn();
-    activate({ registerAgentRuntime });
-    const registration = readRegisteredBackend(registerAgentRuntime);
-    const engine = await registration.create(ctx);
-    const backend = engine.runtimeCore?.createExecutionRunBackend({
-      cwd: '/repo',
+  it('rejects unsupported host SCM scope before readiness or executable resolution', async () => {
+    const fixture = createRuntimeContext();
+    const { runtime } = await createNativeDeepSecRuntime();
+    const opened = await runtime.executionRuns?.open(createOpenRequest({
       runId: 'run-unsupported-scope',
-      start: {
-        intentInput: {
-          sessionId: 'session-1',
-          projectId: 'project-1',
-          workspaceId: 'workspace-1',
-          engineIds: ['deepsec'],
-          instructions: 'Review current diff.',
-          changeType: 'uncommitted',
-          base: { kind: 'none' },
-          engines: {
-            deepsec: { mode: 'current_diff' },
-          },
-          scmReviewScope: {
-            kind: 'review_scm_scope.v1',
-            status: 'unsupported',
-            scmBackendId: null,
-            scmMode: null,
-            repositoryRoot: null,
-            worktreeRoot: null,
-            baseRef: { source: 'unavailable', ref: null },
-            selectedPaths: [],
-            committedPaths: [],
-            uncommittedPaths: [],
-            changedPaths: [],
-            diff: { committedAvailable: false, uncommittedAvailable: false },
-            diagnostics: [{
-              code: 'not_repository',
-              severity: 'error',
-              message: 'The selected path is not a source-control repository.',
-            }],
-          },
-        },
+      scmReviewScope: {
+        kind: 'review_scm_scope.v1',
+        status: 'unsupported',
+        scmBackendId: null,
+        scmMode: null,
+        repositoryRoot: null,
+        worktreeRoot: null,
+        baseRef: { source: 'unavailable', ref: null },
+        selectedPaths: [],
+        committedPaths: [],
+        uncommittedPaths: [],
+        changedPaths: [],
+        diff: { committedAvailable: false, uncommittedAvailable: false },
+        diagnostics: [{
+          code: 'not_repository',
+          severity: 'error',
+          message: 'The selected path is not a source-control repository.',
+        }],
       },
-    } satisfies CreateExecutionRunBackendParamsV1 & {
-      start: { intentInput: unknown };
+    }), fixture.context);
+    if (!opened) throw new Error('Expected native DeepSec execution run');
+
+    const events = await watchToTerminal(opened);
+    await opened.dispose();
+
+    expect(events.at(-1)).toMatchObject({
+      kind: 'run-failed',
+      diagnostic: { message: expect.stringMatching(/source-control repository/i) },
     });
-    if (!backend || !('provisionSession' in backend)) {
-      throw new Error('Expected DeepSec activation to create a host execution-run backend');
-    }
-
-    await expect(backend.provisionSession({ initialPrompt: 'Review current diff.' }))
-      .rejects.toThrow(/source-control repository/i);
-    await backend.dispose();
-
-    expect(resolve).not.toHaveBeenCalled();
-    expect(run).not.toHaveBeenCalled();
+    expect(fixture.checkReadiness).not.toHaveBeenCalled();
+    expect(fixture.resolve).not.toHaveBeenCalled();
+    expect(fixture.run).not.toHaveBeenCalled();
   });
 
-  it('uses host agent CLI readiness for default Claude-or-Codex support without undeclared system-tool probes', async () => {
-    const { ctx, resolve, run, checkAgentCliReadiness, createComment } = createContextFixture();
-    const registerAgentRuntime = vi.fn();
-    activate({ registerAgentRuntime });
-    const registration = readRegisteredBackend(registerAgentRuntime);
-    const engine = await registration.create(ctx);
-    const backend = engine.runtimeCore?.createExecutionRunBackend({
-      cwd: '/repo',
-      runId: 'run-1',
-      start: {
-        intentInput: {
-          sessionId: 'session-1',
-          projectId: 'project-1',
-          engineIds: ['deepsec'],
-          instructions: 'Review the current diff.',
-          changeType: 'uncommitted',
-          base: { kind: 'none' },
-          scmReviewScope: createSupportedScmReviewScope(['src/auth.ts']),
-          engines: {
-            deepsec: { mode: 'current_diff' },
-          },
-        },
-      },
-    } as CreateExecutionRunBackendParamsV1 & { start: { intentInput: unknown } });
-    if (!backend || !('subscribeMessages' in backend)) {
-      throw new Error('Expected DeepSec activation to create a host execution-run backend');
-    }
-    const messages: ExecutionRunHostMessageV1[] = [];
-    const unsubscribe = backend.subscribeMessages((message) => {
-      messages.push(message);
-    });
+  it('uses host Agent CLI readiness without undeclared system-tool probes', async () => {
+    const fixture = createRuntimeContext();
+    const { runtime } = await createNativeDeepSecRuntime();
+    const opened = await runtime.executionRuns?.open(createOpenRequest(), fixture.context);
+    if (!opened) throw new Error('Expected native DeepSec execution run');
 
-    await expect(backend.provisionSession({ initialPrompt: 'Review the current diff.' }))
-      .resolves.toEqual({ sessionId: expect.stringMatching(/^deepsec_/) });
-    unsubscribe();
-    await backend.dispose();
+    const events = await watchToTerminal(opened);
+    await opened.dispose();
 
-    expect(resolve.mock.calls.map(([request]) => request.toolId)).toEqual(['deepsec']);
-    expect(checkAgentCliReadiness).toHaveBeenCalledWith({
+    expect(fixture.checkReadiness).toHaveBeenCalledWith(expect.objectContaining({
       candidates: ['claude', 'codex'],
       requirement: 'any',
       cwd: '/repo',
       projectId: 'project-1',
-    });
-    expect(run).toHaveBeenCalledWith(expect.objectContaining({
-      kind: 'binary',
-      executablePath: '/usr/local/bin/deepsec',
-      cwd: '/repo',
-      args: expect.arrayContaining(['process', '--diff', '--comment-out']),
-    }), expect.objectContaining({ signal: expect.any(AbortSignal) }));
-    expect(createComment).not.toHaveBeenCalled();
-    const structuredOutput = ReviewFindingsV2Schema.parse(JSON.parse(modelOutput(messages)));
-    expect(structuredOutput).toMatchObject({
-      runRef: {
-        runId: 'run-1',
-        callId: 'deepsec:run-1',
+      workspaceId: 'workspace-1',
+      signal: expect.any(AbortSignal),
+    }));
+    expect(fixture.resolve.mock.calls.map(([request]) => request.toolId)).toEqual(['deepsec-cli']);
+    expect(events.at(-1)?.kind).toBe('run-complete');
+    expect(JSON.stringify(readStructuredOutput(events))).not.toContain('claude-or-codex');
+  });
+
+  it('honors an explicit gateway-key unset without reading ambient environment', async () => {
+    vi.stubEnv('AI_GATEWAY_API_KEY', 'ambient-key-must-not-be-used');
+    const fixture = createRuntimeContext();
+    const { runtime } = await createNativeDeepSecRuntime();
+    const opened = await runtime.executionRuns?.open({
+      ...createOpenRequest({ runId: 'run-unset' }),
+      launchEnvironment: {
+        values: { AI_GATEWAY_API_KEY: 'projected-key' },
+        unset: ['ai_gateway_api_key'],
       },
-      findings: [],
+    }, fixture.context);
+    if (!opened) throw new Error('Expected native DeepSec execution run');
+
+    const events = await watchToTerminal(opened);
+    await opened.dispose();
+
+    expect(events.at(-1)?.kind).toBe('run-complete');
+    expect(readStructuredOutput(events).readiness).toMatchObject({
+      status: 'missing',
+      missing: ['AI_GATEWAY_API_KEY'],
     });
-    expect(JSON.stringify(structuredOutput)).not.toContain('claude-or-codex');
+    expect(fixture.resolve).toHaveBeenCalledOnce();
+    expect(fixture.run).not.toHaveBeenCalled();
+  });
+
+  it('cancels the managed process and publishes one native terminal event', async () => {
+    const fixture = createRuntimeContext({
+      async run(_request, options) {
+        await new Promise<void>((resolve) => {
+          if (options?.signal?.aborted) return resolve();
+          options?.signal?.addEventListener('abort', () => resolve(), { once: true });
+        });
+        return {
+          ...processResult(),
+          termination: {
+            observed: { kind: 'signal', signal: 'SIGTERM' },
+            requestedBy: { kind: 'abort' },
+          },
+        };
+      },
+    });
+    const { runtime } = await createNativeDeepSecRuntime();
+    const opened = await runtime.executionRuns?.open(createOpenRequest({ runId: 'run-cancel' }), fixture.context);
+    if (!opened) throw new Error('Expected native DeepSec execution run');
+    const events: AgentExecutionRunEvent[] = [];
+    opened.watch((event) => events.push(event));
+
+    await vi.waitFor(() => expect(fixture.run).toHaveBeenCalledOnce());
+    await expect(opened.stop()).resolves.toEqual({ status: 'requested' });
+    await vi.waitFor(() => expect(events.at(-1)?.kind).toBe('run-cancelled'));
+    await opened.dispose();
+
+    expect(events.filter((event) => ['run-complete', 'run-failed', 'run-cancelled'].includes(event.kind)))
+      .toEqual([expect.objectContaining({ kind: 'run-cancelled' })]);
   });
 });

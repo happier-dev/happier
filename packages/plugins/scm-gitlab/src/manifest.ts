@@ -1,51 +1,43 @@
-import { definePluginManifest, type PluginManifestV2 } from '@happier-dev/plugin-sdk';
+import type { PluginManifest } from '@happier-dev/plugin-sdk/manifest';
 
-export const PLUGIN_MANIFEST = definePluginManifest({
+export const PLUGIN_MANIFEST = {
   schemaVersion: 2,
   id: 'happier.scm.hosting.gitlab',
   version: '0.0.0',
   displayName: 'GitLab SCM hosting provider',
-  description: 'Detects GitLab remotes and builds compare URLs.',
-  source: {
-    kind: 'package',
-    locator: '@happier-dev/plugins-scm-gitlab',
-    trustPolicy: 'local_trusted',
-    installPolicy: 'link',
-    resolvedVersion: '0.0.0',
-  },
-  engines: { happier: '^0.0.0' },
-  activationEvents: ['onScmProvider:scm.gitlab'],
-  uses: ['scmHostingProviders'],
-  entrypoints: { main: './dist/index.js' },
-  permissions: { required: [], optional: [] },
-  contributes: {
-    scmHostingProviders: [
-      {
-        id: 'scm.gitlab',
-        kind: 'gitlab',
-        displayName: 'GitLab',
-        baseUrl: 'https://gitlab.com',
-        remoteHostMatchers: {
-          exactHosts: ['gitlab.com'],
-        },
-        urlSafety: {
-          allowedSchemes: ['https:'],
-          allowedBaseUrls: ['https://gitlab.com'],
-          allowedOrigins: ['https://gitlab.com'],
-        },
-        capabilities: {
-          compareUrl: true,
-          openUrl: true,
-          pullRequests: {
-            list: true,
-            get: true,
-            create: true,
-            checkout: false,
-            prepareWorktree: false,
-            runStacked: false,
-          },
-        },
+  description: 'Detects GitLab remotes and provides GitLab repository operations.',
+  engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
+  entrypoints: { daemon: './dist/index.js' },
+  hostAccess: {
+    required: [{
+      id: 'gitlab-api',
+      capability: 'network',
+      reason: 'Access the configured GitLab SCM provider origin.',
+      scope: {
+        targets: [{ kind: 'scmProviderOrigin', provider: 'gitlab' }],
+        methods: ['GET', 'POST', 'PUT', 'DELETE'],
       },
-    ],
+    }, {
+      id: 'gitlab-cli-process',
+      capability: 'process',
+      reason: 'Run the declared GitLab CLI for pull-request operations.',
+      scope: { executables: [{ kind: 'systemTool', id: 'gitlab-cli' }] },
+    }],
+    optional: [],
   },
-} satisfies PluginManifestV2);
+  contributes: {
+    scmHostingProviders: [{
+      id: 'gitlab',
+      title: 'GitLab',
+      description: 'GitLab.com and configured self-managed GitLab repositories.',
+      kind: 'gitlab',
+      capabilities: ['detect', 'clone', 'fetch', 'push', 'pullRequest'],
+    }],
+    systemTools: [{
+      id: 'gitlab-cli',
+      title: 'GitLab CLI',
+      description: 'GitLab command line client used for authenticated merge-request operations.',
+      executableNames: ['glab'],
+    }],
+  },
+} satisfies PluginManifest;

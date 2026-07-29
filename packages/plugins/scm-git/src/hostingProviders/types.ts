@@ -2,7 +2,7 @@ import type {
     ScmHostingProviderRemoteDetectionInput,
     ScmHostingProviderResolvedRemote,
     ScmHostingProviderRuntimeAdapter,
-} from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/experimental/scm/hostingProvider';
 
 export type {
     ScmHostingProviderCompareUrlResult,
@@ -17,7 +17,7 @@ export type {
     ScmHostingProviderRuntimeRegistration,
     ScmHostingProviderRegistryDiagnostic,
     ScmHostingProviderUnresolvedRemote as UnresolvedScmHostingProvider,
-} from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/experimental/scm/hostingProvider';
 
 export type ScmHostingProviderRoutingAdapter = ScmHostingProviderRuntimeAdapter & Readonly<{
     detectRemote: (input: ScmHostingProviderRemoteDetectionInput) => ScmHostingProviderResolvedRemote | null;

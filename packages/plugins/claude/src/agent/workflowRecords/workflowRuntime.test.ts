@@ -7,10 +7,11 @@ import type {
   SessionSystemRecordReadRequestV1,
   SessionSystemRecordReadResultV1,
   SessionSystemRecordWriteRequestV1,
-  TranscriptFileFollowHandleV1,
-  TranscriptFileFollowInputV1,
-  SessionRuntimeActivityPublisher,
-} from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/experimental/sessions';
+import type {
+  AgentTranscriptFileFollowHandle as TranscriptFileFollowHandleV1,
+  AgentTranscriptFileFollowInput as TranscriptFileFollowInputV1,
+} from '@happier-dev/plugin-sdk/agent-runtime';
 
 import { createClaudeUnifiedWorkflowRuntime } from './workflowRuntime.js';
 
@@ -41,6 +42,7 @@ function workflowToolUse(params: Readonly<{ id: string; name: string }>): unknow
 function workflowLaunchResult(params: Readonly<{
   toolUseId: string;
   transcriptDir: string;
+  providerRunId?: string;
 }>): unknown {
   return {
     type: 'user',
@@ -59,6 +61,27 @@ function workflowLaunchResult(params: Readonly<{
       taskType: 'local_workflow',
       workflowName: 'Implement Feature',
       transcriptDir: params.transcriptDir,
+      ...(params.providerRunId ? { runId: params.providerRunId } : {}),
+    },
+  };
+}
+
+function successfulWorkflowTaskStop(taskId: string): unknown {
+  return {
+    type: 'user',
+    session_id: 'claude-session-1',
+    message: {
+      content: [{
+        type: 'tool_result',
+        tool_use_id: 'toolu_task_stop',
+        is_error: false,
+        content: `Successfully stopped task: ${taskId}`,
+      }],
+    },
+    toolUseResult: {
+      message: `Successfully stopped task: ${taskId}`,
+      task_id: taskId,
+      task_type: 'local_workflow',
     },
   };
 }
@@ -123,16 +146,6 @@ function subagentTask(params: Readonly<{ id: string; parentToolUseId: string }>)
 
 type SystemRecordCall = SessionSystemRecordWriteRequestV1;
 
-function createRuntimeActivityPublisherHarness() {
-  const publisher: SessionRuntimeActivityPublisher = {
-    markSourceActive: vi.fn(async () => {}),
-    renewSource: vi.fn(async () => {}),
-    clearSource: vi.fn(async () => {}),
-    clearAllSources: vi.fn(async () => {}),
-  };
-  return { publisher };
-}
-
 function applyMetadataWrite(
   current: Record<string, unknown>,
   request: SessionMetadataWriteRequestV1,
@@ -152,6 +165,74 @@ async function waitForCondition(predicate: () => boolean): Promise<void> {
 }
 
 describe('createClaudeUnifiedWorkflowRuntime live bind', () => {
+  it('forwards exact live Workflow provider-task terminals through the existing callback', async () => {
+    const providerTaskActivities: unknown[] = [];
+    const runtime = createClaudeUnifiedWorkflowRuntime({
+      backendId: 'claude',
+      agentId: 'claude',
+      getCurrentClaudeSessionId: () => 'claude-session-1',
+      debounceMs: 0,
+      writeSystemRecord: async () => {},
+      writeMetadata: async () => {},
+      onProviderTaskActivity: async (activity) => {
+        providerTaskActivities.push(activity);
+      },
+    });
+
+    runtime.observeTranscriptMessage(workflowToolUse({ id: 'wf-tool-1', name: 'Implement Feature' }));
+    runtime.observeTranscriptMessage(workflowLaunchResult({
+      toolUseId: 'wf-tool-1',
+      transcriptDir: '/tmp/happier-workflow/workflow-provider-run',
+      providerRunId: 'workflow-provider-run',
+    }));
+    runtime.observeTranscriptMessage(successfulWorkflowTaskStop('workflow-task-1'));
+    await runtime.flush();
+
+    expect(providerTaskActivities).toContainEqual({
+      type: 'terminal',
+      terminalStatus: 'stopped',
+      sessionId: 'claude-session-1',
+      taskId: 'workflow-task-1',
+    });
+    runtime.dispose();
+  });
+
+  it('does not publish provider-task activity from historical Workflow reconstruction', async () => {
+    const providerTaskActivities: unknown[] = [];
+    const runtime = createClaudeUnifiedWorkflowRuntime({
+      backendId: 'claude',
+      agentId: 'claude',
+      getCurrentClaudeSessionId: () => 'claude-session-1',
+      debounceMs: 0,
+      writeSystemRecord: async () => {},
+      writeMetadata: async () => {},
+      onProviderTaskActivity: async (activity) => {
+        providerTaskActivities.push(activity);
+      },
+    });
+
+    runtime.observeTranscriptMessage(
+      workflowToolUse({ id: 'wf-tool-1', name: 'Implement Feature' }),
+      { historicalReplay: true },
+    );
+    runtime.observeTranscriptMessage(
+      workflowLaunchResult({
+        toolUseId: 'wf-tool-1',
+        transcriptDir: '/tmp/happier-workflow/workflow-provider-run',
+        providerRunId: 'workflow-provider-run',
+      }),
+      { historicalReplay: true },
+    );
+    runtime.observeTranscriptMessage(
+      successfulWorkflowTaskStop('workflow-task-1'),
+      { historicalReplay: true },
+    );
+    await runtime.flush();
+
+    expect(providerTaskActivities).toEqual([]);
+    runtime.dispose();
+  });
+
   it('writes a workflow run system record FIRST and the headline metadata SECOND', async () => {
     const order: string[] = [];
     const systemRecordCalls: SystemRecordCall[] = [];
@@ -507,97 +588,73 @@ describe('createClaudeUnifiedWorkflowRuntime live bind', () => {
     runtime.dispose();
   });
 
-  it('publishes workflow run liveness into runtime activity and clears it on terminal', async () => {
-    const runtimeActivity = createRuntimeActivityPublisherHarness();
+  it('contains a failed startup metadata flush and retries the stale-run reconciliation', async () => {
+    let metadataAttempts = 0;
+    let metadata: Record<string, unknown> = {};
+    const loggedErrors: Array<{ message: string; error: unknown }> = [];
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+
     const runtime = createClaudeUnifiedWorkflowRuntime({
       backendId: 'claude',
       agentId: 'claude',
       getCurrentClaudeSessionId: () => 'claude-session-1',
-      debounceMs: 0,
+      initialWorkflowActivityHeadline: {
+        v: 1,
+        backendId: 'claude',
+        updatedAt: 1000,
+        primaryRunId: 'wf_stale',
+        activeRuns: [{
+          runId: 'wf_stale',
+          title: 'Stale workflow',
+          status: 'active',
+          workflowToolUseId: 'toolu_stale',
+          updatedAt: 1000,
+          recordRevision: '4',
+          recordUpdatedAt: 1000,
+          totalAgents: 5,
+          completedAgents: 2,
+        }],
+      },
+      startupReconcileGraceMs: 0,
+      debounceMs: 5,
       writeSystemRecord: async () => {},
-      writeMetadata: async () => {},
-      runtimeActivityPublisher: runtimeActivity.publisher,
+      writeMetadata: async (request) => {
+        metadataAttempts += 1;
+        if (metadataAttempts === 1) {
+          throw new Error('startup headline unavailable');
+        }
+        metadata = applyMetadataWrite(metadata, request);
+      },
+      logError: (message, error) => {
+        loggedErrors.push({ message, error });
+      },
     });
 
-    runtime.observeTranscriptMessage(workflowToolUse({ id: 'wf-tool-1', name: 'Implement Feature' }));
-    runtime.observeTranscriptMessage(workflowLaunchResult({
-      toolUseId: 'wf-tool-1',
-      transcriptDir: '/tmp/happier-workflow/wf_123',
-    }));
-    runtime.observeTranscriptMessage(taskUpdatedCompleted({ taskId: 'workflow-task-1' }));
+    try {
+      await waitForCondition(() => metadataAttempts >= 2);
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
-    await waitForCondition(() => runtimeActivity.publisher.clearSource.mock.calls.length > 0);
-
-    expect(runtimeActivity.publisher.markSourceActive).toHaveBeenCalledWith({
-      sourceId: 'claude:provider-task:wf-tool-1',
-      sourceKind: 'provider_detached_task',
-    });
-    expect(runtimeActivity.publisher.clearSource).toHaveBeenCalledWith('claude:provider-task:wf-tool-1');
-    expect(runtimeActivity.publisher.markSourceActive).toHaveBeenCalledWith({
-      sourceId: 'claude:provider-task:workflow-task-1',
-      sourceKind: 'provider_detached_task',
-    });
-    expect(runtimeActivity.publisher.clearSource).toHaveBeenCalledWith('claude:provider-task:workflow-task-1');
-    runtime.dispose();
-  });
-
-  it('renews the runtime-activity lease on every durable commit, even without a fresh observation (W-4)', async () => {
-    const runtimeActivity = createRuntimeActivityPublisherHarness();
-    const runtime = createClaudeUnifiedWorkflowRuntime({
-      backendId: 'claude',
-      agentId: 'claude',
-      getCurrentClaudeSessionId: () => 'claude-session-1',
-      // Long debounce: the durable commit does NOT drain inline with the observation — it only
-      // drains on the turn-end flush(), reproducing the sparse-progress gap where the lease would
-      // otherwise lapse while the durable record still says active.
-      debounceMs: 60_000,
-      writeSystemRecord: async () => {},
-      writeMetadata: async () => {},
-      runtimeActivityPublisher: runtimeActivity.publisher,
-    });
-
-    runtime.observeTranscriptMessage(workflowToolUse({ id: 'wf-tool-1', name: 'Implement Feature' }));
-    runtime.observeTranscriptMessage(taskProgress({ toolUseId: 'wf-tool-1', workflowProgress: TWO_AGENT_PROGRESS }));
-    // The run's source was announced active on observation (keyed by the learned provider task id).
-    expect(runtimeActivity.publisher.markSourceActive).toHaveBeenCalled();
-    const renewsBeforeFlush = runtimeActivity.publisher.renewSource.mock.calls.length;
-
-    // A turn-end flush commits the durable record with NO fresh observation → the commit heartbeat
-    // renews the lease so the ephemeral "working" source cannot lapse under sparse progress.
-    await runtime.flush();
-
-    expect(runtimeActivity.publisher.renewSource.mock.calls.length).toBeGreaterThan(renewsBeforeFlush);
-    // The heartbeat renews the run's resolved runtime-activity source (a claude provider-task source).
-    const lastRenewArg = runtimeActivity.publisher.renewSource.mock.calls.at(-1)?.[0];
-    expect(lastRenewArg).toMatch(/^claude:provider-task:/);
-    runtime.dispose();
-  });
-
-  it('does NOT renew the lease when the committed run is terminal (W-4 guard)', async () => {
-    const runtimeActivity = createRuntimeActivityPublisherHarness();
-    const runtime = createClaudeUnifiedWorkflowRuntime({
-      backendId: 'claude',
-      agentId: 'claude',
-      getCurrentClaudeSessionId: () => 'claude-session-1',
-      debounceMs: 0,
-      writeSystemRecord: async () => {},
-      writeMetadata: async () => {},
-      runtimeActivityPublisher: runtimeActivity.publisher,
-    });
-
-    runtime.observeTranscriptMessage(workflowToolUse({ id: 'wf-tool-1', name: 'Implement Feature' }));
-    runtime.observeTranscriptMessage(taskStarted({ toolUseId: 'wf-tool-1', taskId: 'task-1' }));
-    await runtime.flush();
-    const renewsAfterActive = runtimeActivity.publisher.renewSource.mock.calls.length;
-
-    // Terminal completion: the source is cleared via the observation path, and the terminal commit's
-    // heartbeat must NOT renew a lease for the now-terminal run.
-    runtime.observeTranscriptMessage(taskUpdatedCompleted({ taskId: 'task-1' }));
-    await runtime.flush();
-
-    expect(runtimeActivity.publisher.clearSource).toHaveBeenCalled();
-    expect(runtimeActivity.publisher.renewSource.mock.calls.length).toBe(renewsAfterActive);
-    runtime.dispose();
+      expect(unhandled).toEqual([]);
+      expect(loggedErrors).toContainEqual({
+        message: 'workflow activity publish drain failed (non-fatal)',
+        error: expect.objectContaining({ message: 'startup headline unavailable' }),
+      });
+      expect(metadata.sessionWorkflowActivityHeadlineV1).toMatchObject({
+        activeRuns: [],
+        recentRuns: [expect.objectContaining({
+          runId: 'wf_stale',
+          status: 'stopped',
+          statusReason: 'interrupted',
+        })],
+      });
+    } finally {
+      runtime.dispose();
+      process.off('unhandledRejection', onUnhandled);
+    }
   });
 
   it('hydrates unified Workflow launch results from the sidecar journal', async () => {

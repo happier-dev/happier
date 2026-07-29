@@ -1,3 +1,5 @@
+import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+
 const KIMI_ACP_PREFLIGHT_TIMEOUT_MS = 5_000;
 const KIMI_ACP_PREFLIGHT_OUTPUT_MAX_BYTES = 16 * 1024;
 
@@ -31,19 +33,13 @@ type KimiDaemonSpawnToolContext = Readonly<{
   }>): Promise<KimiDaemonRunToolResult>;
 }>;
 
-type KimiDaemonSpawnHookContext = Readonly<{
+type KimiDaemonSpawnHookContext = Partial<PluginInvocationContext> & Readonly<{
   tools?: Partial<KimiDaemonSpawnToolContext>;
 }>;
 
-type KimiDaemonSpawnPrerequisiteResult = Readonly<{
-  allowed: boolean;
-  reasonCode?: string;
-  errorMessage?: string;
-}>;
-
-type KimiDaemonHookEvent = Readonly<{
-  payload?: unknown;
-}>;
+type KimiDaemonSpawnPrerequisiteResult =
+  | Readonly<{ decision: 'allow' }>
+  | Readonly<{ decision: 'deny'; reasonCode: string; errorMessage: string }>;
 
 function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -55,9 +51,14 @@ function readString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
-function readCwd(event: KimiDaemonHookEvent): string | undefined {
-  const payload = readRecord(event.payload);
-  const runtimeSelection = readRecord(payload?.runtimeSelection) ?? readRecord(event);
+function readHookPayload(event: unknown): Readonly<Record<string, unknown>> {
+  const record = readRecord(event);
+  return readRecord(record?.payload) ?? record ?? {};
+}
+
+function readCwd(event: unknown): string | undefined {
+  const payload = readHookPayload(event);
+  const runtimeSelection = readRecord(payload?.runtimeSelection) ?? payload;
   return readString(runtimeSelection?.cwd)
     ?? readString(runtimeSelection?.directory)
     ?? readString(payload?.cwd)
@@ -65,11 +66,10 @@ function readCwd(event: KimiDaemonHookEvent): string | undefined {
     ?? undefined;
 }
 
-function readRuntimeSelectionEnv(event: KimiDaemonHookEvent): Readonly<Record<string, string>> {
-  const payload = readRecord(event.payload);
-  const directEvent = readRecord(event);
+function readRuntimeSelectionEnv(event: unknown): Readonly<Record<string, string>> {
+  const payload = readHookPayload(event);
   const runtimeSelection = readRecord(payload?.runtimeSelection)
-    ?? readRecord(directEvent?.runtimeSelection);
+    ?? payload;
   const env = readRecord(runtimeSelection?.env);
   if (!env) return {};
   const output: Record<string, string> = {};
@@ -94,7 +94,7 @@ function firstDiagnosticLine(...outputs: readonly string[]): string | null {
 
 function denyKimiSpawn(reasonCode: string, errorMessage: string): KimiDaemonSpawnPrerequisiteResult {
   return {
-    allowed: false,
+    decision: 'deny',
     reasonCode,
     errorMessage,
   };
@@ -115,7 +115,7 @@ function buildKimiAcpUnavailableMessage(result?: Readonly<{
 }
 
 export async function resolveKimiDaemonSpawnPrerequisites(
-  event: KimiDaemonHookEvent,
+  event: unknown,
   context?: KimiDaemonSpawnHookContext,
 ): Promise<KimiDaemonSpawnPrerequisiteResult> {
   const runSystemTool = context?.tools?.runSystemTool;
@@ -142,12 +142,12 @@ export async function resolveKimiDaemonSpawnPrerequisites(
 
   if (!result.ok) {
     if (result.reasonCode === 'timeout') {
-      return { allowed: true };
+      return { decision: 'allow' };
     }
     return denyKimiSpawn('kimi_acp_unavailable', result.errorMessage);
   }
   if (result.exitCode !== null) {
     return denyKimiSpawn('kimi_acp_unavailable', buildKimiAcpUnavailableMessage(result));
   }
-  return { allowed: true };
+  return { decision: 'allow' };
 }

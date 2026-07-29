@@ -3,13 +3,15 @@ import { z } from 'zod';
 import { ProviderConnectionIdSchema, ProviderMachineIdSchema } from './ids.js';
 
 export const ProviderErrorCodeV1Schema = z.enum([
-  'provider_feature_disabled', 'provider_connection_not_found', 'provider_contribution_unavailable', 'provider_connection_disabled',
+  'provider_feature_disabled', 'provider_connection_not_found', 'provider_connection_changed', 'provider_contribution_unavailable', 'provider_connection_disabled',
   'provider_account_grant_stale', 'provider_not_enabled_on_machine', 'provider_machine_grant_stale',
   'provider_incompatible_with_agent', 'provider_compatibility_unverified', 'provider_secret_missing',
   'provider_credential_transport_unavailable', 'provider_endpoint_unreachable', 'provider_endpoint_unavailable',
+  'provider_rpc_response_invalid', 'provider_rpc_mutation_outcome_unknown',
   'provider_endpoint_rate_limited', 'provider_endpoint_auth_required', 'provider_endpoint_unauthorized',
   'provider_probe_response_invalid', 'provider_model_not_found', 'provider_model_unloaded',
   'provider_authorization_changed', 'provider_binding_changed', 'provider_switch_unsupported',
+  'provider_agent_runtime_unsupported', 'provider_materialization_failed',
   'provider_probe_authorization_invalid', 'provider_settings_limit_exceeded',
   'provider_settings_invalid', 'provider_connection_invalid',
   'provider_profile_migration_source_changed', 'provider_profile_migration_source_not_found',
@@ -22,13 +24,14 @@ export const ProviderRecoveryActionV1Schema = z.enum([
   'review_machine_grant', 'review_compatibility', 'add_secret', 'review_credential_transport',
   'review_connection', 'retry', 'replace_secret', 'choose_model', 'load_model', 'review_and_restart',
   'restart_probe', 'reduce_provider_settings',
-  'review_profile_migration',
+  'review_profile_migration', 'review_current_state',
 ]);
 export type ProviderRecoveryActionV1 = z.infer<typeof ProviderRecoveryActionV1Schema>;
 
 const ERROR_DEFAULTS = {
   provider_feature_disabled: [false, 'review_features'],
   provider_connection_not_found: [false, 'choose_connection'],
+  provider_connection_changed: [true, 'review_connection'],
   provider_contribution_unavailable: [false, 'restore_plugin'],
   provider_connection_disabled: [false, 'enable_connection'],
   provider_account_grant_stale: [false, 'review_account_grant'],
@@ -40,6 +43,8 @@ const ERROR_DEFAULTS = {
   provider_credential_transport_unavailable: [false, 'review_credential_transport'],
   provider_endpoint_unreachable: [true, 'retry'],
   provider_endpoint_unavailable: [true, 'retry'],
+  provider_rpc_response_invalid: [true, 'retry'],
+  provider_rpc_mutation_outcome_unknown: [false, 'review_current_state'],
   provider_endpoint_rate_limited: [true, 'retry'],
   provider_endpoint_auth_required: [false, 'add_secret'],
   provider_endpoint_unauthorized: [false, 'replace_secret'],
@@ -49,6 +54,8 @@ const ERROR_DEFAULTS = {
   provider_authorization_changed: [true, 'retry'],
   provider_binding_changed: [false, 'review_and_restart'],
   provider_switch_unsupported: [false, 'review_and_restart'],
+  provider_agent_runtime_unsupported: [false, 'review_connection'],
+  provider_materialization_failed: [false, 'review_connection'],
   provider_probe_authorization_invalid: [false, 'restart_probe'],
   provider_settings_limit_exceeded: [false, 'reduce_provider_settings'],
   provider_settings_invalid: [false, 'review_connection'],

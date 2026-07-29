@@ -30,3 +30,8 @@ export {
   type UsageObservationScope,
   type UsageObservationTokens,
 } from './usageAnalyticsContracts.js';
+export {
+  SessionContextUsageSnapshotV1Schema,
+  computeContextPercentUsed,
+  type SessionContextUsageSnapshotV1,
+} from './contextUsage.js';

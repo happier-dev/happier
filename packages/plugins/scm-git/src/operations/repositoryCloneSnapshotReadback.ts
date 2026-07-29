@@ -4,7 +4,7 @@ import {
   SCM_OPERATION_ERROR_CODES,
   type ScmRepositoryCloneOutput,
   type ScmWorkingSnapshot,
-} from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm';
 
 import type { detectGitRepo } from '../repository.js';
 import type { ScmBackendContext, ScmRepoDetection } from '../types.js';

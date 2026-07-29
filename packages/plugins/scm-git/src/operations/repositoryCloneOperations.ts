@@ -1,5 +1,6 @@
 import {
   SCM_OPERATION_ERROR_CODES,
+  ScmHostingProviderKindSchema,
   type ScmHostingRepositoryAuthSummary,
   type ScmHostingRepositorySummary,
   type ScmOperationErrorCode,
@@ -9,11 +10,11 @@ import {
   type ScmRepositoryCloneTargetDescription,
   type ScmWorkingSnapshot,
   type SourceControlCloneProtocol,
-} from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm';
 import {
     readCurrentScmHostingProviderRuntimeServices,
     type ScmHostingProviderRuntimeServices,
-} from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/experimental/scm/hostingProvider';
 
 import type { ScmBackendContext } from '../types.js';
 import { runScmCommand, type ScmExecResult } from '../runtime.js';
@@ -21,6 +22,10 @@ import { buildScmNonInteractiveEnv } from '../providers/shared/nonInteractiveEnv
 import { mapGitErrorCode } from '../remote.js';
 import { detectGitRepo, getGitSnapshot } from '../repository.js';
 import type { ResolvedScmHostingProviderRegistry } from '../hostingProviders/types.js';
+import {
+    readScmHostingProviderRuntimeDescriptor,
+    type ScmHostingProviderRuntimeDescriptor,
+} from '../hostingProviders/runtimeDescriptor.js';
 import {
     cleanupPrivateCloneDestination,
     preflightDestination,
@@ -42,19 +47,11 @@ type CloneTargetAdapter = Readonly<{
     }>) => Promise<ScmRepositoryCloneTargetDescription>;
 }>;
 
-type CloneProviderDescriptor = Readonly<{
-    id: string;
-    kind: CloneProviderRef['kind'];
-    displayName: string;
-    baseUrl: string;
-    urlSafety?: Readonly<{
-        allowedSchemes: readonly string[];
-    }> & Readonly<Record<string, unknown>>;
-}>;
+type CloneProviderDescriptor = ScmHostingProviderRuntimeDescriptor & Readonly<{ kind: CloneProviderRef['kind'] }>;
 
 type HostingRepositoryRegistry = Pick<ResolvedScmHostingProviderRegistry, 'getAdapter'> & Readonly<{
-    getProvider?: (id: string) => CloneProviderDescriptor | undefined;
-    providers?: readonly CloneProviderDescriptor[];
+    getProvider?: (id: string) => unknown;
+    providers?: readonly unknown[];
 }>;
 
 type GitRepositoryCloneOperationDeps = Readonly<{
@@ -131,11 +128,16 @@ function resolveRegisteredProvider(input: Readonly<{
     registry: HostingRepositoryRegistry | null;
     requestedProvider: ScmRepositoryCloneInput['provider'];
 }>): CloneProviderRef | null {
-    const registered = input.registry?.getProvider?.(input.requestedProvider.id)
-        ?? input.registry?.providers?.find((provider) => provider.id === input.requestedProvider.id)
+    const registeredCandidate = input.registry?.getProvider?.(input.requestedProvider.id)
+        ?? input.registry?.providers?.find((provider) => (
+            provider && typeof provider === 'object' && 'id' in provider && provider.id === input.requestedProvider.id
+        ))
         ?? null;
+    const registered = readScmHostingProviderRuntimeDescriptor(registeredCandidate);
     if (!registered) return null;
-    return cloneProviderRef(registered);
+    const kind = ScmHostingProviderKindSchema.safeParse(registered.kind);
+    if (!kind.success) return null;
+    return cloneProviderRef({ ...registered, kind: kind.data });
 }
 
 function isAuthReady(auth: ScmHostingRepositoryAuthSummary | undefined): boolean {

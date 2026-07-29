@@ -69,3 +69,5 @@ export const PluginHostedWebContributionV1Schema = z.object({
   fallback: PluginUiFallbackRefV1Schema,
 }).strict();
 export type PluginHostedWebContributionV1 = z.infer<typeof PluginHostedWebContributionV1Schema>;
+export type PluginHostedWebContribution = z.infer<typeof PluginHostedWebContributionV1Schema>;
+export type PluginHostedWebContributionInput = z.input<typeof PluginHostedWebContributionV1Schema>;

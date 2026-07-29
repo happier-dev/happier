@@ -2,55 +2,69 @@ import { describe, expect, it } from 'vitest';
 import { resolve } from 'node:path';
 
 import { CODEX_ACP_TOOL_PATTERNS } from './transport';
-import { createCodexAcpBackendSpec } from './backend';
+import {
+  buildCodexNativeAcpRuntimeOptions,
+  resolveCodexAcpBackendTimeouts,
+} from './backend';
 
-describe('createCodexAcpBackendSpec', () => {
-  it('declares Codex ACP through the generic system-tool launch contract', () => {
-    const spec = createCodexAcpBackendSpec({ env: {} });
+describe('buildCodexNativeAcpRuntimeOptions', () => {
+  it('projects the host launch snapshot into the native ACP composer contract', () => {
+    const options = buildCodexNativeAcpRuntimeOptions({
+      kind: 'create',
+      sessionId: 'session-1',
+      cwd: '/workspace/codex-project',
+      launchEnvironment: {
+        values: {
+          PATH: '/usr/bin',
+          OPENAI_API_KEY: 'secret',
+          HAPPIER_CODEX_ACP_CONFIG_OVERRIDES: 'model="gpt-5"',
+          CODEX_THREAD_ID: 'must-not-leak',
+        },
+        unset: [],
+      },
+      configuration: {
+        mode: { value: null, updatedAtMs: 0 },
+        model: { value: null, updatedAtMs: 0 },
+        permissionIntent: { value: 'safe-yolo', updatedAtMs: 1 },
+        options: {},
+      },
+    });
 
-    expect(spec.transport).toMatchObject({
+    expect(options.transport).toMatchObject({
       kind: 'stdio',
-      launch: {
-        kind: 'system-tool',
-        toolId: 'codex-acp',
-        purpose: 'Run Codex ACP',
-        preferredCommand: 'codex-acp',
-      },
+      executable: { kind: 'managedDependency', id: 'codex-acp' },
+      args: [
+        '-c',
+        'model="gpt-5"',
+        '-c',
+        'approval_policy="on-request"',
+        '-c',
+        'sandbox_mode="workspace-write"',
+      ],
+      timeouts: { initializeMs: 180_000 },
     });
-  });
-
-  it('declares Codex ACP auth method and tool inference through generic ACP fields', () => {
-    const openAiSpec = createCodexAcpBackendSpec({
-      env: {
-        OPENAI_API_KEY: 'openai-key',
-      },
-    });
-    const codexSpec = createCodexAcpBackendSpec({
-      env: {
-        CODEX_API_KEY: 'codex-key',
-      },
-    });
-
-    expect(openAiSpec.auth?.methodId).toBe('openai-api-key');
-    expect(codexSpec.auth?.methodId).toBe('codex-api-key');
-    expect(openAiSpec.toolNameInference?.patterns).toEqual(CODEX_ACP_TOOL_PATTERNS);
-    expect(openAiSpec.callbacks?.toolNameResolver).toEqual(expect.any(Function));
+    expect(options.transport.env?.PATH?.split(process.platform === 'win32' ? ';' : ':')[0]).toBe(
+      resolve('/workspace/codex-project', 'scripts', 'shims'),
+    );
+    expect(options.transport.env).not.toHaveProperty('CODEX_THREAD_ID');
+    expect(options.definition?.auth?.methodId).toBe('openai-api-key');
+    expect(options.definition?.toolNameInference?.patterns).toEqual(CODEX_ACP_TOOL_PATTERNS);
   });
 
   it('uses provider timeout defaults when no env override is set', () => {
-    const spec = createCodexAcpBackendSpec({
+    const timeouts = resolveCodexAcpBackendTimeouts({
       command: 'codex-acp',
       env: {},
     });
 
-    expect(spec.transport.timeouts).toEqual({
+    expect(timeouts).toEqual({
       initMs: 180_000,
       preToolCallIdleMs: 1_000,
     });
   });
 
   it('honors Codex ACP timeout env overrides', () => {
-    const spec = createCodexAcpBackendSpec({
+    const timeouts = resolveCodexAcpBackendTimeouts({
       command: 'codex-acp',
       env: {
         HAPPIER_CODEX_ACP_INIT_TIMEOUT_MS: '210000',
@@ -59,14 +73,14 @@ describe('createCodexAcpBackendSpec', () => {
       },
     });
 
-    expect(spec.transport.timeouts).toEqual({
+    expect(timeouts).toEqual({
       initMs: 210_000,
       preToolCallIdleMs: 1_500,
     });
   });
 
   it('uses the npx-specific init timeout only for npx launches', () => {
-    const spec = createCodexAcpBackendSpec({
+    const timeouts = resolveCodexAcpBackendTimeouts({
       command: 'npx',
       env: {
         HAPPIER_CODEX_ACP_INIT_TIMEOUT_MS: '210000',
@@ -74,49 +88,6 @@ describe('createCodexAcpBackendSpec', () => {
       },
     });
 
-    expect(spec.transport.timeouts.initMs).toBe(240_000);
-  });
-
-  it('builds ACP child env from the runtime cwd when the spec is created without a fixed project dir', () => {
-    const spec = createCodexAcpBackendSpec({
-      command: 'codex-acp',
-      env: {},
-    });
-
-    const env = spec.callbacks?.envBuilder?.({
-      baseArgs: [],
-      cwd: '/workspace/codex-project',
-      env: { PATH: '/usr/bin' },
-    });
-
-    expect(env?.PATH?.split(process.platform === 'win32' ? ';' : ':')[0]).toBe(
-      resolve('/workspace/codex-project', 'scripts', 'shims'),
-    );
-  });
-
-  it('builds ACP argv from runtime env config overrides when used through the generic bridge', () => {
-    const spec = createCodexAcpBackendSpec({
-      command: 'codex-acp',
-      env: {},
-    });
-
-    const args = spec.callbacks?.argvBuilder?.({
-      baseArgs: ['--stdio'],
-      cwd: '/workspace/codex-project',
-      env: {
-        HAPPIER_CODEX_ACP_CONFIG_OVERRIDES: 'model="gpt-5"',
-      },
-      permissionMode: 'safe-yolo',
-    });
-
-    expect(args).toEqual([
-      '--stdio',
-      '-c',
-      'model="gpt-5"',
-      '-c',
-      'approval_policy="on-request"',
-      '-c',
-      'sandbox_mode="workspace-write"',
-    ]);
+    expect(timeouts.initMs).toBe(240_000);
   });
 });

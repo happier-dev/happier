@@ -4,7 +4,6 @@ import { PluginOptionalStringSchema } from './_shared.js';
 
 export const BackendSurfaceKindV1Schema = z.enum([
   'terminalRuntime',
-  'externalSession',
   'attach',
   'handoff',
   'fork',
@@ -56,19 +55,6 @@ export const BackendSurfaceOperationCatalogV1 = Object.freeze({
     launch: 'launch',
     discoverIdentity: 'discoverIdentity',
     resolveTranscriptBinding: 'resolveTranscriptBinding',
-  }),
-  externalSession: Object.freeze({
-    evaluateAvailability: 'evaluateAvailability',
-    resolveSource: 'resolveSource',
-    listCandidates: 'listCandidates',
-    getActivity: 'getActivity',
-    pageTranscript: 'pageTranscript',
-    readAfterTranscript: 'readAfterTranscript',
-    resolveFollowTranscriptPath: 'resolveFollowTranscriptPath',
-    acquireFollowLease: 'acquireFollowLease',
-    resolveLinkIdentity: 'resolveLinkIdentity',
-    resolveLinkedIdentity: 'resolveLinkedIdentity',
-    resolveTakeoverLaunch: 'resolveTakeoverLaunch',
   }),
   attach: Object.freeze({
     evaluateAvailability: 'evaluateAvailability',
@@ -137,10 +123,6 @@ const TerminalRuntimeBackendSurfaceDeclarationV1Schema = BackendSurfaceDeclarati
   kind: z.literal('terminalRuntime'),
 });
 
-const ExternalSessionBackendSurfaceDeclarationV1Schema = BackendSurfaceDeclarationBaseV1Schema.extend({
-  kind: z.literal('externalSession'),
-});
-
 const AttachBackendSurfaceDeclarationV1Schema = BackendSurfaceDeclarationBaseV1Schema.extend({
   kind: z.literal('attach'),
   staticMetadata: AttachSurfaceStaticMetadataV1Schema.optional(),
@@ -160,7 +142,6 @@ const CheckpointBackendSurfaceDeclarationV1Schema = BackendSurfaceDeclarationBas
 
 export const BackendSurfaceDeclarationV1Schema = z.discriminatedUnion('kind', [
   TerminalRuntimeBackendSurfaceDeclarationV1Schema,
-  ExternalSessionBackendSurfaceDeclarationV1Schema,
   AttachBackendSurfaceDeclarationV1Schema,
   HandoffBackendSurfaceDeclarationV1Schema,
   ForkBackendSurfaceDeclarationV1Schema,

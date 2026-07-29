@@ -1,4 +1,6 @@
-import { ANTIGRAVITY_LOCALHARNESS_INSTALLABLE_KEY } from '../localharness/installable.js';
+import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+
+import { ANTIGRAVITY_CLI_SYSTEM_TOOL_ID } from '../systemTool.js';
 import {
   ANTIGRAVITY_CLI_MODELS_COMMAND_ARGS,
   ANTIGRAVITY_CLI_MODELS_READINESS_OUTPUT_MAX_BYTES,
@@ -12,17 +14,6 @@ import {
   hasAntigravitySdkCredentialEnv,
   isolateAntigravityCliPrintEnv,
 } from './runtimeEnv.js';
-
-type AntigravityDaemonResolvedTool =
-  | Readonly<{
-    ok: true;
-    command: string;
-    args: readonly string[];
-  }>
-  | Readonly<{
-    ok: false;
-    errorMessage: string;
-  }>;
 
 type AntigravityDaemonSpawnToolContext = Readonly<{
   runSystemTool?(input: Readonly<{
@@ -55,26 +46,25 @@ type AntigravityDaemonSpawnToolContext = Readonly<{
       stderr?: string;
     }>
   >;
-  resolveManagedInstallable(input: Readonly<{
-    installableId: string;
-    sourcePreference?: 'system-first' | 'managed-first';
-    reason: string;
-  }>): Promise<AntigravityDaemonResolvedTool>;
 }>;
 
-type AntigravityDaemonSpawnHookContext = Readonly<{
+type AntigravityDaemonSpawnHookContext = Omit<Partial<PluginInvocationContext>, 'services'> & Readonly<{
   tools?: Partial<AntigravityDaemonSpawnToolContext>;
+  services?: Readonly<{
+    managed?: Readonly<{
+      dependencies?: Readonly<{
+        ensure(
+          id: string,
+          options?: Readonly<{ signal?: AbortSignal }>,
+        ): Promise<unknown>;
+      }>;
+    }>;
+  }>;
 }>;
 
-type AntigravityDaemonSpawnPrerequisiteResult = Readonly<{
-  allowed: boolean;
-  reasonCode?: string;
-  errorMessage?: string;
-}>;
-
-type AntigravityDaemonHookEvent = Readonly<{
-  payload?: unknown;
-}>;
+type AntigravityDaemonSpawnPrerequisiteResult =
+  | Readonly<{ decision: 'allow' }>
+  | Readonly<{ decision: 'deny'; reasonCode: string; errorMessage: string }>;
 
 function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -94,19 +84,24 @@ function readStringRecord(value: unknown): Readonly<Record<string, string | unde
   return entries.length > 0 ? Object.fromEntries(entries) : {};
 }
 
-function readRuntimeSelectionRecord(event: AntigravityDaemonHookEvent): Readonly<Record<string, unknown>> {
-  const payload = readRecord(event.payload);
+function readHookPayload(event: unknown): Readonly<Record<string, unknown>> {
+  const record = readRecord(event);
+  return readRecord(record?.payload) ?? record ?? {};
+}
+
+function readRuntimeSelectionRecord(event: unknown): Readonly<Record<string, unknown>> {
+  const payload = readHookPayload(event);
   return readRecord(payload?.runtimeSelection)
-    ?? readRecord(event)
+    ?? payload
     ?? {};
 }
 
-function readAntigravityRuntimeModeSelection(event: AntigravityDaemonHookEvent): Readonly<{
+function readAntigravityRuntimeModeSelection(event: unknown): Readonly<{
   mode: AntigravityRuntimeMode;
   cwd?: string;
   env: Readonly<Record<string, string | undefined>>;
 }> {
-  const payload = readRecord(event.payload);
+  const payload = readHookPayload(event);
   const runtimeSelection = readRuntimeSelectionRecord(event);
   const providerRuntimeSelection = readRecord(runtimeSelection.providerRuntimeSelection);
   const env = readStringRecord(runtimeSelection.env)
@@ -140,7 +135,7 @@ function denyAntigravitySpawn(
   errorMessage: string,
 ): AntigravityDaemonSpawnPrerequisiteResult {
   return {
-    allowed: false,
+    decision: 'deny',
     reasonCode,
     errorMessage,
   };
@@ -156,23 +151,25 @@ async function resolveSdkSpawnPrerequisites(
       'Antigravity SDK mode requires Gemini API-key or Vertex credentials before daemon spawn.',
     );
   }
-  const resolveManagedInstallable = context?.tools?.resolveManagedInstallable;
-  if (!resolveManagedInstallable) {
+  const dependencies = context?.services?.managed?.dependencies;
+  if (!dependencies) {
     return denyAntigravitySpawn(
       'antigravity_localharness_unavailable',
-      'Antigravity localharness daemon spawn requires the daemon managed-installable resolution context.',
+      'Antigravity localharness setup requires the canonical managed-dependency service.',
     );
   }
-
-  const resolved = await resolveManagedInstallable({
-    installableId: ANTIGRAVITY_LOCALHARNESS_INSTALLABLE_KEY,
-    sourcePreference: 'managed-first',
-    reason: 'Antigravity localharness daemon spawn requires the localharness runtime.',
-  });
-
-  return resolved.ok
-    ? { allowed: true }
-    : denyAntigravitySpawn('antigravity_localharness_unavailable', resolved.errorMessage);
+  try {
+    await dependencies.ensure(
+      'localharness',
+      context.signal ? { signal: context.signal } : undefined,
+    );
+    return { decision: 'allow' };
+  } catch (error) {
+    return denyAntigravitySpawn(
+      'antigravity_localharness_unavailable',
+      error instanceof Error ? error.message : 'Antigravity localharness setup failed.',
+    );
+  }
 }
 
 async function resolveCliPrintSpawnPrerequisites(
@@ -192,7 +189,7 @@ async function resolveCliPrintSpawnPrerequisites(
 
   const env = isolateAntigravityCliPrintEnv(selection.env);
   const result = await runSystemTool({
-    toolId: 'antigravity',
+    toolId: ANTIGRAVITY_CLI_SYSTEM_TOOL_ID,
     lookupNames: ['agy'],
     sourcePreference: 'system-first',
     args: ANTIGRAVITY_CLI_MODELS_COMMAND_ARGS,
@@ -213,24 +210,26 @@ async function resolveCliPrintSpawnPrerequisites(
       result.stderr.trim() || result.stdout.trim() || `agy models exited with code ${result.exitCode ?? 'unknown'}.`,
     );
   }
-  return { allowed: true };
+  return { decision: 'allow' };
 }
 
 function combineAutoFailure(
   cliPrint: AntigravityDaemonSpawnPrerequisiteResult,
   sdk: AntigravityDaemonSpawnPrerequisiteResult,
 ): AntigravityDaemonSpawnPrerequisiteResult {
+  const cliPrintError = 'errorMessage' in cliPrint ? cliPrint.errorMessage : undefined;
+  const sdkError = 'errorMessage' in sdk ? sdk.errorMessage : undefined;
   return denyAntigravitySpawn(
     'antigravity_runtime_unavailable',
     [
-      cliPrint.errorMessage ? `cliPrint: ${cliPrint.errorMessage}` : null,
-      sdk.errorMessage ? `sdk: ${sdk.errorMessage}` : null,
+      cliPrintError ? `cliPrint: ${cliPrintError}` : null,
+      sdkError ? `sdk: ${sdkError}` : null,
     ].filter((value): value is string => value !== null).join(' '),
   );
 }
 
 export async function resolveAntigravityDaemonSpawnPrerequisites(
-  event: AntigravityDaemonHookEvent,
+  event: unknown,
   context?: AntigravityDaemonSpawnHookContext,
 ): Promise<AntigravityDaemonSpawnPrerequisiteResult> {
   const selection = readAntigravityRuntimeModeSelection(event);
@@ -238,8 +237,8 @@ export async function resolveAntigravityDaemonSpawnPrerequisites(
   if (selection.mode === 'cliPrint') return await resolveCliPrintSpawnPrerequisites(selection, context);
 
   const cliPrint = await resolveCliPrintSpawnPrerequisites(selection, context);
-  if (cliPrint.allowed) return cliPrint;
+  if (cliPrint.decision === 'allow') return cliPrint;
   const sdk = await resolveSdkSpawnPrerequisites(selection, context);
-  if (sdk.allowed) return sdk;
+  if (sdk.decision === 'allow') return sdk;
   return combineAutoFailure(cliPrint, sdk);
 }

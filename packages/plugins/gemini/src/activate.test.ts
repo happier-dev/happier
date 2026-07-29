@@ -1,668 +1,379 @@
-import type { AcpBackendSpecV1 } from '@happier-dev/plugin-sdk/experimental/acp';
-import type { AgentRuntimeV1, PluginContextV1, PluginDisposable } from '@happier-dev/plugin-sdk';
-import { createAcpBackendEngine, readAcpBackendSpec } from '@happier-dev/plugin-sdk/experimental/acp';
+import { readFile, stat } from 'node:fs/promises';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agent-runtime';
 import { describe, expect, it, vi } from 'vitest';
 
+import { GEMINI_ACP_RUNTIME_DEFINITION } from './agent/acp/definition.js';
 import { activate } from './activate.js';
+import { PLUGIN_MANIFEST } from './manifest.js';
 
-type GeminiBackendRegistration = Readonly<{
-  agentId: string;
-  create: (ctx: GeminiPluginContextFixture) => AgentRuntimeV1 | Promise<AgentRuntimeV1>;
-}>;
-
-type GeminiPluginContextFixture = Readonly<{
-  agentRuntime: Readonly<{
-    acp: Readonly<{
-      defineAcpBackend: (spec: AcpBackendSpecV1) => AgentRuntimeV1;
-    }>;
-    exec: Readonly<{
-      run: ReturnType<typeof vi.fn>;
-    }>;
-  }>;
-  env: Readonly<{
-    list: () => Readonly<Record<string, string>>;
-  }>;
-  fs: Readonly<{
-    createTempDirectory: ReturnType<typeof vi.fn>;
-  }>;
-  abort: Readonly<{
-    signal: Readonly<{
-      addEventListener: ReturnType<typeof vi.fn>;
-    }>;
-  }>;
-}>;
-
-type GeminiPluginContextFixtureInput = Readonly<{
-  acp: GeminiPluginContextFixture['agentRuntime']['acp'];
-  exec: GeminiPluginContextFixture['agentRuntime']['exec'];
-  env: GeminiPluginContextFixture['env'];
-  fs: GeminiPluginContextFixture['fs'];
-  abort: GeminiPluginContextFixture['abort'];
-}>;
-
-function createGeminiContextFixture(input: GeminiPluginContextFixtureInput): GeminiPluginContextFixture {
-  const { acp, exec, ...core } = input;
+function disconnectedConnectedAccounts() {
   return {
-    ...core,
-    agentRuntime: {
-      acp,
-      exec,
-    },
+    getBinding: vi.fn(async () => null),
+    materialize: vi.fn(),
+    requestSelection: vi.fn(),
+    watch: vi.fn(() => ({ dispose() {} })),
   };
 }
 
-type GeminiAcpAuthWithMethodResolver = NonNullable<AcpBackendSpecV1['auth']> & Readonly<{
-  resolveMethodId?: (
-    ctx: PluginContextV1,
-    params: Readonly<{
-      cwd: string;
-      env: Readonly<Record<string, string>>;
-    }>,
-  ) => string | null | undefined;
-}>;
-
-function readRegisteredBackend(registerAgentRuntime: ReturnType<typeof vi.fn>): GeminiBackendRegistration {
-  const registration = registerAgentRuntime.mock.calls[0]?.[0];
-  if (!registration || typeof registration !== 'object') {
-    throw new Error('Expected Gemini activation to register a backend engine');
-  }
-  return registration as GeminiBackendRegistration;
+async function createGeminiRuntime() {
+  const activation = await createPluginTestkit({
+    manifest: PLUGIN_MANIFEST,
+    module: { activate },
+  });
+  const factory = activation.registration('agents', 'gemini')?.factory;
+  if (!factory) throw new Error('Expected Gemini Agent factory');
+  const runtime = await factory({
+    plugin: { id: 'happier.agent.gemini', version: '0.0.0' },
+    agent: { id: 'gemini' },
+    signal: new AbortController().signal,
+  });
+  await activation.dispose();
+  return runtime;
 }
 
-function createGeminiPluginApi(overrides: Readonly<{
-  registerAgentRuntime?: ReturnType<typeof vi.fn>;
-  registerHook?: ReturnType<typeof vi.fn>;
-  onDispose?: ReturnType<typeof vi.fn>;
-}> = {}) {
-  return {
-    registerAgentRuntime: vi.fn(),
-    registerHook: vi.fn(),
-    onDispose: vi.fn((disposable: PluginDisposable): PluginDisposable => disposable),
-    ...overrides,
-  };
-}
+describe('Gemini native runtime migration', () => {
+  it('declares only the raw Connected Account materialization kinds consumed by session launch', () => {
+    expect(PLUGIN_MANIFEST.contributes.agents[0]?.connectedAccounts).toEqual([{
+      purpose: 'model_upstream',
+      service: 'gemini-account',
+      required: false,
+      materializationKinds: ['files', 'environment'],
+    }]);
+  });
 
-async function disposePluginDisposable(disposable: PluginDisposable): Promise<void> {
-  if (typeof disposable === 'function') {
-    await disposable();
-    return;
-  }
-  await disposable.dispose();
-}
+  it('does not leak ambient daemon environment into the bounded native launch projection', async () => {
+    const ambientKey = 'HAPPIER_GEMINI_UNDECLARED_SECRET';
+    const previous = process.env[ambientKey];
+    process.env[ambientKey] = 'must-not-reach-gemini';
+    try {
+      const runtime = await createGeminiRuntime();
+      const run = vi.fn(async () => ({
+        termination: { observed: { kind: 'exit' as const, exitCode: 0 }, requestedBy: { kind: 'none' as const } },
+        stdout: new TextEncoder().encode('--acp'),
+        stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false,
+      }));
+      const open = vi.fn(async () => ({
+        send: vi.fn(), watch: () => ({ dispose: () => undefined }), dispose: vi.fn(),
+      }));
 
-function applyRuntimeEnvOverlay(
-  baseEnv: Readonly<Record<string, string>>,
-  overlayEnv: Readonly<Record<string, string>>,
-): Readonly<Record<string, string>> {
-  return {
-    ...baseEnv,
-    ...overlayEnv,
-  };
-}
+      const session = await runtime.sessions.open({
+        kind: 'create', sessionId: 'gemini-bounded-env', cwd: '/workspace',
+        launchEnvironment: { values: { GEMINI_API_KEY: 'AIzaPluginScopedKey' }, unset: [] },
+      }, {
+        signal: new AbortController().signal,
+        services: { exec: { run }, connectedAccounts: disconnectedConnectedAccounts() },
+        protocols: { acp: { open } },
+      } as unknown as AgentSessionRuntimeContext);
+      await session.dispose();
 
-describe('activate', () => {
-  it('registers provider-owned daemon spawn prerequisite hook for Gemini auth preflight', () => {
-    const registerAgentRuntime = vi.fn();
-    const registerHook = vi.fn();
+      const probeEnvironment = run.mock.calls[0]?.[0].env;
+      expect(probeEnvironment).not.toHaveProperty(ambientKey);
+      expect(probeEnvironment).toMatchObject({ GEMINI_API_KEY: 'AIzaPluginScopedKey' });
+    } finally {
+      if (previous === undefined) delete process.env[ambientKey];
+      else process.env[ambientKey] = previous;
+    }
+  });
 
-    activate(createGeminiPluginApi({ registerAgentRuntime, registerHook }));
+  it('opens Gemini through the native ACP composer instead of the V1 compatibility envelope', async () => {
+    const runtime = await createGeminiRuntime();
+    const session = {
+      send: vi.fn(async () => ({ status: 'admitted' as const })),
+      watch: () => ({ dispose: () => undefined }),
+      dispose: vi.fn(),
+    };
+    const open = vi.fn(async () => session);
+    const run = vi.fn(async () => ({
+      termination: { observed: { kind: 'exit' as const, exitCode: 0 }, requestedBy: { kind: 'none' as const } },
+      stdout: new TextEncoder().encode('Usage: gemini --experimental-acp'),
+      stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false,
+    }));
 
-    expect(registerHook).toHaveBeenCalledWith(expect.objectContaining({
-      hookId: 'agent.resolvePrerequisites',
-      category: 'decision',
-      scope: 'agent',
-      filters: { agentId: 'gemini' },
-      executionKind: 'decide',
-      handler: expect.any(Function),
+    await expect(runtime.sessions.open({
+      kind: 'create',
+      sessionId: 'gemini-native-session',
+      cwd: '/workspace',
+      launchEnvironment: {
+        values: { GEMINI_API_KEY: 'AIzaPluginScopedKey' },
+        unset: [],
+      },
+      configuration: {
+        mode: { value: null, updatedAtMs: 10 },
+        model: { value: 'gemini-2.5-pro', updatedAtMs: 11 },
+        permissionIntent: { value: 'plan', updatedAtMs: 12 },
+        options: {},
+      },
+    }, {
+      signal: new AbortController().signal,
+      services: { exec: { run }, connectedAccounts: disconnectedConnectedAccounts() },
+      protocols: { acp: { open } },
+    } as unknown as AgentSessionRuntimeContext)).resolves.toMatchObject({ dispose: expect.any(Function) });
+
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({
+      executable: { kind: 'systemTool', id: 'gemini-cli' },
+      args: ['--help'],
+      env: expect.objectContaining({ GEMINI_API_KEY: 'AIzaPluginScopedKey' }),
+    }), expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    expect(open).toHaveBeenCalledWith(expect.objectContaining({
+      launchEnvironment: expect.objectContaining({ values: expect.objectContaining({ GEMINI_API_KEY: 'AIzaPluginScopedKey' }) }),
+    }), expect.objectContaining({
+      transport: expect.objectContaining({
+        kind: 'stdio',
+        executable: { kind: 'systemTool', id: 'gemini-cli' },
+        args: ['--experimental-acp'],
+      }),
+      definition: expect.objectContaining({
+        mcp: { policy: 'pass_through' },
+        modelConfigOptionId: 'model',
+        toolNameInference: GEMINI_ACP_RUNTIME_DEFINITION.toolNameInference,
+        stderrRules: GEMINI_ACP_RUNTIME_DEFINITION.stderrRules,
+      }),
     }));
   });
 
-  it('registers the Gemini ACP backend through the plugin API with dynamic spec', async () => {
-    const registerAgentRuntime = vi.fn();
+  it('projects the declared execution-run capability through the native ACP session owner', async () => {
+    const runtime = await createGeminiRuntime();
+    if (!runtime.executionRuns) throw new Error('Expected Gemini execution-run runtime');
 
-    activate(createGeminiPluginApi({ registerAgentRuntime }));
+    let publishSessionEvent: ((event: never) => void) | null = null;
+    const send = vi.fn(async () => ({ status: 'admitted' as const }));
+    const cancel = vi.fn(async () => ({ status: 'requested' as const }));
+    const disposeSession = vi.fn();
+    const disposeSubscription = vi.fn();
+    const open = vi.fn(async () => ({
+      send,
+      cancel,
+      watch(listener: (event: never) => void) {
+        publishSessionEvent = listener;
+        return { dispose: disposeSubscription };
+      },
+      dispose: disposeSession,
+    }));
+    const run = vi.fn(async () => ({
+      termination: { observed: { kind: 'exit' as const, exitCode: 0 }, requestedBy: { kind: 'none' as const } },
+      stdout: new TextEncoder().encode('--acp'),
+      stderr: new Uint8Array(),
+      stdoutTruncated: false,
+      stderrTruncated: false,
+    }));
+    const execution = await runtime.executionRuns.open({
+      kind: 'create',
+      runId: 'gemini-native-run',
+      cwd: '/workspace',
+      profile: { pluginId: 'happier.agent.gemini', localId: 'review' },
+      launchEnvironment: {
+        values: { GEMINI_API_KEY: 'AIzaPluginScopedKey' },
+        unset: [],
+      },
+      input: { text: 'Review this change' },
+    }, {
+      signal: new AbortController().signal,
+      services: { exec: { run }, connectedAccounts: disconnectedConnectedAccounts() },
+      protocols: { acp: { open } },
+    } as unknown as AgentSessionRuntimeContext);
 
-    const registration = readRegisteredBackend(registerAgentRuntime);
-    expect(registration.agentId).toBe('gemini');
+    expect(open).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'create',
+      sessionId: 'gemini-native-run',
+      cwd: '/workspace',
+    }), expect.anything());
+    expect(send).toHaveBeenCalledWith({
+      inputIds: ['gemini-native-run-input-1'],
+      input: { text: 'Review this change' },
+      delivery: { kind: 'newTurn', turnId: 'gemini-native-run-turn-1' },
+    }, undefined);
 
-    const mockTempDir = {
-      path: '/tmp/happier-gemini-mcp-home-test',
-      cleanup: vi.fn(),
+    const events: Array<Record<string, unknown>> = [];
+    execution.watch((event) => events.push(event));
+    publishSessionEvent?.({
+      kind: 'provider-session-id',
+      providerSessionId: 'gemini-checkpoint-1',
+      emittedAtMs: 10,
+    } as never);
+    publishSessionEvent?.({
+      kind: 'message-delta',
+      channel: 'assistant',
+      text: 'Looks good',
+      emittedAtMs: 11,
+    } as never);
+
+    await expect(execution.stop()).resolves.toEqual({ status: 'requested' });
+    expect(cancel).toHaveBeenCalledWith({
+      turnId: 'gemini-native-run-turn-1',
+      reason: 'user',
+    }, undefined);
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'run-start', runId: 'gemini-native-run' }),
+      expect.objectContaining({ kind: 'checkpoint', checkpointId: 'gemini-checkpoint-1' }),
+      expect.objectContaining({ kind: 'output-delta', channel: 'assistant', text: 'Looks good' }),
+    ]));
+
+    await execution.dispose();
+    expect(disposeSubscription).toHaveBeenCalledOnce();
+    expect(disposeSession).toHaveBeenCalledOnce();
+  });
+
+  it('cleans the isolated Gemini home when the host disposes the native session', async () => {
+    const runtime = await createGeminiRuntime();
+    const dispose = vi.fn();
+    const open = vi.fn(async () => ({ send: vi.fn(), watch: () => ({ dispose: () => undefined }), dispose }));
+    const context = {
+      signal: new AbortController().signal,
+      services: { exec: { run: vi.fn(async () => ({
+        termination: { observed: { kind: 'exit' as const, exitCode: 0 }, requestedBy: { kind: 'none' as const } },
+        stdout: new TextEncoder().encode('--acp'), stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false,
+      })) }, connectedAccounts: disconnectedConnectedAccounts() },
+      protocols: { acp: { open } },
+    } as unknown as AgentSessionRuntimeContext;
+    const nativeSession = await runtime.sessions.open({
+      kind: 'create', sessionId: 'gemini-native-cleanup', cwd: '/workspace',
+      launchEnvironment: { values: { GEMINI_API_KEY: 'AIzaPluginScopedKey' }, unset: [] },
+    }, context);
+
+    await nativeSession.dispose();
+    await nativeSession.dispose();
+    expect(dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('retains the provider-owned spawn prerequisite hook', async () => {
+    const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    expect(activation.registration('hooks', 'resolve-prerequisites')).toEqual(expect.any(Function));
+    await activation.dispose();
+  });
+
+  it('materializes the selected Gemini Connected Account before opening ACP', async () => {
+    const runtime = await createGeminiRuntime();
+    const connectedAccounts = {
+      getBinding: vi.fn(async () => ({
+        purpose: 'model_upstream',
+        service: { pluginId: 'happier.agent.gemini', localId: 'gemini-account' },
+        target: { kind: 'account' as const, displayName: 'Gemini API key' },
+      })),
+      materialize: vi.fn(async (_purpose: string, request: { kind: string }) => (
+        request.kind === 'files'
+          ? { kind: 'files' as const, files: {} }
+          : {
+              kind: 'environment' as const,
+              env: { GEMINI_API_KEY: 'selected-gemini-key', GOOGLE_API_KEY: 'selected-gemini-key' },
+            }
+      )),
+      requestSelection: vi.fn(),
+      watch: vi.fn(() => ({ dispose() {} })),
     };
+    const run = vi.fn(async () => ({
+      termination: { observed: { kind: 'exit' as const, exitCode: 0 }, requestedBy: { kind: 'none' as const } },
+      stdout: new TextEncoder().encode('--acp'),
+      stderr: new Uint8Array(),
+      stdoutTruncated: false,
+      stderrTruncated: false,
+    }));
+    const open = vi.fn(async () => ({
+      send: vi.fn(),
+      watch: () => ({ dispose() {} }),
+      dispose: vi.fn(),
+    }));
 
-    const ctx = createGeminiContextFixture({
-      acp: {
-        defineAcpBackend: createAcpBackendEngine,
-      },
-      env: {
-        list: () => ({
-          GEMINI_API_KEY: 'AIzaPluginScopedKey',
-        }),
-      },
-      exec: {
-        run: vi.fn().mockResolvedValue({ stdout: '--acp', stderr: '', exitCode: 0 }),
-      },
-      fs: {
-        createTempDirectory: vi.fn().mockResolvedValue(mockTempDir),
-      },
-      abort: {
-        signal: {
-          addEventListener: vi.fn(),
-        },
-      },
-    });
+    await runtime.sessions.open({
+      kind: 'create',
+      sessionId: 'gemini-connected-account',
+      cwd: '/workspace',
+      launchEnvironment: { values: {}, unset: [] },
+    }, {
+      signal: new AbortController().signal,
+      services: { exec: { run }, connectedAccounts },
+      protocols: { acp: { open } },
+    } as unknown as AgentSessionRuntimeContext);
 
-    const engine = await registration.create(ctx);
-    const spec = readAcpBackendSpec(engine);
-
-    expect(spec.auth).toMatchObject({
-      methodId: 'gemini-api-key',
-    });
-    expect(spec.auth?.buildAuthenticateMeta?.(ctx as unknown as PluginContextV1)).toBeUndefined();
-
-    const argvBuilder = spec.callbacks?.argvBuilder;
-    expect(argvBuilder).toBeDefined();
-    if (!argvBuilder) {
-      throw new Error('Expected Gemini activation to install an ACP argvBuilder callback');
-    }
-    const args = await argvBuilder({
-      baseArgs: [],
-      cwd: '/test/cwd',
-      env: { GEMINI_API_KEY: 'AIzaPluginScopedKey' },
-    });
-    expect(args).toEqual(['--acp']);
-    expect(ctx.agentRuntime.exec.run).toHaveBeenCalledWith(
-      expect.objectContaining({ args: expect.arrayContaining(['--help']) }),
-      expect.anything(),
+    expect(connectedAccounts.getBinding).toHaveBeenCalledWith(
+      'model_upstream',
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
-
-    const envBuilder = spec.callbacks?.envBuilder;
-    expect(envBuilder).toBeDefined();
-    if (!envBuilder) {
-      throw new Error('Expected Gemini activation to install an ACP envBuilder callback');
-    }
-    const env = await envBuilder({ cwd: '/test/cwd', env: { GEMINI_API_KEY: 'AIzaPluginScopedKey' } });
-    expect(env.GEMINI_CLI_HOME).toBe(mockTempDir.path);
-    expect(env.HOME).toBe(mockTempDir.path);
-    expect(ctx.fs.createTempDirectory).toHaveBeenCalledWith(expect.objectContaining({ prefix: 'happier-gemini-mcp-home-' }));
+    expect(connectedAccounts.materialize).toHaveBeenCalledWith(
+      'model_upstream',
+      { kind: 'environment', keys: ['GEMINI_API_KEY', 'GOOGLE_API_KEY'] },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(open).toHaveBeenCalledWith(expect.objectContaining({
+      launchEnvironment: {
+        values: expect.objectContaining({
+          GEMINI_API_KEY: 'selected-gemini-key',
+          GOOGLE_API_KEY: 'selected-gemini-key',
+        }),
+        unset: [],
+      },
+    }), expect.anything());
   });
 
-  it('cleans Gemini MCP temp homes when the plugin is disposed', async () => {
-    const registerAgentRuntime = vi.fn();
-    const pluginDisposables: PluginDisposable[] = [];
-    const api = {
-      registerAgentRuntime,
-      registerHook: vi.fn(),
-      onDispose: vi.fn((disposable: PluginDisposable): PluginDisposable => {
-        pluginDisposables.push(disposable);
-        return disposable;
-      }),
-    };
-
-    activate(api);
-
-    expect(pluginDisposables).toHaveLength(1);
-
-    const registration = readRegisteredBackend(registerAgentRuntime);
-    const cleanups = [vi.fn(), vi.fn()];
-    const tempDirs = [
-      { path: '/tmp/happier-gemini-mcp-home-one', cleanup: cleanups[0] },
-      { path: '/tmp/happier-gemini-mcp-home-two', cleanup: cleanups[1] },
-    ];
-    const ctx = createGeminiContextFixture({
-      acp: {
-        defineAcpBackend: createAcpBackendEngine,
-      },
-      env: {
-        list: () => ({}),
-      },
-      exec: {
-        run: vi.fn().mockResolvedValue({ stdout: '--acp', stderr: '', exitCode: 0 }),
-      },
-      fs: {
-        createTempDirectory: vi.fn()
-          .mockResolvedValueOnce(tempDirs[0])
-          .mockResolvedValueOnce(tempDirs[1]),
-      },
-      abort: {
-        signal: {
-          addEventListener: vi.fn(),
-        },
-      },
+  it('writes a selected service account inside the session-owned home with private permissions', async () => {
+    const runtime = await createGeminiRuntime();
+    const serviceAccount = JSON.stringify({
+      type: 'service_account',
+      client_email: 'worker@example.iam.gserviceaccount.com',
+      project_id: 'project-one',
+      private_key: 'secret-private-key',
     });
-
-    const engine = await registration.create(ctx);
-    const spec = readAcpBackendSpec(engine);
-    const envBuilder = spec.callbacks?.envBuilder;
-    if (!envBuilder) {
-      throw new Error('Expected Gemini activation to install an ACP envBuilder callback');
-    }
-
-    await envBuilder({ cwd: '/test/cwd', env: { GEMINI_API_KEY: 'AIzaPluginScopedKey' } });
-    await envBuilder({ cwd: '/test/cwd', env: { GEMINI_API_KEY: 'AIzaPluginScopedKey' } });
-
-    expect(cleanups[0]).not.toHaveBeenCalled();
-    expect(cleanups[1]).not.toHaveBeenCalled();
-
-    await disposePluginDisposable(pluginDisposables[0]!);
-    await disposePluginDisposable(pluginDisposables[0]!);
-
-    expect(cleanups[0]).toHaveBeenCalledTimes(1);
-    expect(cleanups[1]).toHaveBeenCalledTimes(1);
-  });
-
-  it('does not build Gemini ACP argv after the plugin is disposed', async () => {
-    const registerAgentRuntime = vi.fn();
-    const pluginDisposables: PluginDisposable[] = [];
-    activate({
-      registerAgentRuntime,
-      registerHook: vi.fn(),
-      onDispose: vi.fn((disposable: PluginDisposable): PluginDisposable => {
-        pluginDisposables.push(disposable);
-        return disposable;
-      }),
-    });
-
-    const registration = readRegisteredBackend(registerAgentRuntime);
-    const ctx = createGeminiContextFixture({
-      acp: {
-        defineAcpBackend: createAcpBackendEngine,
-      },
-      env: {
-        list: () => ({}),
-      },
-      exec: {
-        run: vi.fn().mockResolvedValue({ stdout: '--acp', stderr: '', exitCode: 0 }),
-      },
-      fs: {
-        createTempDirectory: vi.fn().mockResolvedValue({
-          path: '/tmp/happier-gemini-mcp-home-test',
-          cleanup: vi.fn(),
-        }),
-      },
-      abort: {
-        signal: {
-          aborted: false,
-          addEventListener: vi.fn(),
-        },
-      },
-    });
-
-    const engine = await registration.create(ctx);
-    const spec = readAcpBackendSpec(engine);
-    const argvBuilder = spec.callbacks?.argvBuilder;
-    if (!argvBuilder) {
-      throw new Error('Expected Gemini activation to install an ACP argvBuilder callback');
-    }
-
-    await disposePluginDisposable(pluginDisposables[0]!);
-
-    await expect(argvBuilder({
-      baseArgs: [],
-      cwd: '/test/cwd',
-      env: {},
-    })).rejects.toThrow('Gemini ACP argv builder is disposed.');
-    expect(ctx.agentRuntime.exec.run).not.toHaveBeenCalled();
-  });
-
-  it('preserves host-resolved launch argv while selecting the available ACP flag', async () => {
-    const registerAgentRuntime = vi.fn();
-
-    activate(createGeminiPluginApi({ registerAgentRuntime }));
-
-    const registration = readRegisteredBackend(registerAgentRuntime);
-    const ctx = createGeminiContextFixture({
-      acp: {
-        defineAcpBackend: createAcpBackendEngine,
-      },
-      env: {
-        list: () => ({}),
-      },
-      exec: {
-        run: vi.fn().mockResolvedValue({
-          stdout: 'Usage: gemini --experimental-acp',
-          stderr: '',
-          exitCode: 0,
-        }),
-      },
-      fs: {
-        createTempDirectory: vi.fn().mockResolvedValue({
-          path: '/tmp/happier-gemini-mcp-home-test',
-          cleanup: vi.fn(),
-        }),
-      },
-      abort: {
-        signal: {
-          addEventListener: vi.fn(),
-        },
-      },
-    });
-
-    const engine = await registration.create(ctx);
-    const spec = readAcpBackendSpec(engine);
-    const argvBuilder = spec.callbacks?.argvBuilder;
-    if (!argvBuilder) {
-      throw new Error('Expected Gemini activation to install an ACP argvBuilder callback');
-    }
-
-    await expect(argvBuilder({
-      baseArgs: ['/managed/gemini/bin/gemini.js', '--acp', '--approval-mode', 'plan'],
-      cwd: '/test/cwd',
-      env: { GEMINI_API_KEY: 'AIzaPluginScopedKey' },
-      permissionMode: 'plan',
-    })).resolves.toEqual(['/managed/gemini/bin/gemini.js', '--experimental-acp', '--approval-mode', 'plan']);
-  });
-
-  it('selects API-key ACP auth when GEMINI_API_KEY is available', async () => {
-    const registerAgentRuntime = vi.fn();
-
-    activate(createGeminiPluginApi({ registerAgentRuntime }));
-
-    const registration = readRegisteredBackend(registerAgentRuntime);
-    const ctx = createGeminiContextFixture({
-      acp: {
-        defineAcpBackend: createAcpBackendEngine,
-      },
-      env: {
-        list: () => ({
-          GEMINI_API_KEY: 'AIzaPluginScopedKey',
-        }),
-      },
-      exec: {
-        run: vi.fn().mockResolvedValue({ stdout: '--acp', stderr: '', exitCode: 0 }),
-      },
-      fs: {
-        createTempDirectory: vi.fn().mockResolvedValue({
-          path: '/tmp/happier-gemini-mcp-home-test',
-          cleanup: vi.fn(),
-        }),
-      },
-      abort: {
-        signal: {
-          addEventListener: vi.fn(),
-        },
-      },
-    });
-
-    const engine = await registration.create(ctx);
-    const spec = readAcpBackendSpec(engine);
-
-    expect(spec.auth).toMatchObject({
-      methodId: 'gemini-api-key',
-    });
-  });
-
-  it('fails closed before launch when no API-key or Vertex credential env is materialized', async () => {
-    const registerAgentRuntime = vi.fn();
-
-    activate(createGeminiPluginApi({ registerAgentRuntime }));
-
-    const registration = readRegisteredBackend(registerAgentRuntime);
-    const ctx = createGeminiContextFixture({
-      acp: {
-        defineAcpBackend: createAcpBackendEngine,
-      },
-      env: {
-        list: () => ({}),
-      },
-      exec: {
-        run: vi.fn().mockResolvedValue({ stdout: '--acp', stderr: '', exitCode: 0 }),
-      },
-      fs: {
-        createTempDirectory: vi.fn().mockResolvedValue({
-          path: '/tmp/happier-gemini-mcp-home-test',
-          cleanup: vi.fn(),
-        }),
-      },
-      abort: {
-        signal: {
-          addEventListener: vi.fn(),
-        },
-      },
-    });
-
-    const engine = await registration.create(ctx);
-    const spec = readAcpBackendSpec(engine);
-    expect(spec.auth?.methodId).toBe('gemini-api-key');
-
-    const auth = spec.auth as GeminiAcpAuthWithMethodResolver | undefined;
-    expect(() => auth?.resolveMethodId?.(ctx as unknown as PluginContextV1, {
-      cwd: '/test/cwd',
-      env: {},
-    })).toThrow(/GEMINI_API_KEY|GOOGLE_API_KEY|Vertex/);
-
-    const argvBuilder = spec.callbacks?.argvBuilder;
-    if (!argvBuilder) {
-      throw new Error('Expected Gemini activation to install an ACP argvBuilder callback');
-    }
-    await expect(argvBuilder({
-      baseArgs: ['/managed/gemini/bin/gemini.js', '--acp'],
-      cwd: '/test/cwd',
-      env: {},
-    })).rejects.toThrow(/GEMINI_API_KEY|GOOGLE_API_KEY|Vertex/);
-    expect(ctx.agentRuntime.exec.run).not.toHaveBeenCalled();
-
-    const envBuilder = spec.callbacks?.envBuilder;
-    if (!envBuilder) {
-      throw new Error('Expected Gemini activation to install an ACP envBuilder callback');
-    }
-    await expect(envBuilder({
-      cwd: '/test/cwd',
-      env: {
-        PATH: '/usr/bin',
-      },
-    })).rejects.toThrow(/GEMINI_API_KEY|GOOGLE_API_KEY|Vertex/);
-    expect(ctx.fs.createTempDirectory).not.toHaveBeenCalled();
-  });
-
-  it('keeps parent-only Gemini ACP auth controls out of the child launch env', async () => {
-    const registerAgentRuntime = vi.fn();
-
-    activate(createGeminiPluginApi({ registerAgentRuntime }));
-
-    const registration = readRegisteredBackend(registerAgentRuntime);
-    const ctx = createGeminiContextFixture({
-      acp: {
-        defineAcpBackend: createAcpBackendEngine,
-      },
-      env: {
-        list: () => ({
-          HAPPIER_GEMINI_ACP_AUTH_METHOD: 'gateway',
-          HAPPIER_GEMINI_ACP_AUTH_META: JSON.stringify({
-            gateway: {
-              baseUrl: 'https://gateway.example.test/v1',
-              headers: {
-                Authorization: 'Bearer parent-only-token',
+    const connectedAccounts = {
+      getBinding: vi.fn(async () => ({
+        purpose: 'model_upstream',
+        service: { pluginId: 'happier.agent.gemini', localId: 'gemini-account' },
+        target: { kind: 'account' as const, displayName: 'Gemini service account' },
+      })),
+      materialize: vi.fn(async (_purpose: string, request: { kind: string }) => (
+        request.kind === 'files'
+          ? {
+              kind: 'files' as const,
+              files: { 'google-service-account.json': new TextEncoder().encode(serviceAccount) },
+            }
+          : {
+              kind: 'environment' as const,
+              env: {
+                GOOGLE_GENAI_USE_VERTEXAI: '1',
+                GOOGLE_CLOUD_PROJECT: 'project-one',
+                GOOGLE_CLOUD_LOCATION: 'global',
               },
-            },
-          }),
-        }),
-      },
-      exec: {
-        run: vi.fn().mockResolvedValue({ stdout: '--acp', stderr: '', exitCode: 0 }),
-      },
-      fs: {
-        createTempDirectory: vi.fn().mockResolvedValue({
-          path: '/tmp/happier-gemini-mcp-home-test',
-          cleanup: vi.fn(),
-        }),
-      },
-      abort: {
-        signal: {
-          addEventListener: vi.fn(),
-        },
-      },
-    });
-
-    const engine = await registration.create(ctx);
-    const spec = readAcpBackendSpec(engine);
-    expect(spec.auth?.methodId).toBe('gemini-api-key');
-    expect(spec.auth?.buildAuthenticateMeta?.(ctx as unknown as PluginContextV1)).toBeUndefined();
-
-    const envBuilder = spec.callbacks?.envBuilder;
-    if (!envBuilder) {
-      throw new Error('Expected Gemini activation to install an ACP envBuilder callback');
-    }
-
-    const inputEnv = {
-      PATH: '/usr/bin',
-      GEMINI_API_KEY: 'AIzaPluginScopedKey',
-      HAPPIER_GEMINI_ACP_AUTH_METHOD: 'gateway',
-      HAPPIER_GEMINI_ACP_AUTH_META: JSON.stringify({ gateway: { headers: { Authorization: 'Bearer leaked-token' } } }),
+            }
+      )),
+      requestSelection: vi.fn(),
+      watch: vi.fn(() => ({ dispose() {} })),
     };
-    const env = applyRuntimeEnvOverlay(inputEnv, await envBuilder({
-      cwd: '/test/cwd',
-      env: inputEnv,
+    const run = vi.fn(async () => ({
+      termination: { observed: { kind: 'exit' as const, exitCode: 0 }, requestedBy: { kind: 'none' as const } },
+      stdout: new TextEncoder().encode('--acp'),
+      stderr: new Uint8Array(),
+      stdoutTruncated: false,
+      stderrTruncated: false,
+    }));
+    const open = vi.fn(async () => ({
+      send: vi.fn(),
+      watch: () => ({ dispose() {} }),
+      dispose: vi.fn(),
     }));
 
-    expect(env.PATH).toBe('/usr/bin');
-    expect(env.GEMINI_CLI_HOME).toBe('/tmp/happier-gemini-mcp-home-test');
-    expect(env.HAPPIER_GEMINI_ACP_AUTH_METHOD).toBe('');
-    expect(env.HAPPIER_GEMINI_ACP_AUTH_META).toBe('');
-    expect(JSON.stringify(env)).not.toContain('leaked-token');
-  });
+    const session = await runtime.sessions.open({
+      kind: 'create',
+      sessionId: 'gemini-service-account',
+      cwd: '/workspace',
+      launchEnvironment: { values: {}, unset: [] },
+    }, {
+      signal: new AbortController().signal,
+      services: { exec: { run }, connectedAccounts },
+      protocols: { acp: { open } },
+    } as unknown as AgentSessionRuntimeContext);
 
-  it('resolves Gemini API keys from the final scoped ACP launch environment', async () => {
-    const registerAgentRuntime = vi.fn();
-
-    activate(createGeminiPluginApi({ registerAgentRuntime }));
-
-    const registration = readRegisteredBackend(registerAgentRuntime);
-    const ctx = createGeminiContextFixture({
-      acp: {
-        defineAcpBackend: createAcpBackendEngine,
-      },
-      env: {
-        list: () => ({
-          GEMINI_API_KEY: 'AIzaPluginScopedKey',
-        }),
-      },
-      exec: {
-        run: vi.fn().mockResolvedValue({ stdout: '--acp', stderr: '', exitCode: 0 }),
-      },
-      fs: {
-        createTempDirectory: vi.fn().mockResolvedValue({
-          path: '/tmp/happier-gemini-mcp-home-test',
-          cleanup: vi.fn(),
-        }),
-      },
-      abort: {
-        signal: {
-          addEventListener: vi.fn(),
-        },
-      },
+    const launchEnvironment = open.mock.calls[0]?.[0].launchEnvironment;
+    const credentialPath = launchEnvironment?.values.GOOGLE_APPLICATION_CREDENTIALS;
+    expect(credentialPath).toMatch(/google-service-account\.json$/u);
+    expect(await readFile(credentialPath!, 'utf8')).toBe(serviceAccount);
+    expect((await stat(credentialPath!)).mode & 0o777).toBe(0o600);
+    expect(launchEnvironment?.values).toMatchObject({
+      GOOGLE_GENAI_USE_VERTEXAI: '1',
+      GOOGLE_CLOUD_PROJECT: 'project-one',
+      GOOGLE_CLOUD_LOCATION: 'global',
     });
+    expect(connectedAccounts.materialize).toHaveBeenCalledTimes(1);
 
-    const engine = await registration.create(ctx);
-    const spec = readAcpBackendSpec(engine);
-
-    expect(spec.auth?.buildAuthEnv?.(ctx)).toBeUndefined();
-
-    const auth = spec.auth as GeminiAcpAuthWithMethodResolver | undefined;
-    expect(auth?.resolveMethodId?.(ctx as unknown as PluginContextV1, {
-      cwd: '/test/cwd',
-      env: {
-        GEMINI_API_KEY: 'AIzaPluginScopedKey',
-      },
-    })).toBe('gemini-api-key');
-  });
-
-  it('selects Vertex ACP auth from final materialized launch env', async () => {
-    const registerAgentRuntime = vi.fn();
-
-    activate(createGeminiPluginApi({ registerAgentRuntime }));
-
-    const registration = readRegisteredBackend(registerAgentRuntime);
-    const ctx = createGeminiContextFixture({
-      acp: {
-        defineAcpBackend: createAcpBackendEngine,
-      },
-      env: {
-        list: () => ({}),
-      },
-      exec: {
-        run: vi.fn().mockResolvedValue({ stdout: '--acp', stderr: '', exitCode: 0 }),
-      },
-      fs: {
-        createTempDirectory: vi.fn().mockResolvedValue({
-          path: '/tmp/happier-gemini-mcp-home-test',
-          cleanup: vi.fn(),
-        }),
-      },
-      abort: {
-        signal: {
-          addEventListener: vi.fn(),
-        },
-      },
-    });
-
-    const engine = await registration.create(ctx);
-    const spec = readAcpBackendSpec(engine);
-    const auth = spec.auth as GeminiAcpAuthWithMethodResolver | undefined;
-
-    expect(auth?.methodId).toBe('gemini-api-key');
-    expect(auth?.resolveMethodId?.(ctx as unknown as PluginContextV1, {
-      cwd: '/test/cwd',
-      env: {
-        GOOGLE_GENAI_USE_VERTEXAI: 'true',
-        GOOGLE_CLOUD_PROJECT: 'happier-vertex-project',
-        GOOGLE_CLOUD_LOCATION: 'us-central1',
-      },
-    })).toBe('vertex-ai');
-    expect(spec.auth?.buildAuthEnv?.(ctx)).toBeUndefined();
-  });
-
-  it('forces Vertex launch env when Vertex auth is selected over a contradictory parent env', async () => {
-    const registerAgentRuntime = vi.fn();
-
-    activate(createGeminiPluginApi({ registerAgentRuntime }));
-
-    const registration = readRegisteredBackend(registerAgentRuntime);
-    const ctx = createGeminiContextFixture({
-      acp: {
-        defineAcpBackend: createAcpBackendEngine,
-      },
-      env: {
-        list: () => ({}),
-      },
-      exec: {
-        run: vi.fn().mockResolvedValue({ stdout: '--acp', stderr: '', exitCode: 0 }),
-      },
-      fs: {
-        createTempDirectory: vi.fn().mockResolvedValue({
-          path: '/tmp/happier-gemini-mcp-home-test',
-          cleanup: vi.fn(),
-        }),
-      },
-      abort: {
-        signal: {
-          addEventListener: vi.fn(),
-        },
-      },
-    });
-
-    const engine = await registration.create(ctx);
-    const spec = readAcpBackendSpec(engine);
-    const envBuilder = spec.callbacks?.envBuilder;
-    if (!envBuilder) {
-      throw new Error('Expected Gemini activation to install an ACP envBuilder callback');
-    }
-
-    const inputEnv = {
-      HAPPIER_GEMINI_ACP_AUTH_METHOD: 'vertex-ai',
-      GOOGLE_GENAI_USE_VERTEXAI: 'false',
-      GOOGLE_CLOUD_PROJECT: 'happier-vertex-project',
-      GOOGLE_CLOUD_LOCATION: 'us-central1',
-    };
-    const env = applyRuntimeEnvOverlay(inputEnv, await envBuilder({
-      cwd: '/test/cwd',
-      env: inputEnv,
-    }));
-
-    expect(env.GOOGLE_GENAI_USE_VERTEXAI).toBe('1');
-    expect(env.GOOGLE_CLOUD_PROJECT).toBe('happier-vertex-project');
-    expect(env.GOOGLE_CLOUD_LOCATION).toBe('us-central1');
-    expect(env.HAPPIER_GEMINI_ACP_AUTH_METHOD).toBe('');
-    expect(ctx.fs.createTempDirectory).toHaveBeenCalledWith(expect.objectContaining({ prefix: 'happier-gemini-mcp-home-' }));
+    await session.dispose();
+    await expect(stat(credentialPath!)).rejects.toThrow();
   });
 });

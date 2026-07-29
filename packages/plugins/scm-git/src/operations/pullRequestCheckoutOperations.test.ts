@@ -4,7 +4,7 @@ import type {
   ScmHostingProviderRef,
   ScmPullRequestSummary,
   ScmWorkingSnapshot,
-} from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm';
 
 import type { ScmBackendContext } from '../types.js';
 import {

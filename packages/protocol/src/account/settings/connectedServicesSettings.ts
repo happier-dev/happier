@@ -1,6 +1,10 @@
 import { z } from 'zod';
 
 import { ConnectedServiceBindingsV1Schema, type ConnectedServiceBindingsV1 } from '../../connect/connectedServiceBindings.js';
+import {
+  QualifiedConnectedAccountPurposeBindingsV1Schema,
+  type QualifiedConnectedAccountPurposeBindingsV1,
+} from '../../connect/connectedAccountPurposeBindings.js';
 
 const AgentIdSettingsKeySchema = z.string().trim().min(1);
 
@@ -22,6 +26,10 @@ export type ConnectedServicesDefaultAuthByAgentIdV1 = z.infer<
 export const DEFAULT_CONNECTED_SERVICES_DEFAULT_AUTH_BY_AGENT_ID_V1:
   ConnectedServicesDefaultAuthByAgentIdV1 =
     ConnectedServicesDefaultAuthByAgentIdV1Schema.parse({});
+
+export const DEFAULT_CONNECTED_ACCOUNT_PURPOSE_BINDINGS_V1:
+  QualifiedConnectedAccountPurposeBindingsV1 =
+    QualifiedConnectedAccountPurposeBindingsV1Schema.parse({ v: 1, bindings: [] });
 
 export const ConnectedServicesProviderConfigSharingModeV1Schema = z.enum([
   'linked',

@@ -1,11 +1,12 @@
-export { activate, observeAgentResponse, recordActivation, runReviewSummary } from './daemon';
-export { manifest } from './manifest';
-export { definePluginUiBuildConfig } from './pluginUiBuild';
 export {
-    hostedWebArtifact,
-    hostedWebPreset,
-    nativeIosArtifact,
-    nativeIosPreset,
-    nativeWebArtifact,
-    nativeWebPreset,
-} from './uiBuildTargets';
+    activate,
+    createReviewAgentRuntime,
+    observeSessionSpawned,
+    runReviewSummary,
+} from './daemon';
+export { pluginUiBuildConfig } from './pluginUiBuild';
+export {
+    activate as activateAccountMediatedBrowserVoiceProvider,
+    requestMediatedClientAuth,
+    requestMediatedVoiceCatalog,
+} from './voiceProvider';

@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
   CLAUDE_AGENT_RUNTIME_CONTRIBUTION,
+  materializeClaudeAuthEnvironment,
   verifyClaudeResumeReachability,
 } from './runtime.js';
+import { claudeHandoffSurface } from '../surfaces/sessions/handoff/providerOps.js';
 
 type CliSessionCommandContribution = Readonly<{
   backendIdForSessionRuntime: string;
@@ -93,6 +95,109 @@ function legacyClaudeTranscriptStart(sessionId: string): string {
 }
 
 describe('Claude runtime contribution CLI command options', () => {
+  it('binds the native runtime to the declared Claude CLI system tool', () => {
+    expect(CLAUDE_AGENT_RUNTIME_CONTRIBUTION.agentCliSystemTool).toEqual({
+      toolId: 'claude-cli',
+    });
+  });
+
+  it.each([
+    {
+      name: 'fresh terminal-local start',
+      input: {
+        startedBy: 'terminal' as const,
+        startingMode: 'terminal' as const,
+        existingSessionId: null,
+        sessionAttachFilePath: null,
+        providerResumeId: null,
+        hasExplicitPermissionMode: false,
+        permissionModeSeedSource: 'fallback' as const,
+        hasTerminalTty: false,
+      },
+      expected: true,
+    },
+    {
+      name: 'eligible terminal-local Happier attach',
+      input: {
+        startedBy: 'terminal' as const,
+        startingMode: 'terminal' as const,
+        existingSessionId: 'happy-session',
+        sessionAttachFilePath: '/tmp/session-attach.json',
+        providerResumeId: 'claude-session',
+        hasExplicitPermissionMode: true,
+        permissionModeSeedSource: 'explicit' as const,
+        hasTerminalTty: false,
+      },
+      expected: true,
+    },
+    {
+      name: 'attach without an explicit permission seed',
+      input: {
+        startedBy: 'terminal' as const,
+        startingMode: 'terminal' as const,
+        existingSessionId: 'happy-session',
+        sessionAttachFilePath: '/tmp/session-attach.json',
+        providerResumeId: 'claude-session',
+        hasExplicitPermissionMode: false,
+        permissionModeSeedSource: 'fallback' as const,
+        hasTerminalTty: true,
+      },
+      expected: false,
+    },
+    {
+      name: 'daemon start',
+      input: {
+        startedBy: 'daemon' as const,
+        startingMode: 'terminal' as const,
+        existingSessionId: null,
+        sessionAttachFilePath: null,
+        providerResumeId: null,
+        hasExplicitPermissionMode: true,
+        permissionModeSeedSource: 'explicit' as const,
+        hasTerminalTty: true,
+      },
+      expected: false,
+    },
+    {
+      name: 'remote start',
+      input: {
+        startedBy: 'terminal' as const,
+        startingMode: 'remote' as const,
+        existingSessionId: null,
+        sessionAttachFilePath: null,
+        providerResumeId: null,
+        hasExplicitPermissionMode: true,
+        permissionModeSeedSource: 'explicit' as const,
+        hasTerminalTty: true,
+      },
+      expected: false,
+    },
+  ])('owns deferred startup eligibility for $name', ({ input, expected }) => {
+    const policy = (CLAUDE_AGENT_RUNTIME_CONTRIBUTION as Readonly<{
+      sessionStartup?: Readonly<{
+        shouldUseDeferredBootstrap?: (params: typeof input) => boolean;
+      }>;
+    }>).sessionStartup;
+
+    expect(policy?.shouldUseDeferredBootstrap?.(input)).toBe(expected);
+  });
+
+  it('projects handoff through the canonical contribution and has no predecessor goal adapter', () => {
+    expect(CLAUDE_AGENT_RUNTIME_CONTRIBUTION.sessionHandoff?.surface?.({} as never)).toBe(claudeHandoffSurface);
+    expect(CLAUDE_AGENT_RUNTIME_CONTRIBUTION.runtimeControl).toBeUndefined();
+  });
+
+  it('declares truthful runtime Activity snapshots as supported', () => {
+    expect(CLAUDE_AGENT_RUNTIME_CONTRIBUTION.runtimeActivityApplicability).toBe('supported');
+  });
+
+  it('uses the canonical current Claude OAuth endpoints', () => {
+    expect(CLAUDE_AGENT_RUNTIME_CONTRIBUTION.cloudConnect?.oauthAuthorizationCode).toMatchObject({
+      authorizeUrl: 'https://platform.claude.com/oauth/authorize',
+      tokenUrl: 'https://platform.claude.com/v1/oauth/token',
+    });
+  });
+
   it('contributes Claude-owned terminal prompt submit verification policy', () => {
     const terminal = (CLAUDE_AGENT_RUNTIME_CONTRIBUTION as Readonly<{
       terminal?: Readonly<{
@@ -198,6 +303,8 @@ describe('Claude runtime contribution CLI command options', () => {
         },
       },
       sameAccountFanoutStrategy: 'shared_group_auth_surface',
+      generationApplicationScope: 'shared_group_auth_surface',
+      sharedGenerationApplicationServiceIds: ['claude-subscription'],
       runtimeAuthApply: {
         directLiveHotAuth: {
           supportsInTurnApply: false,
@@ -227,6 +334,57 @@ describe('Claude runtime contribution CLI command options', () => {
       versionFlags: ['-v', '--version'],
     });
     expect(command.buildSessionOptions).toBeTypeOf('function');
+  });
+
+  it('prepares qualified-purpose state without writing legacy credential bytes', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'claude-qualified-purpose-root-'));
+    try {
+      await expect(materializeClaudeAuthEnvironment({
+        rootDir: root,
+        sessionDirectory: root,
+        processEnv: {},
+        qualifiedPurposeMaterialization: true,
+        claudeSubscription: {
+          kind: 'oauth',
+          serviceId: 'claude-subscription',
+          profileId: 'legacy-profile',
+          oauth: {
+            accessToken: 'legacy-access',
+            refreshToken: 'legacy-refresh',
+            expiresAt: Date.now() + 60_000,
+          },
+        },
+      })).resolves.toEqual({
+        env: { CLAUDE_CONFIG_DIR: root },
+      });
+      await expect(stat(join(root, '.credentials.json'))).rejects.toThrow();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('leaves a qualified Anthropic group binding to the canonical Connected Accounts owner', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'claude-qualified-anthropic-root-'));
+    try {
+      await expect(materializeClaudeAuthEnvironment({
+        rootDir: root,
+        sessionDirectory: root,
+        processEnv: {},
+        qualifiedPurposeMaterialization: true,
+        anthropic: {
+          kind: 'token',
+          serviceId: 'anthropic',
+          profileId: 'legacy-profile',
+          token: {
+            token: 'legacy-anthropic-key',
+          },
+        },
+      })).resolves.toEqual({
+        env: { CLAUDE_CONFIG_DIR: root },
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it('declares provider-owned preflight model probing without projection command adaptation', () => {
@@ -261,6 +419,23 @@ describe('Claude runtime contribution CLI command options', () => {
         jsRuntime: 'bun',
         resume: undefined,
         claudeArgs: ['--model', 'claude-opus-4-6', '--resume', 'vendor-session-1'],
+      },
+    });
+  });
+
+  it('canonicalizes native Claude permission args before deferred attach eligibility is decided', () => {
+    const command = readCliSessionCommand();
+
+    expect(command.buildSessionOptions?.({
+      args: ['claude'],
+      parsed: {
+        providerArgs: ['--permission-mode', 'acceptEdits'],
+      },
+    })).toEqual({
+      ok: true,
+      options: {
+        permissionMode: 'safe-yolo',
+        claudeArgs: ['--permission-mode', 'acceptEdits'],
       },
     });
   });

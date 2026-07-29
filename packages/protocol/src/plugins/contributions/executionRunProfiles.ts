@@ -1,12 +1,40 @@
 import { z } from 'zod';
 
-import { ExecutionRunIntentSchema } from '../../execution/runs/index.js';
-import { PluginDescriptorBaseV1Schema } from './_descriptors.js';
+import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
+import { ExecutionRunIntentSchema } from '../../execution/runs/startRequest.js';
+import {
+  PluginAvailabilityDescriptorV2Schema,
+  PluginContributionReferenceV2Schema,
+  PluginJsonValueV2Schema,
+  PluginLocalizedStringV2Schema,
+} from './publicTypes.js';
 
-export const PluginExecutionRunProfileContributionV2Schema = PluginDescriptorBaseV1Schema.safeExtend({
-  kind: z.literal('executionRun.profile'),
+export const PluginExecutionRunProfileActionReferenceV2Schema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('contributionAction'),
+    action: PluginContributionReferenceV2Schema,
+  }).strict(),
+  z.object({
+    kind: z.literal('hostAction'),
+    actionId: z.literal('reviews.comments.create'),
+  }).strict(),
+]);
+export type PluginExecutionRunProfileActionReferenceV2 = z.infer<typeof PluginExecutionRunProfileActionReferenceV2Schema>;
+
+export const PluginExecutionRunProfileContributionV2Schema = z.object({
+  id: PluginContributionLocalIdSchema,
   intent: ExecutionRunIntentSchema,
-  displayKey: z.string().trim().min(1),
-  actionIds: z.array(z.string().trim().min(1)).default([]),
-}).passthrough();
+  title: PluginLocalizedStringV2Schema,
+  description: PluginLocalizedStringV2Schema.optional(),
+  promptAsset: PluginContributionReferenceV2Schema,
+  defaults: z.object({
+    retention: z.enum(['ephemeral', 'resumable']),
+    runClass: z.enum(['bounded', 'longLived']),
+    io: z.enum(['requestResponse', 'streaming']),
+  }).strict(),
+  compatibleAgents: z.array(PluginContributionReferenceV2Schema).min(1),
+  actions: z.array(PluginExecutionRunProfileActionReferenceV2Schema).optional(),
+  availability: PluginAvailabilityDescriptorV2Schema.optional(),
+  metadata: z.record(z.string(), PluginJsonValueV2Schema).optional(),
+}).strict();
 export type PluginExecutionRunProfileContributionV2 = z.infer<typeof PluginExecutionRunProfileContributionV2Schema>;

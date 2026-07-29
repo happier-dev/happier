@@ -1,5 +1,9 @@
 import { z } from 'zod';
 
+import { ConnectedAccountPurposeIdSchema } from '../../connect/connectedAccountPurposes.js';
+import {
+  QualifiedConnectedAccountPurposeBindingTargetV1Schema,
+} from '../../connect/connectedAccountPurposeBindings.js';
 import { ProviderConnectionIdSchema, ProviderContributionKeySchema, ProviderLocalIdSchema, ProviderMachineIdSchema } from '../ids.js';
 import { CustomProviderTemplateV1Schema } from './customTemplateV1.js';
 import { ProviderEndpointUrlSyntaxSchema } from '../endpointUrlSchema.js';
@@ -17,6 +21,27 @@ export const ProviderEndpointOverrideV1Schema = z.object({
 }).strict();
 export type ProviderEndpointOverrideV1 = z.infer<typeof ProviderEndpointOverrideV1Schema>;
 
+export const ProviderConnectionDeploymentV1Schema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('external') }).strict(),
+  z.object({ kind: z.literal('managedLocal') }).strict(),
+]);
+export type ProviderConnectionDeploymentV1 = z.infer<typeof ProviderConnectionDeploymentV1Schema>;
+
+export const ProviderConnectionPurposeBindingDefaultsV1Schema = z.record(
+  ConnectedAccountPurposeIdSchema,
+  QualifiedConnectedAccountPurposeBindingTargetV1Schema,
+).superRefine((value, context) => {
+  if (Object.keys(value).length > 256) {
+    context.addIssue({
+      code: 'custom',
+      message: 'Too many Provider connected-account purpose defaults',
+    });
+  }
+});
+export type ProviderConnectionPurposeBindingDefaultsV1 = z.infer<
+  typeof ProviderConnectionPurposeBindingDefaultsV1Schema
+>;
+
 function uniqueOverrides(overrides: readonly ProviderEndpointOverrideV1[], ctx: z.RefinementCtx, path: readonly (string | number)[]): void {
   const ids = new Set<string>();
   overrides.forEach((override, index) => {
@@ -32,8 +57,10 @@ export const ProviderConnectionV1Schema = z.object({
   role: z.enum(['default', 'named']),
   displayName: z.string().trim().min(1).max(128),
   displayNameMode: z.enum(['automatic', 'custom']),
+  deployment: ProviderConnectionDeploymentV1Schema.default({ kind: 'external' }),
   endpointOverrides: z.array(ProviderEndpointOverrideV1Schema).max(4).optional(),
   endpointOverridesByMachineId: z.record(ProviderMachineIdSchema, z.array(ProviderEndpointOverrideV1Schema).max(4)).optional(),
+  purposeBindingDefaults: ProviderConnectionPurposeBindingDefaultsV1Schema.optional(),
   revision: z.number().int().nonnegative(),
   createdAt: z.number().finite().nonnegative(),
   updatedAt: z.number().finite().nonnegative(),
@@ -43,6 +70,27 @@ export const ProviderConnectionV1Schema = z.object({
   }
   if (value.source.kind === 'custom' && value.role !== 'named') {
     ctx.addIssue({ code: 'custom', path: ['role'], message: 'Custom connections must be named' });
+  }
+  if (value.deployment.kind === 'managedLocal') {
+    if (value.source.kind !== 'contribution') {
+      ctx.addIssue({ code: 'custom', path: ['deployment'], message: 'Managed deployment requires a contribution-backed connection' });
+    }
+    if (value.endpointOverrides !== undefined || value.endpointOverridesByMachineId !== undefined) {
+      ctx.addIssue({ code: 'custom', path: ['deployment'], message: 'Managed deployment does not accept endpoint overrides' });
+    }
+    if (Object.keys(value.purposeBindingDefaults ?? {}).length === 0) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['purposeBindingDefaults'],
+        message: 'Managed deployment requires at least one connected-account purpose binding',
+      });
+    }
+  } else if (value.purposeBindingDefaults !== undefined) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['purposeBindingDefaults'],
+      message: 'External deployment does not accept managed connected-account purpose defaults',
+    });
   }
   uniqueOverrides(value.endpointOverrides ?? [], ctx, ['endpointOverrides']);
   for (const [machineId, overrides] of Object.entries(value.endpointOverridesByMachineId ?? {})) {

@@ -29,7 +29,7 @@ export type ConnectedServicesProfileOptionsByServiceId = Readonly<Record<string,
 export type ConnectedServicesAccountGroupOption = Readonly<{
   groupId: string;
   label: string;
-  activeProfileId: string;
+  activeProfileId: string | null;
   /** Enabled member profile ids (deduped) — drives pool-adoption suggestions. */
   memberProfileIds?: ReadonlyArray<string>;
   generation?: number;
@@ -39,6 +39,43 @@ export type ConnectedServicesAccountGroupOption = Readonly<{
 }>;
 
 export type ConnectedServicesAccountGroupOptionsByServiceId = Readonly<Record<string, ConnectedServicesAccountGroupOption[]>>;
+
+export type ConnectedServiceSessionBindingIntent = Readonly<{
+  source: 'native' | 'connected';
+  selection?: 'profile' | 'group';
+  profileId?: string;
+  groupId?: string;
+}>;
+
+export type ConnectedServiceSessionSelection = Readonly<
+  | { selection: 'profile'; profileId: string }
+  | { selection: 'group'; groupId: string }
+>;
+
+export type ConnectedServiceSessionSelectionResolution = Readonly<
+  | { status: 'no_selection' }
+  | { status: 'valid_selection'; selection: ConnectedServiceSessionSelection }
+  | {
+      status: 'explicit_unavailable';
+      selection: ConnectedServiceSessionSelection;
+      reason:
+        | 'profile_unavailable'
+        | 'account_groups_disabled'
+        | 'group_unavailable'
+        | 'group_not_ready'
+        | 'group_active_profile_unavailable';
+    }
+>;
+
+export type ConnectedServiceSessionSelectionAvailability = Readonly<
+  | { kind: 'deferred' }
+  | {
+      kind: 'known';
+      profileOptions: ReadonlyArray<ConnectedServicesProfileOption>;
+      groupOptions: ReadonlyArray<ConnectedServicesAccountGroupOption>;
+      accountGroupsEnabled: boolean;
+    }
+>;
 
 export function connectedServiceProfileKey(params: Readonly<{ serviceId: string; profileId: string }>): string {
   const serviceId = encodeURIComponent(String(params.serviceId).trim());
@@ -77,10 +114,8 @@ export function resolveConnectedServiceDefaultProfileId(params: Readonly<{
 }
 
 export function resolveAgentSupportedConnectedServiceIds(params: Readonly<{
-  connectedServicesFeatureEnabled: boolean;
   agentCore: { connectedServices?: { supportedServiceIds?: ReadonlyArray<ConnectedServiceId> } | null };
 }>): ReadonlyArray<ConnectedServiceId> {
-  if (!params.connectedServicesFeatureEnabled) return [];
   return params.agentCore.connectedServices?.supportedServiceIds ?? [];
 }
 
@@ -95,6 +130,76 @@ export function isConnectedServiceProfileOptionSelectable(
   option: Pick<ConnectedServicesProfileOption, 'status'>,
 ): boolean {
   return isConnectedServiceProfileStatusSelectable(option.status);
+}
+
+/**
+ * Canonical session-binding semantic resolver.
+ *
+ * Explicit connected intent is never rewritten to native merely because current projection truth
+ * cannot satisfy it. UI callers provide known availability for preflight; daemon/CLI writers that
+ * intentionally defer authoritative validation use the explicit deferred variant.
+ */
+export function resolveConnectedServiceSessionSelection(params: Readonly<{
+  serviceId: string;
+  binding: ConnectedServiceSessionBindingIntent | null | undefined;
+  availability: ConnectedServiceSessionSelectionAvailability;
+  defaultProfileByServiceId?: Readonly<Record<string, string | undefined>>;
+}>): ConnectedServiceSessionSelectionResolution {
+  if (params.binding?.source !== 'connected') return { status: 'no_selection' };
+
+  if (params.binding.selection === 'group') {
+    const groupId = readString(params.binding.groupId);
+    if (!groupId) return { status: 'no_selection' };
+    const selection = { selection: 'group' as const, groupId };
+    if (params.availability.kind === 'deferred') {
+      return { status: 'valid_selection', selection };
+    }
+    if (!params.availability.accountGroupsEnabled) {
+      return { status: 'explicit_unavailable', selection, reason: 'account_groups_disabled' };
+    }
+    const group = params.availability.groupOptions.find((candidate) => candidate.groupId === groupId);
+    if (!group) {
+      return { status: 'explicit_unavailable', selection, reason: 'group_unavailable' };
+    }
+    if (group.status !== 'ready') {
+      return { status: 'explicit_unavailable', selection, reason: 'group_not_ready' };
+    }
+    const activeProfileId = readString(group.activeProfileId);
+    const activeProfileAvailable = activeProfileId.length > 0
+      && params.availability.profileOptions.some((option) => (
+        option.profileId === activeProfileId && isConnectedServiceProfileOptionSelectable(option)
+      ));
+    return activeProfileAvailable
+      ? { status: 'valid_selection', selection }
+      : { status: 'explicit_unavailable', selection, reason: 'group_active_profile_unavailable' };
+  }
+
+  const explicitProfileId = readString(params.binding.profileId);
+  if (explicitProfileId) {
+    const selection = { selection: 'profile' as const, profileId: explicitProfileId };
+    if (params.availability.kind === 'deferred') {
+      return { status: 'valid_selection', selection };
+    }
+    const profileAvailable = params.availability.profileOptions.some((option) => (
+      option.profileId === explicitProfileId && isConnectedServiceProfileOptionSelectable(option)
+    ));
+    return profileAvailable
+      ? { status: 'valid_selection', selection }
+      : { status: 'explicit_unavailable', selection, reason: 'profile_unavailable' };
+  }
+
+  if (params.availability.kind === 'deferred') return { status: 'no_selection' };
+  const connectedProfileIds = params.availability.profileOptions
+    .filter(isConnectedServiceProfileOptionSelectable)
+    .map((option) => option.profileId);
+  const profileId = resolveConnectedServiceDefaultProfileId({
+    serviceId: params.serviceId,
+    connectedProfileIds,
+    defaultProfileByServiceId: params.defaultProfileByServiceId ?? {},
+  });
+  return profileId
+    ? { status: 'valid_selection', selection: { selection: 'profile', profileId } }
+    : { status: 'no_selection' };
 }
 
 export function isConnectedServiceProfileKindSupportedForAgent(params: Readonly<{
@@ -260,8 +365,8 @@ export function buildConnectedServiceAccountGroupOptionsByServiceId(params: Read
       if (!rawGroup || typeof rawGroup !== 'object' || Array.isArray(rawGroup)) continue;
       const group = rawGroup as Record<string, unknown>;
       const groupId = readString(group.groupId);
-      const activeProfileId = readString(group.activeProfileId);
-      if (!groupId || !activeProfileId) continue;
+      const activeProfileId = readString(group.activeProfileId) || null;
+      if (!groupId) continue;
       const enabledMemberCount = readGroupEnabledMemberCount(group);
       const generation = typeof group.generation === 'number' && Number.isInteger(group.generation) && group.generation >= 0
         ? group.generation

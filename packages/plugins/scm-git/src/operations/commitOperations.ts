@@ -3,14 +3,14 @@ import type {
   ScmCommitBackoutResponse,
   ScmCommitCreateRequest,
   ScmCommitCreateResponse,
-} from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm';
 import {
   SCM_COMMIT_MESSAGE_MAX_LENGTH,
   SCM_COMMIT_PATCH_MAX_COUNT,
   SCM_COMMIT_PATCH_MAX_LENGTH,
   SCM_OPERATION_ERROR_CODES,
   isScmPatchBoundToPath,
-} from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm';
 import type { ScmBackendContext } from '../types.js';
 import { normalizeCommitRef, runScmCommand } from '../runtime.js';
 import { mapGitErrorCode } from '../remote.js';

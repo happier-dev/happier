@@ -1,15 +1,17 @@
 import type { VoiceRealtimeJsonValue } from '@happier-dev/protocol';
+import type { PluginVoiceRealtimeConnection } from '@happier-dev/plugin-sdk/runtime';
 
-import type { RealtimeConnection } from './types.js';
 import type {
   ElevenLabsConversationHandle,
   ElevenLabsConversationHandleEvent,
 } from './createElevenLabsConversationHandle.js';
-import {
-  elevenLabsConversationHandleRegistry,
-  type ElevenLabsConversationHandleMode,
-  type ElevenLabsConversationHandleRegistry,
-} from './elevenLabsConversationHandleRegistry.js';
+type ElevenLabsLiveness = Readonly<{
+  connected(): void;
+  disconnected(): void;
+  noteInboundEvent(): void;
+  userTurnCommitted(): void;
+  modeChanged(mode: string): void;
+}>;
 
 function readRecord(value: VoiceRealtimeJsonValue): Readonly<Record<string, VoiceRealtimeJsonValue>> {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -33,15 +35,20 @@ export function createElevenLabsSdkConnection(input: Readonly<{
     }>): Promise<void>;
     sendControl(event: VoiceRealtimeJsonValue): Promise<void>;
     close(): Promise<void>;
-  }> }>) => RealtimeConnection;
-  handle?: ElevenLabsConversationHandle;
-  resolveHandle?: (signal: AbortSignal) => Promise<ElevenLabsConversationHandle>;
+  }> }>) => PluginVoiceRealtimeConnection;
+  handle: ElevenLabsConversationHandle;
   startConfig: unknown;
-}>): RealtimeConnection {
+  initialMuted?: boolean;
+  onSessionIdentity?(conversationId: string): void;
+  onSessionEnded?(): Promise<void> | void;
+  createLiveness?(onFailure: (reason: string) => void): ElevenLabsLiveness;
+}>): PluginVoiceRealtimeConnection {
   let unsubscribe: (() => void) | null = null;
   let activeHandle: ElevenLabsConversationHandle | null = null;
   let endSessionPromise: Promise<void> | null = null;
+  let endLifecyclePromise: Promise<void> | null = null;
   let closed = false;
+  let liveness: ElevenLabsLiveness | null = null;
   const lifecycleController = new AbortController();
 
   const endActiveSession = async (): Promise<void> => {
@@ -53,27 +60,52 @@ export function createElevenLabsSdkConnection(input: Readonly<{
     await endSessionPromise;
   };
 
+  const endLifecycle = async (): Promise<void> => {
+    endLifecyclePromise ??= Promise.resolve(input.onSessionEnded?.());
+    await endLifecyclePromise;
+  };
+
   return input.createSdkHandleConnection({
     driver: {
       async open({ signal, onControl, onTransport, onRemoteClose }): Promise<void> {
+        const stopLiveness = (): void => {
+          const active = liveness;
+          liveness = null;
+          active?.disconnected();
+        };
+        let remoteCloseSignalled = false;
+        const signalRemoteClose = (reason: string): void => {
+          if (remoteCloseSignalled) return;
+          remoteCloseSignalled = true;
+          stopLiveness();
+          onRemoteClose(reason);
+        };
+        liveness = input.createLiveness?.(signalRemoteClose) ?? null;
         const onEvent = (event: ElevenLabsConversationHandleEvent): void => {
           switch (event.type) {
             case 'connect':
+              liveness?.noteInboundEvent();
               onControl({ type: 'elevenlabs.connect' });
               return;
             case 'disconnect':
-              onRemoteClose(event.reason ?? 'sdk_disconnected');
+              signalRemoteClose(event.reason ?? 'sdk_disconnected');
               return;
             case 'message':
+              liveness?.noteInboundEvent();
+              if (event.data.role === 'user' || event.data.source === 'user') {
+                liveness?.userTurnCommitted();
+              }
               onControl(event.data);
               return;
             case 'error':
-              onRemoteClose('sdk_error');
+              signalRemoteClose('sdk_error');
               return;
             case 'status':
+              liveness?.noteInboundEvent();
               onControl({ type: 'elevenlabs.status', status: event.data.status });
               return;
             case 'mode':
+              liveness?.modeChanged(event.data.mode);
               onControl({ type: 'elevenlabs.mode', mode: event.data.mode });
               return;
             case 'debug':
@@ -83,13 +115,12 @@ export function createElevenLabsSdkConnection(input: Readonly<{
         const abortLifecycle = (): void => lifecycleController.abort();
         if (signal.aborted) abortLifecycle();
         else signal.addEventListener('abort', abortLifecycle, { once: true });
-        let handle: ElevenLabsConversationHandle | undefined;
+        let handle: ElevenLabsConversationHandle;
         try {
-          handle = input.handle ?? await input.resolveHandle?.(lifecycleController.signal);
+          handle = input.handle;
         } finally {
           signal.removeEventListener('abort', abortLifecycle);
         }
-        if (!handle) throw new Error('elevenlabs_handle_resolver_missing');
         if (signal.aborted || lifecycleController.signal.aborted || closed) {
           throw Object.assign(new Error('voice_connection_aborted'), { name: 'AbortError' });
         }
@@ -107,7 +138,10 @@ export function createElevenLabsSdkConnection(input: Readonly<{
           ? sessionId
           : '';
         if (!normalizedSessionId) throw new Error('elevenlabs_missing_conversation_id');
+        handle.setMicMuted(input.initialMuted === true);
+        input.onSessionIdentity?.(normalizedSessionId);
         onTransport({ type: 'session_identity', sessionId: normalizedSessionId });
+        liveness?.connected();
       },
       async sendControl(event): Promise<void> {
         const handle = activeHandle;
@@ -133,31 +167,26 @@ export function createElevenLabsSdkConnection(input: Readonly<{
       async close(): Promise<void> {
         closed = true;
         lifecycleController.abort();
+        const activeLiveness = liveness;
+        liveness = null;
+        activeLiveness?.disconnected();
         const dispose = unsubscribe;
         unsubscribe = null;
         dispose?.();
         const handle = activeHandle;
-        if (handle) await endActiveSession();
+        try {
+          if (handle) await endActiveSession();
+        } finally {
+          try {
+            // Each connection owns one wrapper. Dispose it even when the SDK
+            // setup is still pending so callbacks and tool closures stay
+            // revoked while a late SDK conversation is ended on settlement.
+            handle?.dispose();
+          } finally {
+            await endLifecycle();
+          }
+        }
       },
     },
-  });
-}
-
-export function createRegisteredElevenLabsSdkConnection(input: Readonly<{
-  createSdkHandleConnection: Parameters<typeof createElevenLabsSdkConnection>[0]['createSdkHandleConnection'];
-  registry?: ElevenLabsConversationHandleRegistry;
-  mode: ElevenLabsConversationHandleMode;
-  startConfig: unknown;
-  handleReadyTimeoutMs?: number;
-}>): RealtimeConnection {
-  const registry = input.registry ?? elevenLabsConversationHandleRegistry;
-  return createElevenLabsSdkConnection({
-    createSdkHandleConnection: input.createSdkHandleConnection,
-    startConfig: input.startConfig,
-    resolveHandle: async (signal) => registry.current(input.mode) ?? await registry.waitForCurrent(
-      input.mode,
-      signal,
-      input.handleReadyTimeoutMs ?? 10_000,
-    ),
   });
 }

@@ -1,333 +1,289 @@
+import { readFile } from 'node:fs/promises';
+
 import { describe, expect, expectTypeOf, it } from 'vitest';
+import * as protocol from '@happier-dev/protocol';
+import ts from 'typescript';
 
 import * as sdk from './index.js';
 import * as manifestSdk from './manifest.js';
 import type {
-    PluginAgentContributionV2,
-    PluginEventContributionV1,
-    PluginManagedDependencyContributionV2,
-    PluginManifestV2,
-    PluginCapabilityDeclarationV1,
-    PluginDeclaredCapabilityV1,
-    PluginPermissionDeclarationV1,
-    PluginRequestInterceptorContributionV1,
-    PluginSettingsContributionV2,
-    PluginSystemToolContributionV1,
+    PluginManifest,
+    PluginSettingsContribution,
+    PromptAssetCapabilities,
+    PromptAssetTypeDescriptor,
 } from './manifest.js';
-import {
-    defineAgentSettingsContribution,
-    enumArrayAgentSetting,
-    jsonObjectStringAgentSetting,
-    PluginAgentSettingsContributionV1Schema,
-    agentSettingsContributionToUiDescriptor,
-    stringRecordAgentSetting,
-} from './manifest/agentSettings.js';
+// @ts-expect-error -- versioned manifest types are not supported-preview exports.
+import type { PluginManifestV2 } from './manifest.js';
+// @ts-expect-error -- parsed manifests are host products, not author inputs.
+import type { ParsedPluginManifestV2 } from './manifest.js';
+// @ts-expect-error -- Provider authoring remains experimental.
+import type { ProviderContributionV1 } from './manifest.js';
+// @ts-expect-error -- Voice model-pack authoring remains experimental.
+import type { VoiceModelPackContributionV1 } from './manifest.js';
 
-describe('definePluginManifest', () => {
-    it('preserves manifest literals while using protocol-owned manifest types', () => {
+describe('manifest authoring contract', () => {
+    it('keeps the normal manifest barrel at the exact consumed unsuffixed surface', async () => {
+        const sourceText = await readFile(new URL('./manifest.ts', import.meta.url), 'utf8');
+        const sourceFile = ts.createSourceFile(
+            'manifest.ts',
+            sourceText,
+            ts.ScriptTarget.Latest,
+            true,
+            ts.ScriptKind.TS,
+        );
+        const exportedNames = sourceFile.statements.flatMap((statement) => {
+            if (ts.isExportDeclaration(statement) && statement.exportClause && ts.isNamedExports(statement.exportClause)) {
+                return statement.exportClause.elements.map((element) => element.name.text);
+            }
+            if (
+                (ts.isFunctionDeclaration(statement) || ts.isTypeAliasDeclaration(statement))
+                && statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)
+                && statement.name
+            ) {
+                return [statement.name.text];
+            }
+            return [];
+        });
+
+        expect(exportedNames.sort()).toEqual([
+            'PluginManifest',
+            'PluginSettingsContribution',
+            'PromptAssetCapabilities',
+            'PromptAssetTypeDescriptor',
+        ].sort());
+        expect(exportedNames.some((name) => /V\d+$/.test(name))).toBe(false);
+        expect(exportedNames.some((name) => name.startsWith('Parsed'))).toBe(false);
+    });
+
+    it('keeps Agent CLI metadata structural under PluginManifest instead of sweeping protocol leaves', () => {
+        const schemaNames = [
+            'PluginAgentCliExecutableMetadataSchema',
+            'PluginAgentCliInstallMetadataSchema',
+            'PluginAgentCliManagedInstallSchema',
+            'PluginAgentCliManualInstallRecipesSchema',
+            'PluginAgentCliInstallCommandSchema',
+            'PluginAgentCliAuthMetadataSchema',
+            'PluginAgentCliAuthProbeMetadataSchema',
+            'PluginAgentCliLoginLaunchSchema',
+            'PluginAgentCliSourcePreferenceSchema',
+            'PluginAgentCliMetadataSchema',
+        ] as const;
+
+        for (const schemaName of schemaNames) {
+            expect(manifestSdk).not.toHaveProperty(schemaName);
+            expect(sdk).not.toHaveProperty(schemaName);
+        }
+
+        const authoredManifest = {
+            schemaVersion: 2,
+            id: 'acme.cli-contract',
+            version: '1.0.0',
+            displayName: 'Acme CLI contract',
+            engines: { happier: '^1.0.0' }, runtime: { apiVersion: 1 },
+            contributes: {
+                agents: [{
+                    id: 'acme',
+                    title: 'Acme',
+                    runtime: { kind: 'custom' },
+                    primary: 'sessions',
+                    capabilities: {
+                        sessions: { open: ['create'], delivery: ['newTurn'], cancel: true },
+                    },
+                    cli: {
+                        executable: {
+                            binaryName: 'acme',
+                            knownUserBinDirSuffixes: ['.acme/bin'],
+                            sourcePreference: 'system-first',
+                            systemCommandResolutionStrategy: 'path-first',
+                        },
+                        install: {
+                            managed: null,
+                            manual: { kind: 'none' },
+                            guideUrl: 'https://example.com/acme',
+                        },
+                        auth: {
+                            support: 'login_terminal',
+                            probe: {
+                                parser: 'unknown',
+                                backgroundChecks: 'safe',
+                                statusArgs: null,
+                                envVars: [],
+                            },
+                            loginLaunches: [
+                                { kind: 'primary', args: ['login'], initialInput: '' },
+                                { kind: 'device_code', args: ['login', '--device-code'], initialInput: '' },
+                            ],
+                        },
+                    },
+                }],
+            },
+        } satisfies PluginManifest;
+        type AgentCliMetadata = NonNullable<
+            (typeof authoredManifest)['contributes']['agents'][number]['cli']
+        >;
+        type AgentCliLoginLaunch = AgentCliMetadata['auth']['loginLaunches'][number];
+        expectTypeOf<AgentCliMetadata>().toHaveProperty('executable');
+        expectTypeOf<keyof AgentCliLoginLaunch>()
+            .toEqualTypeOf<'kind' | 'args' | 'initialInput'>();
+        expectTypeOf<AgentCliLoginLaunch['kind']>()
+            .toEqualTypeOf<'primary' | 'device_code'>();
+    });
+
+    it('keeps versioned Voice declarations and runtime escape hatches off the normal path', () => {
+        expect(manifestSdk).not.toHaveProperty('PluginVoiceProviderContributionV1Schema');
+        expect(sdk).not.toHaveProperty('createVoiceRuntime');
+        expect(manifestSdk).not.toHaveProperty('createVoiceRuntime');
+    });
+    it('uses protocol-owned manifest types without an identity helper', () => {
         const input = {
             schemaVersion: 2,
-            id: 'acme.sdk-helper',
+            id: 'acme.sdk-helper' as const,
             version: '1.0.0',
             displayName: 'SDK Helper',
-            engines: { happier: '^1.0.0' },
-            uses: ['agents', 'managedDependencies'],
-            entrypoints: { main: './dist/activate.js' },
-            declares: {
-                capabilities: [
-                    {
-                        capability: 'storage.local',
-                        reason: 'Stores plugin-local settings.',
-                    },
-                ],
-            },
-            permissions: {
-                required: [
-                    {
-                        capability: 'reviews.comments.write.direct',
-                        reason: 'Write user-approved review comments directly.',
-                    },
-                ],
+            engines: { happier: '^1.0.0' }, runtime: { apiVersion: 1 },
+            entrypoints: { daemon: './dist/activate.js' },
+            hostAccess: {
+                required: [],
                 optional: [],
             },
             contributes: {
                 events: [
                     {
                         id: 'review/comment-written',
+                        kind: 'event',
+                        title: 'Review comment written',
                         payloadSchema: { type: 'object', additionalProperties: true },
                     },
                 ],
                 requestInterceptors: [
                     {
                         id: 'plugin-fetch-audit',
-                        order: 100,
-                        targets: [{ scope: 'plugin-fetch' }],
+                        origins: ['https://api.example.com'],
+                        priority: 100,
                     },
                 ],
                 systemTools: [
                     {
-                        toolId: 'acme-tool',
-                        displayName: 'Acme Tool',
-                        source: 'system',
-                        lookupNames: ['acme-tool'],
-                        defaultArgs: [],
+                        id: 'acme-tool',
+                        title: 'Acme Tool',
+                        executableNames: ['acme-tool'],
                     },
                 ],
                 managedDependencies: [
                     {
                         id: 'acme-tool',
-                        key: 'acme-tool',
-                        kind: 'dep',
-                        version: '1',
-                        capabilityId: 'dep.acme-tool',
-                        display: { name: 'Acme Tool' },
+                        title: 'Acme Tool',
                         description: 'Acme tool dependency',
-                        source: {
-                            kind: 'manual_only',
-                            setupUrl: 'https://example.com/acme-tool',
-                        },
-                        binary: {
-                            commands: ['acme-tool'],
-                            systemFirst: true,
-                        },
-                        defaultPolicy: {
-                            autoInstallWhenNeeded: false,
-                            autoUpdateMode: 'notify',
-                        },
-                        consent: {
-                            install: 'required',
-                            update: 'required',
-                        },
+                        sources: [{ kind: 'system', executableNames: ['acme-tool'] }],
+                        executable: 'acme-tool',
                     },
                 ],
                 agents: [
                     {
                         id: 'acme.agent',
+                        title: 'Acme Agent',
                         runtime: { kind: 'custom' },
+                        primary: 'sessions',
+                        capabilities: {
+                            sessions: { open: ['create'], delivery: ['newTurn'], cancel: true },
+                        },
                     },
                 ],
             },
-        } satisfies PluginManifestV2;
+        } satisfies PluginManifest;
 
-        const definePluginManifest = (sdk as Readonly<{
-            definePluginManifest?: <const TManifest extends PluginManifestV2>(manifest: TManifest) => TManifest;
-        }>).definePluginManifest;
-
-        expect(definePluginManifest).toBeTypeOf('function');
-        const manifest = definePluginManifest!(input);
+        expect(sdk).not.toHaveProperty('definePluginManifest');
+        expect(manifestSdk).not.toHaveProperty('definePluginManifest');
+        const manifest = input;
 
         expect(manifest).toBe(input);
-        expectTypeOf(manifest.id).toEqualTypeOf<'acme.sdk-helper'>();
-        expectTypeOf(manifest.contributes.events[0]).toMatchTypeOf<PluginEventContributionV1>();
-        expectTypeOf(manifest.contributes.requestInterceptors[0]).toMatchTypeOf<PluginRequestInterceptorContributionV1>();
-        expectTypeOf(manifest.contributes.systemTools[0]).toMatchTypeOf<PluginSystemToolContributionV1>();
-        expectTypeOf(manifest.contributes.managedDependencies[0]).toMatchTypeOf<PluginManagedDependencyContributionV2>();
-        expectTypeOf(manifest.contributes.agents).toMatchTypeOf<readonly PluginAgentContributionV2[]>();
-        expectTypeOf(manifest.declares.capabilities[0]).toMatchTypeOf<PluginCapabilityDeclarationV1>();
-        expectTypeOf(manifest.declares.capabilities[0].capability).toMatchTypeOf<PluginDeclaredCapabilityV1>();
-        expectTypeOf(manifest.permissions.required[0]).toMatchTypeOf<PluginPermissionDeclarationV1>();
+        const literalId: 'acme.sdk-helper' = manifest.id;
+        const event = manifest.contributes.events[0];
+        const interceptor = manifest.contributes.requestInterceptors[0];
+        const systemTool = manifest.contributes.systemTools[0];
+        const agents = manifest.contributes.agents;
+        expect({ literalId, event, interceptor, systemTool, agents }).toBeDefined();
+    });
+
+    it('exports the supported settings and prompt-asset contracts without versions', () => {
+        expectTypeOf<PluginSettingsContribution>()
+            .toEqualTypeOf<protocol.PluginSettingsContribution>();
+        expectTypeOf<PromptAssetCapabilities>()
+            .toEqualTypeOf<protocol.PromptAssetCapabilitiesV1>();
+        expectTypeOf<PromptAssetTypeDescriptor>()
+            .toEqualTypeOf<protocol.PromptAssetTypeDescriptorV1>();
     });
 });
 
-describe('agent-account settings manifest helpers', () => {
+describe('settings manifest authoring contract', () => {
     it('authors generic plugin settings contributions through the public SDK', () => {
-        const sdkSurface = sdk as Readonly<{
-            definePluginSettingsContribution?: <TContribution>(contribution: TContribution) => TContribution;
-        }>;
+        expect(sdk).not.toHaveProperty('definePluginSettingsContribution');
+        expect(manifestSdk).not.toHaveProperty('definePluginSettingsContribution');
 
-        expect(sdkSurface.definePluginSettingsContribution).toBeTypeOf('function');
-
-        const contribution = sdkSurface.definePluginSettingsContribution!({
-            id: 'acme.plugin.settings',
+        const contribution = {
+            id: 'acme-plugin-settings',
+            title: 'Acme plugin settings',
+            target: { kind: 'plugin' },
+            scope: 'synced',
             fields: [
                 {
-                    id: 'showDiagnostics',
-                    kind: 'settings.field',
-                    version: '1',
-                    valueSchema: { type: 'boolean' },
-                    control: 'switch',
-                    displayKey: 'acme.settings.showDiagnostics',
-                    defaultBooleanValue: true,
-                    clearWhenEmpty: 'persist',
-                    redaction: 'none',
-                    hidden: false,
-                    order: 10,
+                    id: 'show-diagnostics',
+                    title: 'Show diagnostics',
+                    schema: { type: 'boolean' },
+                    default: true,
                 },
             ],
-        });
+        } satisfies PluginSettingsContribution;
 
         expect(contribution).toMatchObject({
-            id: 'acme.plugin.settings',
-            fields: [expect.objectContaining({ id: 'showDiagnostics', control: 'switch' })],
+            id: 'acme-plugin-settings',
+            fields: [expect.objectContaining({ id: 'show-diagnostics', default: true })],
         });
-        expectTypeOf(contribution).toMatchTypeOf<PluginSettingsContributionV2>();
+        const typedContribution: PluginSettingsContribution = contribution;
+        expect(typedContribution.id).toBe('acme-plugin-settings');
     });
 
-    it('authors agent-settings contributions through the public SDK without provider-branded exports', () => {
-        const sdkSurface = sdk as Readonly<{
-            defineAgentSettingsContribution?: <TContribution>(contribution: TContribution) => TContribution;
-            enumAgentSetting?: (input: Readonly<{
-                id: string;
-                values: readonly string[];
-                default: string;
-                description: string;
-                storageScope?: 'account';
-            }>) => unknown;
-            stringRecordAgentSetting?: (input: Readonly<{
-                id: string;
-                default: Readonly<Record<string, string>>;
-                description: string;
-            }>) => unknown;
-        }>;
+    it('authors Agent-targeted settings through the same public settings contract', () => {
+        for (const retiredHelper of [
+            'defineAgentSettingsContribution',
+            'enumAgentSetting',
+            'stringRecordAgentSetting',
+            'agentSettingsContributionToUiDescriptor',
+        ]) {
+            expect(sdk).not.toHaveProperty(retiredHelper);
+            expect(manifestSdk).not.toHaveProperty(retiredHelper);
+        }
 
-        expect(sdkSurface.defineAgentSettingsContribution).toBeTypeOf('function');
-        expect(sdkSurface.enumAgentSetting).toBeTypeOf('function');
-        expect(sdkSurface.stringRecordAgentSetting).toBeTypeOf('function');
-        expect(manifestSdk.stringRecordAgentSetting).toBeTypeOf('function');
-
-        const contribution = sdkSurface.defineAgentSettingsContribution!({
-            id: 'acme.agentSettings.v1',
-            agentId: 'acme',
-            fields: [
-                sdkSurface.enumAgentSetting!({
-                    id: 'acmeBackendMode',
-                    values: ['managed', 'external'],
-                    default: 'managed',
-                    description: 'Preferred Acme backend mode',
-                }),
-            ],
-        });
-
-        expect(contribution).toEqual({
-            id: 'acme.agentSettings.v1',
-            kind: 'agentSettings.v1',
-            agentId: 'acme',
-            version: 1,
-            storageScope: 'agentAccount',
-            fields: [
-                {
-                    id: 'acmeBackendMode',
-                    schema: { kind: 'enum', values: ['managed', 'external'] },
-                    default: 'managed',
-                    description: 'Preferred Acme backend mode',
-                    storageScope: 'account',
-                },
-            ],
-            ui: {
-                sections: [],
-                subagentSettingsSections: [],
-            },
-        });
-        expect(JSON.parse(JSON.stringify(contribution))).toEqual(contribution);
-        expect('defineClaudeAgentSettingsContribution' in sdk).toBe(false);
-    });
-
-    it('preserves explicit invalid numeric limits so schema validation fails closed', () => {
-        const contribution = defineAgentSettingsContribution({
-            id: 'acme.agentSettings.v1',
-            agentId: 'acme',
-            fields: [
-                jsonObjectStringAgentSetting({
-                    id: 'advancedJson',
-                    default: '',
-                    maxLength: 0,
-                    description: 'Advanced JSON object',
-                }),
-                enumArrayAgentSetting({
-                    id: 'sources',
-                    values: ['user', 'project'],
-                    default: ['user'],
-                    max: 0,
-                    description: 'Source order',
-                }),
-            ],
-        });
-
-        expect(PluginAgentSettingsContributionV1Schema.safeParse(contribution).success).toBe(false);
-    });
-
-    it('allows provider-owned descriptor contributions with no settings fields', () => {
-        const contribution = defineAgentSettingsContribution({
-            id: 'acme.agentSettings.v1',
-            agentId: 'acme',
-            fields: [],
-            ui: {
-                title: { key: 'settingsAgents.plugins.acme.title' },
-                icon: { ionName: 'sparkles-outline', color: { kind: 'theme', token: 'green' } },
-                sections: [],
-                subagentSettingsSections: [],
-            },
-        });
-
-        expect(PluginAgentSettingsContributionV1Schema.safeParse(contribution).success).toBe(true);
-        expect(agentSettingsContributionToUiDescriptor(contribution)).toEqual({
-            kind: 'agentSettings.v1',
-            descriptorId: 'acme.agentSettings.v1',
-            agentId: 'acme',
-            title: { key: 'settingsAgents.plugins.acme.title' },
-            icon: { ionName: 'sparkles-outline', color: { kind: 'theme', token: 'green' } },
-            settings: {},
-            subagentSettingsSections: [],
-            uiSections: [],
-        });
-    });
-
-    it('projects string-record agent settings and per-server UI bindings', () => {
-        const contribution = defineAgentSettingsContribution({
-            id: 'acme.agentSettings.v1',
-            agentId: 'acme',
-            fields: [
-                stringRecordAgentSetting({
-                    id: 'acmeServerBaseUrlByServerIdV1',
-                    default: {},
-                    description: 'Per-server Acme server URL overrides',
-                    ui: {
-                        kind: 'text',
-                        title: { key: 'settingsAgents.plugins.acme.fields.serverBaseUrl.title' },
-                        binding: {
-                            kind: 'perActiveServer',
-                            fallbackSettingKey: 'acmeServerBaseUrl',
-                            byServerIdSettingKey: 'acmeServerBaseUrlByServerIdV1',
-                        },
-                    },
-                }),
-            ],
-            ui: {
-                sections: [
-                    {
-                        id: 'acmeServer',
-                        title: { key: 'settingsAgents.plugins.acme.sections.server.title' },
-                        fields: ['acmeServerBaseUrlByServerIdV1'],
-                    },
-                ],
-                subagentSettingsSections: [],
-            },
-        });
-
-        expect(PluginAgentSettingsContributionV1Schema.safeParse(contribution).success).toBe(true);
-        expect(agentSettingsContributionToUiDescriptor(contribution)).toMatchObject({
-            settings: {
-                acmeServerBaseUrlByServerIdV1: {
-                    schema: { kind: 'stringRecord' },
-                    default: {},
-                },
-            },
-            uiSections: [
-                {
-                    id: 'acmeServer',
-                    fields: [
-                        {
-                            key: 'acmeServerBaseUrlByServerIdV1',
-                            kind: 'text',
-                            binding: {
-                                kind: 'perActiveServer',
-                                fallbackSettingKey: 'acmeServerBaseUrl',
-                                byServerIdSettingKey: 'acmeServerBaseUrlByServerIdV1',
-                            },
-                        },
+        const contribution = {
+            id: 'agent-settings',
+            title: 'Acme Agent settings',
+            target: { kind: 'agent', agent: 'acme' },
+            scope: 'synced',
+            fields: [{
+                id: 'acmeBackendMode',
+                title: 'Backend mode',
+                schema: { type: 'string', enum: ['managed', 'external'] },
+                default: 'managed',
+                presentation: {
+                    control: 'select',
+                    options: [
+                        { value: 'managed', title: 'Managed' },
+                        { value: 'external', title: 'External' },
                     ],
                 },
-            ],
-        });
+            }],
+            presentation: {
+                sections: [{
+                    id: 'runtime',
+                    title: 'Runtime',
+                    fields: ['acmeBackendMode'],
+                }],
+                subagentSections: [],
+            },
+        } satisfies PluginSettingsContribution;
+
+        expect(contribution.target).toEqual({ kind: 'agent', agent: 'acme' });
+        expect(contribution.fields[0]?.id).toBe('acmeBackendMode');
+        expect(contribution.presentation.sections[0]?.fields).toEqual(['acmeBackendMode']);
     });
 });

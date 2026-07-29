@@ -4,7 +4,7 @@ import {
   SCM_OPERATION_ERROR_CODES,
   type ScmHostingProviderRef,
   type ScmPullRequestSummary,
-} from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm';
 
 import {
     matchesBranchHeadContext,

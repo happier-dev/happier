@@ -1,3 +1,5 @@
+import { inferPermissionIntentFromClaudeArgs } from '../runtime/permissionMode.js';
+
 export type ClaudeCliSessionParsedArgs = Readonly<{
   startingMode?: string;
   directory?: string;
@@ -11,6 +13,7 @@ export type ClaudeCliSessionOptions = Readonly<{
   resume?: undefined;
   claudeArgs?: readonly string[];
   jsRuntime?: 'node' | 'bun';
+  permissionMode?: NonNullable<ReturnType<typeof inferPermissionIntentFromClaudeArgs>>;
 }>;
 
 export type ClaudeCliSessionOptionsResult =
@@ -134,6 +137,7 @@ export function resolveClaudeCliSessionOptions(input: Readonly<{
     args: input.args,
     resume: input.parsed.resume,
   });
+  const inferredPermissionMode = inferPermissionIntentFromClaudeArgs(consumed.claudeArgs);
 
   return {
     ok: true,
@@ -143,6 +147,7 @@ export function resolveClaudeCliSessionOptions(input: Readonly<{
       ...(forwardedExplicitResume ? { resume: undefined } : {}),
       ...(consumed.claudeArgs.length > 0 ? { claudeArgs: consumed.claudeArgs } : {}),
       ...(consumed.jsRuntime ? { jsRuntime: consumed.jsRuntime } : {}),
+      ...(inferredPermissionMode ? { permissionMode: inferredPermissionMode } : {}),
     },
   };
 }

@@ -1,9 +1,9 @@
 import {
     readHappierStructuredInputV1FromMeta,
-    type HappierStructuredInputV1,
-} from '@happier-dev/plugin-sdk/experimental/runtime/session';
+} from '@happier-dev/protocol/runtime';
 
 type MetadataRecord = Record<string, unknown>;
+type CodexStructuredInput = ReturnType<typeof readHappierStructuredInputV1FromMeta>;
 
 export type CodexAppServerTurnInputItem =
     | Readonly<{ type: 'text'; text: string }>
@@ -42,15 +42,15 @@ function collectTrustedLocalImagePaths(
     return trusted.size > 0 ? trusted : undefined;
 }
 
-function readVendorPluginMentions(structuredInput: HappierStructuredInputV1 | null): MetadataRecord[] {
+function readVendorPluginMentions(structuredInput: CodexStructuredInput): MetadataRecord[] {
     return asRecordArray(structuredInput?.vendorPluginMentions);
 }
 
-function readSkillMentions(structuredInput: HappierStructuredInputV1 | null): MetadataRecord[] {
+function readSkillMentions(structuredInput: CodexStructuredInput): MetadataRecord[] {
     return asRecordArray(structuredInput?.skillMentions);
 }
 
-function readImageInputs(structuredInput: HappierStructuredInputV1 | null): CodexAppServerTurnInputItem[] {
+function readImageInputs(structuredInput: CodexStructuredInput): CodexAppServerTurnInputItem[] {
     const imageInputs = asRecordArray(structuredInput?.imageInputs);
     const items: CodexAppServerTurnInputItem[] = [];
     for (const imageInput of imageInputs) {

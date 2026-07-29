@@ -59,23 +59,6 @@ export type CodexDirectLiveAuthApplyResult =
       recovery?: 'restart_resume';
     }>;
 
-export type CodexTransportRecycleAuthApplyResult =
-  | Readonly<{
-      applied: true;
-      via: 'transport_recycle';
-      appliedVia: 'transport_recycle';
-    }>
-  | Readonly<{
-      applied: false;
-      reason:
-        | 'auth_family_mismatch'
-        | 'credential_family_mismatch'
-        | 'workspace_incompatible'
-        | 'transport_invalidation_unavailable'
-        | 'transport_invalidation_failed';
-      recovery: 'restart_resume';
-    }>;
-
 function normalizeOptionalId(value: string | null | undefined): string | null {
   const normalized = typeof value === 'string' ? value.trim() : '';
   return normalized.length > 0 ? normalized : null;
@@ -168,7 +151,6 @@ export async function applyCodexConnectedServiceAuthGeneration(params: Readonly<
   candidate: ConnectedServiceCredentialRecordV1;
   forcedWorkspaceId: string | null;
   forcedLoginMethod?: string | null;
-  invalidateTransports?: (() => Promise<void> | void) | null;
   persistAuthStore?: (() => Promise<void> | void) | null;
   refreshSelection?: CodexConnectedServiceRefreshSelection | null;
   updateRefreshSelection?: ((
@@ -253,55 +235,6 @@ export async function applyCodexConnectedServiceAuthGeneration(params: Readonly<
     appliedVia: 'direct_live_hot_auth',
     activeAccountId: accountId,
     durability: { persisted: true },
-  };
-}
-
-export async function applyCodexConnectedServiceAuthTransportRecycle(params: Readonly<{
-  client: CodexLoginStartClient;
-  candidate: ConnectedServiceCredentialRecordV1;
-  forcedWorkspaceId: string | null;
-  forcedLoginMethod?: string | null;
-  invalidateTransports?: (() => Promise<void> | void) | null;
-}>): Promise<CodexTransportRecycleAuthApplyResult> {
-  const eligibility = evaluateCodexConnectedServiceHotApplyEligibility({
-    candidate: params.candidate,
-    forcedWorkspaceId: params.forcedWorkspaceId,
-    forcedLoginMethod: params.forcedLoginMethod,
-  });
-  if (!eligibility.eligible) {
-    return {
-      applied: false,
-      reason: eligibility.reason,
-      recovery: 'restart_resume',
-    };
-  }
-  if (typeof params.invalidateTransports !== 'function') {
-    return {
-      applied: false,
-      reason: 'transport_invalidation_unavailable',
-      recovery: 'restart_resume',
-    };
-  }
-
-  const record = requireConnectedServiceOauthCredentialRecord(params.candidate);
-  await params.client.request('account/login/start', {
-    type: 'chatgptAuthTokens',
-    accessToken: record.oauth.accessToken,
-    chatgptAccountId: record.oauth.providerAccountId,
-  });
-  try {
-    await params.invalidateTransports();
-  } catch {
-    return {
-      applied: false,
-      reason: 'transport_invalidation_failed',
-      recovery: 'restart_resume',
-    };
-  }
-  return {
-    applied: true,
-    via: 'transport_recycle',
-    appliedVia: 'transport_recycle',
   };
 }
 

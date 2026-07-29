@@ -12,6 +12,7 @@ import {
   readUsageMetrics,
   type ClaudeWorkflowUsageMetrics,
 } from './metrics.js';
+import { parseClaudeTaskNotification } from '../transcripts/taskNotification.js';
 
 /**
  * Claude-native event parsing for the workflow normalizer (CWF2).
@@ -60,7 +61,11 @@ export type WorkflowStartFact = Readonly<{
 export type WorkflowLaunchFact = Readonly<{
   kind: 'workflow-launch';
   workflowToolUseId: string;
+  /** Structured Claude proof that this launch is a native Dynamic Workflow. */
+  confirmedLocalWorkflow?: true;
   taskId?: string;
+  /** Claude-native Workflow identity, stable across edit-and-resume tool invocations. */
+  providerRunId?: string;
   title?: string;
   summary?: string;
   transcriptDir?: string;
@@ -327,7 +332,6 @@ function parseWorkflowLaunchResult(message: Record<string, unknown>): WorkflowLa
 
     const contentText = readToolResultContentText(block);
     const taskType = readString(toolUseResult?.taskType) ?? readString(toolUseResult?.task_type);
-    const status = readString(toolUseResult?.status);
     const transcriptDir =
       readString(toolUseResult?.transcriptDir)
       ?? readString(toolUseResult?.transcript_dir)
@@ -336,8 +340,8 @@ function parseWorkflowLaunchResult(message: Record<string, unknown>): WorkflowLa
         return readString(match?.[1]);
       })();
 
-    const isWorkflowLaunch = taskType === 'local_workflow'
-      || status === 'async_launched'
+    const confirmedLocalWorkflow = taskType === 'local_workflow';
+    const isWorkflowLaunch = confirmedLocalWorkflow
       || contentText?.includes('Workflow launched in background') === true
       || transcriptDir !== null;
     if (!isWorkflowLaunch) continue;
@@ -345,10 +349,13 @@ function parseWorkflowLaunchResult(message: Record<string, unknown>): WorkflowLa
     const title = readString(toolUseResult?.workflowName) ?? readString(toolUseResult?.workflow_name);
     const summary = normalizeSummary(toolUseResult?.summary);
     const taskId = readString(toolUseResult?.taskId) ?? readString(toolUseResult?.task_id);
+    const providerRunId = readString(toolUseResult?.runId) ?? readString(toolUseResult?.run_id);
     return {
       kind: 'workflow-launch',
       workflowToolUseId,
+      ...(confirmedLocalWorkflow ? { confirmedLocalWorkflow: true } : {}),
       ...(taskId ? { taskId } : {}),
+      ...(providerRunId ? { providerRunId } : {}),
       ...(title ? { title } : {}),
       ...(summary ? { summary } : {}),
       ...(transcriptDir ? { transcriptDir } : {}),
@@ -357,6 +364,33 @@ function parseWorkflowLaunchResult(message: Record<string, unknown>): WorkflowLa
     };
   }
   return null;
+}
+
+function parseSuccessfulWorkflowTaskStopResult(message: Record<string, unknown>): TaskLifecycleFact | null {
+  if (message.type !== 'user') return null;
+  const toolUseResult = readRecord(message.toolUseResult) ?? readRecord(message.tool_use_result);
+  const taskType = readString(toolUseResult?.taskType) ?? readString(toolUseResult?.task_type);
+  const taskId = readString(toolUseResult?.taskId) ?? readString(toolUseResult?.task_id);
+  const resultMessage = readString(toolUseResult?.message);
+  if (
+    taskType !== 'local_workflow'
+    || !taskId
+    || !resultMessage?.startsWith(`Successfully stopped task: ${taskId}`)
+  ) {
+    return null;
+  }
+  const sourceSessionId = readSourceSessionId(message);
+  const uuid = readString(message.uuid) ?? undefined;
+  return {
+    kind: 'task-lifecycle',
+    subtype: 'workflow_task_stopped',
+    taskId,
+    taskType,
+    status: 'cancelled',
+    usage: {},
+    ...(sourceSessionId ? { sourceSessionId } : {}),
+    ...(uuid ? { uuid } : {}),
+  };
 }
 
 function parseSubagentUse(message: Record<string, unknown>): SubagentStartFact | null {
@@ -386,45 +420,6 @@ function parseSubagentUse(message: Record<string, unknown>): SubagentStartFact |
   return null;
 }
 
-/** Collect text content from a Claude message content value (string or text block array). */
-function readMessageContentText(content: unknown): string | null {
-  if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) return null;
-  const texts: string[] = [];
-  for (const part of content) {
-    const block = readRecord(part);
-    if (block?.type === 'text') {
-      const text = readString(block.text);
-      if (text) texts.push(text);
-    }
-  }
-  return texts.length > 0 ? texts.join('\n') : null;
-}
-
-/** Collect the text content of a `type:"user"` message. */
-function readUserMessageText(message: Record<string, unknown>): string | null {
-  const nested = readRecord(message.message);
-  return readMessageContentText(nested?.content);
-}
-
-function readTaskNotificationEnvelopeText(message: Record<string, unknown>): string | null {
-  if (message.type === 'user') return readUserMessageText(message);
-  if (message.type === 'queue-operation' && message.operation === 'enqueue') {
-    return readMessageContentText(message.content);
-  }
-  if (message.type === 'attachment') {
-    const attachment = readRecord(message.attachment);
-    if (attachment?.type !== 'queued_command') return null;
-    return readString(attachment.prompt);
-  }
-  return null;
-}
-
-function readXmlTag(source: string, tag: string): string | null {
-  const match = source.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, 'i'));
-  return match?.[1] !== undefined ? readString(match[1]) : null;
-}
-
 /**
  * Parse the `<task-notification>` user message Claude Code persists when a backgrounded Workflow/Task
  * completes. This is the ONLY terminal lifecycle signal in the persisted transcript for backgrounded
@@ -433,18 +428,17 @@ function readXmlTag(source: string, tag: string): string | null {
  * `task_*` event, so the tracker needs no change.
  */
 function parseTaskNotificationEnvelope(message: Record<string, unknown>): TaskLifecycleFact | null {
-  const text = readTaskNotificationEnvelopeText(message);
-  if (!text || !text.includes('<task-notification')) return null;
-  const taskId = readXmlTag(text, 'task-id');
-  const toolUseId = readXmlTag(text, 'tool-use-id');
+  const notification = parseClaudeTaskNotification(message);
+  if (!notification) return null;
+  const { taskId, toolUseId } = notification;
   // Without a tool-use-id there is no correlation hook; do not synthesize a run.
   if (!toolUseId) return null;
 
-  const status = normalizeClaudeActivityStatusSignal(readXmlTag(text, 'status'), 'task_notification');
-  const summary = normalizeSummary(readXmlTag(text, 'summary'));
-  const resultPreview = normalizeResultPreview(readXmlTag(text, 'result') ?? readXmlTag(text, 'summary'));
-  const sourceSessionId = readSourceSessionId(message);
-  const uuid = readString(message.uuid) ?? undefined;
+  const status = normalizeClaudeActivityStatusSignal(notification.status, 'task_notification');
+  const summary = normalizeSummary(notification.summary);
+  const resultPreview = normalizeResultPreview(notification.result ?? notification.summary);
+  const sourceSessionId = notification.sourceSessionId;
+  const uuid = notification.uuid;
 
   return {
     kind: 'task-lifecycle',
@@ -580,6 +574,7 @@ export function parseClaudeWorkflowFact(value: unknown): ClaudeWorkflowFact | nu
   return (
     parseTaskNotificationEnvelope(message)
     ?? parseWorkflowJournalFact(message)
+    ?? parseSuccessfulWorkflowTaskStopResult(message)
     ?? parseWorkflowLaunchResult(message)
     ?? parseWorkflowToolUse(message)
     ?? parseTaskLifecycle(message)

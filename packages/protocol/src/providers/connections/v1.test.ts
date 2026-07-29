@@ -3,9 +3,92 @@ import { describe, expect, it } from 'vitest';
 import { ProviderConnectionV1Schema } from './v1.js';
 
 describe('ProviderConnectionV1Schema endpoint overrides', () => {
+  it('defaults legacy connections to external deployment and bounds managed deployment to contribution-backed connections without endpoint overrides', () => {
+    const contribution = {
+      v: 1, id: 'pc_1', source: { kind: 'contribution', contributionKey: 'plugin/p' },
+      role: 'default', displayName: 'P', displayNameMode: 'automatic', revision: 0, createdAt: 1, updatedAt: 1,
+    } as const;
+    expect(ProviderConnectionV1Schema.parse(contribution).deployment).toEqual({ kind: 'external' });
+    expect(ProviderConnectionV1Schema.parse({
+      ...contribution,
+      deployment: { kind: 'managedLocal' },
+      purposeBindingDefaults: {
+        upstream: {
+          kind: 'account',
+          account: {
+            service: {
+              pluginId: 'happier.connected-account.example',
+              localId: 'example',
+            },
+            accountId: 'account-a',
+          },
+        },
+      },
+    }).deployment).toEqual({ kind: 'managedLocal' });
+    expect(ProviderConnectionV1Schema.safeParse({
+      ...contribution,
+      deployment: { kind: 'managedLocal' },
+    }).success).toBe(false);
+    expect(ProviderConnectionV1Schema.safeParse({
+      ...contribution,
+      purposeBindingDefaults: {
+        upstream: {
+          kind: 'account',
+          account: {
+            service: {
+              pluginId: 'happier.connected-account.example',
+              localId: 'example',
+            },
+            accountId: 'account-a',
+          },
+        },
+      },
+    }).success).toBe(false);
+    expect(ProviderConnectionV1Schema.safeParse({
+      ...contribution,
+      deployment: { kind: 'managedLocal' },
+      endpointOverrides: [{ endpointTemplateId: 'chat', baseUrl: 'https://example.test/v1' }],
+    }).success).toBe(false);
+    expect(ProviderConnectionV1Schema.safeParse({
+      ...contribution,
+      deployment: { kind: 'managedLocal' },
+      endpointOverridesByMachineId: {
+        machine_a: [{ endpointTemplateId: 'chat', baseUrl: 'http://127.0.0.1:1234/' }],
+      },
+    }).success).toBe(false);
+
+    const custom = {
+      ...contribution,
+      id: 'pc_custom',
+      source: {
+        kind: 'custom',
+        template: {
+          v: 1,
+          name: 'Custom',
+          endpointTemplates: [{
+            id: 'chat',
+            protocol: 'openai-chat',
+            baseUrl: 'https://example.test/v1',
+            capabilities: {
+              streaming: 'unknown',
+              toolRoundTrips: 'unknown',
+              statefulResponses: 'unknown',
+              reasoningControls: 'unknown',
+            },
+          }],
+          catalog: { source: 'manual', manualModelPolicy: 'allowed' },
+        },
+      },
+      role: 'named',
+      displayNameMode: 'custom',
+      deployment: { kind: 'managedLocal' },
+    } as const;
+    expect(ProviderConnectionV1Schema.safeParse(custom).success).toBe(false);
+  });
+
   it('normalizes safe endpoint overrides and rejects credential-bearing or unsafe URLs', () => {
     const base = {
-      v: 1, id: 'pc_1', source: { kind: 'contribution', contributionKey: 'plugin:providers:p' },
+      v: 1, id: 'pc_1', source: { kind: 'contribution', contributionKey: 'plugin/p' },
       role: 'default', displayName: 'P', displayNameMode: 'automatic', revision: 0, createdAt: 1, updatedAt: 1,
     } as const;
     expect(ProviderConnectionV1Schema.parse({ ...base, endpointOverrides: [{ endpointTemplateId: 'chat', baseUrl: 'https://EXAMPLE.test:443/v1' }] }).endpointOverrides)
@@ -16,7 +99,7 @@ describe('ProviderConnectionV1Schema endpoint overrides', () => {
 
   it('rejects non-canonical machine map keys instead of collapsing them', () => {
     const base = {
-      v: 1, id: 'pc_1', source: { kind: 'contribution', contributionKey: 'plugin:providers:p' },
+      v: 1, id: 'pc_1', source: { kind: 'contribution', contributionKey: 'plugin/p' },
       role: 'default', displayName: 'P', displayNameMode: 'automatic', revision: 0, createdAt: 1, updatedAt: 1,
     } as const;
     expect(ProviderConnectionV1Schema.safeParse({
@@ -30,7 +113,7 @@ describe('ProviderConnectionV1Schema endpoint overrides', () => {
 
   it('bounds per-machine endpoint override branches at the shared settings limit', () => {
     const base = {
-      v: 1, id: 'pc_1', source: { kind: 'contribution', contributionKey: 'plugin:providers:p' },
+      v: 1, id: 'pc_1', source: { kind: 'contribution', contributionKey: 'plugin/p' },
       role: 'default', displayName: 'P', displayNameMode: 'automatic', revision: 0, createdAt: 1, updatedAt: 1,
     } as const;
     const atLimit = Object.fromEntries(Array.from({ length: 2_048 }, (_, index) => [`machine-${index}`, []]));

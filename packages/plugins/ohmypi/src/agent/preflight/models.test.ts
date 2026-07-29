@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type {
-  ExecLaunchInputV1,
-  ExecRunOptionsV1,
-  ExecRuntimeServiceV1,
-} from '@happier-dev/plugin-sdk';
+  PluginExecService,
+  PluginExecSpawnRequest,
+} from '@happier-dev/plugin-sdk/runtime';
 
 import {
   buildOhMyPiPreflightModelsFromListModelsOutput,
@@ -16,31 +15,33 @@ function createExecRunFixture(params: Readonly<{
   stderr?: string;
 }> = {}) {
   const runs: Array<Readonly<{
-    input: ExecLaunchInputV1;
-    options: ExecRunOptionsV1 | undefined;
+    input: PluginExecSpawnRequest & { timeoutMs?: number };
+    options: { signal?: AbortSignal } | undefined;
   }>> = [];
-  const exec: ExecRuntimeServiceV1 = {
+  const executable = { kind: 'systemTool' as const, id: 'ohmypi-cli' };
+  const exec = {
     systemTools: {
-      resolve: async () => {
-        throw new Error('system tools should not be used for OhMyPi model preflight');
-      },
+      resolve: async () => ({ executable, executablePath: '/managed/omp' }),
     },
     run: async (input, options) => {
       runs.push({ input, options });
       return {
-        exitCode: params.exitCode ?? 0,
-        signal: null,
-        stdout: params.stdout ?? '',
-        stderr: params.stderr ?? '',
+        termination: {
+          observed: { kind: 'exit' as const, exitCode: params.exitCode ?? 0 },
+          requestedBy: { kind: 'none' as const },
+        },
+        stdout: new TextEncoder().encode(params.stdout ?? ''),
+        stderr: new TextEncoder().encode(params.stderr ?? ''),
+        stdoutTruncated: false,
+        stderrTruncated: false,
       };
     },
     spawn: async () => {
       throw new Error('spawn should not be used for OhMyPi model preflight');
     },
-    spawnClient: (async () => {
-      throw new Error('spawnClient should not be used for OhMyPi model preflight');
-    }) as ExecRuntimeServiceV1['spawnClient'],
-  };
+    clients: { spawn: async () => { throw new Error('protocol clients should not be used'); } },
+    agentCli: { checkReadiness: async () => { throw new Error('agent CLI readiness should not be used'); } },
+  } satisfies PluginExecService;
   return { exec, runs };
 }
 
@@ -131,20 +132,18 @@ describe('OhMyPi preflight model parsing', () => {
     }]);
     expect(fixture.runs).toEqual([{
       input: {
-        kind: 'agent-cli',
-        agentId: 'ohMyPi',
+        executable: { kind: 'systemTool', id: 'ohmypi-cli' },
         args: ['--list-models'],
-        cwd: '/workspace',
+        cwd: { root: 'workspace', relativePath: '' },
         env: {
           CI: '1',
           OPENAI_API_KEY: 'sk-test',
         },
-      },
-      options: {
         maxStderrBytes: 262_144,
         maxStdoutBytes: 262_144,
         timeoutMs: 2_500,
       },
+      options: undefined,
     }]);
   });
 

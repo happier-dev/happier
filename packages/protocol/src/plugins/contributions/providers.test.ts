@@ -26,14 +26,20 @@ describe('providers plugin contribution family', () => {
     expect(PluginContributesV2Schema.safeParse({ providers: [provider('same'), provider('same')] }).success).toBe(false);
   });
 
-  it('accepts bounded provider support on agents and rejects duplicate protocols/isolation keys', () => {
+  it('accepts bounded provider requirements on agents and rejects duplicate protocols/isolation keys', () => {
     const agent = {
-      kindVersion: 1,
-      id: 'acme.agent',
-      display: { name: 'Acme Agent' },
-      ownedBackendIds: [],
+      id: 'acme-agent',
+      title: 'Acme Agent',
       runtime: { kind: 'custom' },
-      providerSupport: {
+      primary: 'sessions',
+      capabilities: {
+        sessions: {
+          open: ['create'],
+          delivery: ['newTurn'],
+          cancel: true,
+        },
+      },
+      providerRequirements: {
         acceptsProtocols: ['openai-responses'],
         required: { streaming: true },
         credentialSupport: { supportsNoAuth: true, apiKeyTransports: [] },
@@ -43,10 +49,74 @@ describe('providers plugin contribution family', () => {
         supportsFreeformModelIds: false,
       },
     } as const;
-    expect(PluginAgentContributionV2Schema.parse(agent).providerSupport).toMatchObject({ materialization: 'engineConfig' });
-    const invalid = structuredClone(agent) as any;
-    invalid.providerSupport.acceptsProtocols.push('openai-responses');
-    invalid.providerSupport.authIsolation.ownedEnvKeys.push('OPENAI_API_KEY');
+    expect(PluginAgentContributionV2Schema.parse(agent).providerRequirements)
+      .toMatchObject({ materialization: 'engineConfig' });
+    const invalid = {
+      ...agent,
+      providerRequirements: {
+        ...agent.providerRequirements,
+        acceptsProtocols: ['openai-responses', 'openai-responses'],
+        authIsolation: {
+          ...agent.providerRequirements.authIsolation,
+          ownedEnvKeys: ['OPENAI_API_KEY', 'OPENAI_API_KEY'],
+        },
+      },
+    } as const;
     expect(PluginAgentContributionV2Schema.safeParse(invalid).success).toBe(false);
+  });
+
+  it('declares runtime activity snapshot support only as literal true', () => {
+    const agent = {
+      id: 'activity-agent',
+      title: 'Activity Agent',
+      runtime: { kind: 'custom' },
+      primary: 'sessions',
+      capabilities: {
+        sessions: {
+          open: ['create'],
+          delivery: ['newTurn'],
+          cancel: true,
+          runtimeActivitySnapshots: true,
+        },
+      },
+    } as const;
+
+    expect(PluginAgentContributionV2Schema.safeParse(agent).success).toBe(true);
+    expect(PluginAgentContributionV2Schema.safeParse({
+      ...agent,
+      capabilities: { sessions: { ...agent.capabilities.sessions, runtimeActivitySnapshots: false } },
+    }).success).toBe(false);
+    expect(PluginAgentContributionV2Schema.safeParse({
+      ...agent,
+      capabilities: { sessions: { ...agent.capabilities.sessions, runtimeActivitySnapshots: { enabled: true } } },
+    }).success).toBe(false);
+  });
+
+  it('rejects duplicate connected-account purposes within one Agent contribution', () => {
+    const agent = {
+      id: 'account-consuming-agent',
+      title: 'Account-consuming Agent',
+      runtime: { kind: 'custom' },
+      primary: 'sessions',
+      capabilities: {
+        sessions: {
+          open: ['create'],
+          delivery: ['newTurn'],
+          cancel: true,
+        },
+      },
+      connectedAccounts: [
+        {
+          purpose: 'primary',
+          service: { pluginId: 'happier.connected-account.openai', localId: 'openai-codex' },
+        },
+        {
+          purpose: 'primary',
+          service: { pluginId: 'happier.connected-account.claude', localId: 'claude-subscription' },
+        },
+      ],
+    } as const;
+
+    expect(PluginAgentContributionV2Schema.safeParse(agent).success).toBe(false);
   });
 });

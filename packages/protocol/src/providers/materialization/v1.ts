@@ -115,11 +115,18 @@ const SupplementalRedactionValuesV1Schema = boundedArrayPreflight(
   }));
 
 type CanonicalJsonPrimitive = null | boolean | number | string;
-interface CanonicalJsonArray extends ReadonlyArray<CanonicalJsonValue> {}
-interface CanonicalJsonObject { readonly [key: string]: CanonicalJsonValue }
-type CanonicalJsonValue = CanonicalJsonPrimitive | CanonicalJsonArray | CanonicalJsonObject;
+export type ProviderBindingCanonicalJsonObject = Readonly<{
+  [key: string]: ProviderBindingCanonicalJsonValue;
+}>;
+export type ProviderBindingCanonicalJsonValue =
+  | CanonicalJsonPrimitive
+  | readonly ProviderBindingCanonicalJsonValue[]
+  | ProviderBindingCanonicalJsonObject;
 
-function validateCanonicalJsonObject(value: unknown, ctx: z.RefinementCtx): value is CanonicalJsonObject {
+function validateCanonicalJsonObject(
+  value: unknown,
+  ctx: z.RefinementCtx,
+): value is ProviderBindingCanonicalJsonObject {
   const seen = new Set<object>();
   let nodes = 0;
   let aggregateBytes = 0;
@@ -207,8 +214,7 @@ function validateCanonicalJsonObject(value: unknown, ctx: z.RefinementCtx): valu
 
 export const ProviderBindingCanonicalJsonObjectV1Schema = z.unknown().superRefine((value, ctx) => {
   validateCanonicalJsonObject(value, ctx);
-}).transform((value) => value as CanonicalJsonObject);
-export type ProviderBindingCanonicalJsonObjectV1 = z.infer<typeof ProviderBindingCanonicalJsonObjectV1Schema>;
+}).transform((value) => value as ProviderBindingCanonicalJsonObject);
 
 const ProviderBindingRelativePathV1Schema = z.string().min(1).superRefine((value, ctx) => {
   if (utf8Bytes(value) > PROVIDER_BINDING_MATERIALIZATION_LIMITS_V1.files.maxPathBytes
@@ -272,7 +278,8 @@ const AgentProviderBindingMaterializationDataV1Schema = z.discriminatedUnion('ki
 ]);
 export const AgentProviderBindingMaterializationV1Schema = PlainDataObjectV1Schema
   .pipe(AgentProviderBindingMaterializationDataV1Schema);
-export type AgentProviderBindingMaterializationV1 = z.infer<typeof AgentProviderBindingMaterializationV1Schema>;
+export type AgentProviderBindingMaterialization = z.infer<typeof AgentProviderBindingMaterializationV1Schema>;
+export type AgentProviderBindingMaterializationV1 = AgentProviderBindingMaterialization;
 
 const HostMaterializedRootPathV1Schema = z.string().min(1).superRefine((value, ctx) => {
   const isAbsolute = value.startsWith('/')
@@ -318,6 +325,24 @@ const AgentProviderBindingLaunchMaterializationDataV1Schema = z.discriminatedUni
     relativePaths: ProviderBindingLaunchRelativePathsV1Schema,
   }).strict(),
 ]);
-export const AgentProviderBindingLaunchMaterializationV1Schema = PlainDataObjectV1Schema
-  .pipe(AgentProviderBindingLaunchMaterializationDataV1Schema);
-export type AgentProviderBindingLaunchMaterializationV1 = z.infer<typeof AgentProviderBindingLaunchMaterializationV1Schema>;
+export type AgentProviderBindingLaunchMaterialization =
+  | Readonly<{ v: 1; kind: 'spawnEnv' }>
+  | Readonly<{
+      v: 1;
+      kind: 'engineConfig';
+      engineConfig: ProviderBindingCanonicalJsonObject;
+    }>
+  | Readonly<{
+      v: 1;
+      kind: 'configFile';
+      rootPath: string;
+      relativePaths: readonly string[];
+    }>;
+export type AgentProviderBindingLaunchMaterializationV1 =
+  AgentProviderBindingLaunchMaterialization;
+export const AgentProviderBindingLaunchMaterializationV1Schema =
+  PlainDataObjectV1Schema
+    .pipe(AgentProviderBindingLaunchMaterializationDataV1Schema) as z.ZodType<
+      AgentProviderBindingLaunchMaterializationV1,
+      AgentProviderBindingLaunchMaterializationV1
+    >;

@@ -1,5 +1,6 @@
-import type { HandoffSurfaceV1, SessionStateUpdateV1 } from '@happier-dev/plugin-sdk';
-import { resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/plugin-sdk/sessions';
+import { PluginError } from '@happier-dev/plugin-sdk';
+import type { HandoffSurfaceV1, SessionStateUpdateV1 } from '@happier-dev/plugin-sdk/experimental/sessions';
+import { resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/plugin-sdk/experimental/sessions';
 
 import { CodexSessionHandoffBundleSchema } from './bundle.js';
 import { exportCodexSessionBundle } from './export.js';
@@ -67,6 +68,17 @@ export const codexHandoffSurface = {
         },
       };
     } catch (error) {
+      if (
+        error instanceof PluginError
+        && (error.code === 'target_identity_conflict' || error.code === 'agent_version_unsupported')
+      ) {
+        return {
+          ok: false,
+          code: error.code,
+          message: error.message,
+          retryable: error.retryable,
+        };
+      }
       return {
         ok: false,
         code: 'target_import_failed',

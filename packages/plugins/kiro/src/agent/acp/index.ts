@@ -1,1 +1,1 @@
-export * from './definition.js';
+export * from './runtimeDefinition.js';

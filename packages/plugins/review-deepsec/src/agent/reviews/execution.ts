@@ -1,37 +1,25 @@
-import { randomUUID } from 'node:crypto';
-
 import type {
-  AgentCliReadinessResultV1,
-  CreateExecutionRunBackendParamsV1,
-  ExecutionRunHostBackendV1,
-  ExecutionRunHostMessageV1,
-  PluginContextV1,
-  PluginReviewCommentsServiceV1,
-} from '@happier-dev/plugin-sdk';
+  AgentExecutionRunEvent,
+  AgentExecutionRunOpenRequest,
+  AgentExecutionRunRuntime,
+  AgentExecutionRunRuntimeFactory,
+  AgentRuntimeContext,
+} from '@happier-dev/plugin-sdk/agent-runtime';
+import { REVIEW_SCM_SCOPE_INPUT_KEY } from '@happier-dev/protocol';
 import {
-  createSingleShotExecutionRunHostBackend,
-  REVIEW_SCM_SCOPE_INPUT_KEY,
   ReviewScmScopeV1Schema,
   type ReviewScmScopeV1,
-} from '@happier-dev/plugin-sdk';
-import {
   ReviewStartInputSchema,
   type ReviewFindingsV2,
-} from '@happier-dev/plugin-sdk/reviews';
+} from '@happier-dev/plugin-sdk/experimental/reviews';
 
-import {
-  mapDeepSecReviewComments,
-} from './comments.js';
 import { parseDeepSecCommentOutMarkdown } from './commentOut.js';
 import type { DeepSecReviewMode } from './command.js';
+import { resolveDeepSecProfileMode } from './profileMode.js';
 import type { DeepSecCostWarningInput } from './costWarning.js';
 import { normalizeDeepSecFindings } from './findings.js';
 import { runDeepSecReview, type DeepSecReviewRunResult } from './run.js';
 import { createDeepSecTempFiles } from './tempFiles.js';
-
-type DeepSecStartContext = Readonly<{
-  intentInput?: unknown;
-}>;
 
 type NormalizedDeepSecStart = Readonly<{
   mode: DeepSecReviewMode;
@@ -39,14 +27,19 @@ type NormalizedDeepSecStart = Readonly<{
   scmScope?: ReviewScmScopeV1 | null;
   confirmedCostWarning: boolean;
   preferredExecutablePath?: string | null;
-  agentCli?: 'claude' | 'codex' | 'both' | null;
+  agentCli?: DeepSecAgentCli | null;
   cost?: Omit<DeepSecCostWarningInput, 'mode'>;
   projectId?: string;
   workspaceId?: string;
-  sessionId?: string;
 }>;
 
 type DeepSecAgentCli = 'claude' | 'codex' | 'both';
+
+type EventInput = AgentExecutionRunEvent extends infer Event
+  ? Event extends AgentExecutionRunEvent
+    ? Omit<Event, 'sequence' | 'runId' | 'emittedAtMs'>
+    : never
+  : never;
 
 function readRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -72,22 +65,8 @@ function readStringArray(value: unknown): readonly string[] | undefined {
     : undefined;
 }
 
-function readAgentCli(value: unknown): 'claude' | 'codex' | 'both' | null {
+function readAgentCli(value: unknown): DeepSecAgentCli | null {
   return value === 'claude' || value === 'codex' || value === 'both' ? value : null;
-}
-
-function readCwd(params: CreateExecutionRunBackendParamsV1): string {
-  return readString(params.cwd) ?? readString(params.directory) ?? '.';
-}
-
-function readRunId(params: CreateExecutionRunBackendParamsV1): string {
-  return readString(params.runId) ?? `deepsec_${randomUUID()}`;
-}
-
-function readStartContext(params: CreateExecutionRunBackendParamsV1): DeepSecStartContext | null {
-  const start = readRecord((params as unknown as { start?: unknown }).start);
-  if (!start) return null;
-  return { intentInput: start.intentInput };
 }
 
 function readDeepSecEngineConfig(intentRecord: Record<string, unknown>): Record<string, unknown> {
@@ -105,7 +84,11 @@ function readScmReviewScopeSelectedFiles(scope: ReviewScmScopeV1 | null): readon
   return scope.selectedPaths.length > 0 ? scope.selectedPaths : undefined;
 }
 
-function readMode(engineConfig: Record<string, unknown>, intentRecord: Record<string, unknown>): DeepSecReviewMode {
+function readMode(
+  engineConfig: Record<string, unknown>,
+  intentRecord: Record<string, unknown>,
+  profileId: string,
+): DeepSecReviewMode {
   const mode = readString(engineConfig.mode) ?? readString(intentRecord.mode);
   if (
     mode === 'repository_security_audit'
@@ -116,9 +99,11 @@ function readMode(engineConfig: Record<string, unknown>, intentRecord: Record<st
   ) {
     return mode;
   }
-
-  const profileId = readString(engineConfig.profileId) ?? readString(intentRecord.profileId);
-  return profileId === 'deepsec.securityReview' ? 'repository_security_audit' : 'current_diff';
+  return resolveDeepSecProfileMode(
+    readString(engineConfig.profileId)
+    ?? readString(intentRecord.profileId)
+    ?? profileId,
+  );
 }
 
 function readCost(
@@ -155,6 +140,7 @@ function normalizeReviewStartInput(params: Readonly<{
 function normalizeDeepSecStart(params: Readonly<{
   intentInput: unknown;
   fallbackInstructions: string;
+  profileId: string;
 }>): NormalizedDeepSecStart {
   const reviewInput = normalizeReviewStartInput(params);
   const scmScope = readScmReviewScope(reviewInput);
@@ -164,16 +150,15 @@ function normalizeDeepSecStart(params: Readonly<{
     ?? readStringArray(reviewInput.selectedFiles)
     ?? readScmReviewScopeSelectedFiles(scmScope);
   const cost = readCost(engineConfig, reviewInput);
-  const confirmedCostWarning =
-    readBoolean(engineConfig.confirmedCostWarning)
-    ?? readBoolean(reviewInput.confirmedCostWarning)
-    ?? false;
 
   return {
-    mode: readMode(engineConfig, reviewInput),
+    mode: readMode(engineConfig, reviewInput, params.profileId),
     ...(selectedFiles ? { selectedFiles } : {}),
     ...(scmScope ? { scmScope } : {}),
-    confirmedCostWarning,
+    confirmedCostWarning:
+      readBoolean(engineConfig.confirmedCostWarning)
+      ?? readBoolean(reviewInput.confirmedCostWarning)
+      ?? false,
     preferredExecutablePath:
       readString(engineConfig.preferredExecutablePath)
       ?? readString(engineConfig.executablePath)
@@ -182,33 +167,19 @@ function normalizeDeepSecStart(params: Readonly<{
     ...(cost ? { cost } : {}),
     ...(readString(reviewInput.projectId) ? { projectId: readString(reviewInput.projectId) } : {}),
     ...(readString(reviewInput.workspaceId) ? { workspaceId: readString(reviewInput.workspaceId) } : {}),
-    ...(readString(reviewInput.sessionId) ? { sessionId: readString(reviewInput.sessionId) } : {}),
   };
 }
 
 function assertSupportedScmReviewScope(start: NormalizedDeepSecStart): void {
   if (start.mode === 'repository_security_audit') return;
   const scope = start.scmScope ?? null;
-  if (!scope) {
-    throw new Error('DeepSec review requires host-resolved SCM scope facts.');
-  }
+  if (!scope) throw new Error('DeepSec review requires host-resolved SCM scope facts.');
   if (scope.status !== 'supported') {
     throw new Error(scope.diagnostics[0]?.message || 'DeepSec review requires a source-control repository in the current session scope.');
   }
   if (scope.scmMode !== '.git') {
     throw new Error('DeepSec review requires a git worktree in the current session scope.');
   }
-}
-
-function createModelOutputMessage(fullText: string): ExecutionRunHostMessageV1 {
-  return { type: 'model-output', fullText } as unknown as ExecutionRunHostMessageV1;
-}
-
-function readReviewComments(ctx: PluginContextV1): Pick<PluginReviewCommentsServiceV1, 'create' | 'resolveSnapshot'> | null {
-  const comments = (ctx as Partial<Pick<PluginContextV1, 'reviews'>>).reviews?.comments;
-  return typeof comments?.create === 'function' && typeof comments.resolveSnapshot === 'function'
-    ? comments
-    : null;
 }
 
 function createOutput(params: Readonly<{
@@ -232,18 +203,43 @@ function createOutput(params: Readonly<{
     summary: readiness
       ? 'DeepSec review readiness failed.'
       : selectedScopeDiagnostics
-      ? 'DeepSec selected-file scope validation failed.'
-      : `DeepSec review: ${count} finding(s).`,
+        ? 'DeepSec selected-file scope validation failed.'
+        : `DeepSec review: ${count} finding(s).`,
     overviewMarkdown: readiness
       ? `DeepSec cannot start until these prerequisites are available: ${readiness.missing.join(', ')}.`
       : selectedScopeDiagnostics
-      ? 'DeepSec could not validate the selected file scope, so no scan was launched.'
-      : count > 0
-      ? `DeepSec reported ${count} security finding(s).`
-      : 'DeepSec review: no findings.',
+        ? 'DeepSec could not validate the selected file scope, so no scan was launched.'
+        : count > 0
+          ? `DeepSec reported ${count} security finding(s).`
+          : 'DeepSec review: no findings.',
     findings: [...params.findings],
     questions: [],
     assumptions: [],
+    proposedComments: params.findings.flatMap((finding) => {
+      const filePath = finding.filePath?.trim();
+      const body = finding.summary.trim();
+      if (!filePath || !body) return [];
+      const anchor = typeof finding.startLine === 'number'
+        ? typeof finding.endLine === 'number' && finding.endLine > finding.startLine
+          ? { kind: 'range' as const, filePath, startLine: finding.startLine, endLine: finding.endLine }
+          : { kind: 'line' as const, filePath, line: finding.startLine }
+        : { kind: 'file' as const, filePath };
+      const severity = finding.severity === 'blocker'
+        ? 'critical' as const
+        : finding.severity === 'high'
+          ? 'error' as const
+          : finding.severity === 'medium'
+            ? 'warning' as const
+            : 'info' as const;
+      return [{
+        findingId: finding.id,
+        body,
+        anchor,
+        severity,
+        taxonomyIds: [`deepsec.${finding.category}`],
+        tags: ['deepsec'],
+      }];
+    }),
     generatedAtMs: Date.now(),
     ...(readiness ? { readiness } : {}),
     ...(selectedScopeDiagnostics ? { diagnostics: selectedScopeDiagnostics } : {}),
@@ -254,19 +250,13 @@ function createOutput(params: Readonly<{
   return JSON.stringify(output);
 }
 
-function readGatewayKeyAvailability(ctx: PluginContextV1): boolean {
-  const env = (ctx as Partial<Pick<PluginContextV1, 'env'>>).env;
-  if (!env) return true;
-  return Boolean(env.get('AI_GATEWAY_API_KEY')?.trim());
-}
-
 function resolveAgentCliCandidates(agentCli: DeepSecAgentCli | null): readonly string[] {
   if (agentCli === 'claude') return Object.freeze(['claude']);
   if (agentCli === 'codex') return Object.freeze(['codex']);
   return Object.freeze(['claude', 'codex']);
 }
 
-function readReadyAgentCli(readiness: AgentCliReadinessResultV1): DeepSecAgentCli | null {
+function readReadyAgentCli(readiness: Readonly<{ launchable: readonly Readonly<{ agentId: string }>[] }>): DeepSecAgentCli | null {
   const readyAgentIds = new Set(readiness.launchable.map((entry) => entry.agentId));
   const hasClaude = readyAgentIds.has('claude');
   const hasCodex = readyAgentIds.has('codex');
@@ -277,103 +267,194 @@ function readReadyAgentCli(readiness: AgentCliReadinessResultV1): DeepSecAgentCl
 }
 
 async function resolveAgentCliReadiness(params: Readonly<{
-  ctx: PluginContextV1;
+  context: AgentRuntimeContext;
   configuredAgentCli: DeepSecAgentCli | null;
   cwd: string;
   projectId?: string;
   workspaceId?: string;
+  signal: AbortSignal;
 }>): Promise<DeepSecAgentCli | null> {
-  const readiness = await params.ctx.agentRuntime.agents.cli.checkReadiness({
+  const readiness = await params.context.services.exec.agentCli.checkReadiness({
     candidates: resolveAgentCliCandidates(params.configuredAgentCli),
     requirement: 'any',
     cwd: params.cwd,
     ...(params.projectId ? { projectId: params.projectId } : {}),
     ...(params.workspaceId ? { workspaceId: params.workspaceId } : {}),
+    signal: params.signal,
   });
   return readReadyAgentCli(readiness);
 }
 
-export function createDeepSecExecutionRunBackend(params: Readonly<{
-  ctx: PluginContextV1;
-  executionRunParams: CreateExecutionRunBackendParamsV1;
-}>): ExecutionRunHostBackendV1 {
-  const cwd = readCwd(params.executionRunParams);
-  const runId = readRunId(params.executionRunParams);
-  const start = readStartContext(params.executionRunParams);
+function readGatewayEnvironment(request: AgentExecutionRunOpenRequest): Readonly<{
+  environment: Readonly<Record<string, string>> | undefined;
+  hasGatewayKey: boolean;
+}> {
+  const launchEnvironment = request.launchEnvironment;
+  if (!launchEnvironment) return { environment: undefined, hasGatewayKey: false };
+  const unset = new Set(launchEnvironment.unset.map((key) => key.toUpperCase()));
+  if (unset.has('AI_GATEWAY_API_KEY')) return { environment: undefined, hasGatewayKey: false };
+  const gatewayEntry = Object.entries(launchEnvironment.values)
+    .find(([key]) => key.toUpperCase() === 'AI_GATEWAY_API_KEY');
+  const value = gatewayEntry?.[1]?.trim();
+  return value
+    ? { environment: Object.freeze({ AI_GATEWAY_API_KEY: gatewayEntry?.[1] ?? value }), hasGatewayKey: true }
+    : { environment: undefined, hasGatewayKey: false };
+}
 
-  return createSingleShotExecutionRunHostBackend({
-    backendId: 'deepsec',
-    sessionIdPrefix: 'deepsec',
-    signal: params.executionRunParams.signal,
-    busyMessage: 'DeepSec backend is busy',
-    resumeUnsupportedMessage: 'DeepSec execution runs do not support session resume',
-    replayUnsupportedMessage: 'DeepSec execution runs do not support replay capture',
-    run: async ({ prompt, emit, signal }) => {
+function readFailureCode(result: Extract<DeepSecReviewRunResult, { result: unknown }>['result']): string {
+  const observed = result.termination.observed;
+  return observed.kind === 'exit' ? String(observed.exitCode) : observed.kind === 'signal' ? observed.signal : 'unknown';
+}
+
+function createRuntime(
+  request: Extract<AgentExecutionRunOpenRequest, { kind: 'create' }>,
+  context: AgentRuntimeContext,
+): AgentExecutionRunRuntime {
+  const abortController = new AbortController();
+  const signal = AbortSignal.any([context.signal, abortController.signal]);
+  const listeners = new Set<(event: AgentExecutionRunEvent) => void>();
+  const history: AgentExecutionRunEvent[] = [];
+  let sequence = 0;
+  let terminal = false;
+  let disposed = false;
+
+  function emit(event: EventInput): void {
+    if (terminal) return;
+    const published = Object.freeze({
+      ...event,
+      sequence: ++sequence,
+      runId: request.runId,
+      emittedAtMs: Date.now(),
+    }) as AgentExecutionRunEvent;
+    history.push(published);
+    for (const listener of listeners) listener(published);
+    terminal = event.kind === 'run-complete' || event.kind === 'run-failed' || event.kind === 'run-cancelled';
+  }
+
+  async function execute(): Promise<void> {
+    emit({ kind: 'run-start' });
+    try {
+      if (context.services.availability('exec').status !== 'available') {
+        throw new Error('DeepSec execution requires the host process service');
+      }
       const startInput = normalizeDeepSecStart({
-        intentInput: start?.intentInput ?? {},
-        fallbackInstructions: prompt,
+        intentInput: request.input.structuredInput ?? {},
+        fallbackInstructions: request.input.text,
+        profileId: `${request.profile.pluginId}/${request.profile.localId}`,
       });
       assertSupportedScmReviewScope(startInput);
       const agentCli = await resolveAgentCliReadiness({
-        ctx: params.ctx,
+        context,
         configuredAgentCli: startInput.agentCli ?? null,
-        cwd,
+        cwd: request.cwd,
         projectId: startInput.projectId,
         workspaceId: startInput.workspaceId,
+        signal,
       });
+      const gateway = readGatewayEnvironment(request);
       const runResult = await runDeepSecReview({
-        cwd,
+        cwd: request.cwd,
         mode: startInput.mode,
         selectedFiles: startInput.selectedFiles,
         confirmedCostWarning: startInput.confirmedCostWarning,
         cost: startInput.cost,
         preferredExecutablePath: startInput.preferredExecutablePath,
-        exec: params.ctx.agentRuntime.exec,
-        tempFiles: await createDeepSecTempFiles(params.ctx.fs),
+        exec: context.services.exec,
+        tempFiles: await createDeepSecTempFiles(),
+        environment: gateway.environment,
         readiness: {
           agentCli,
-          hasGatewayKey: readGatewayKeyAvailability(params.ctx),
+          hasGatewayKey: gateway.hasGatewayKey,
         },
         signal,
       });
+      if (signal.aborted) {
+        emit({ kind: 'run-cancelled' });
+        return;
+      }
       if (runResult.status === 'requires_confirmation') {
-        emit(createModelOutputMessage(JSON.stringify({
-          runRef: {
-            runId,
-            callId: `deepsec:${runId}`,
-            backendId: 'deepsec',
-          },
-          summary: 'DeepSec review requires confirmation.',
-          overviewMarkdown: 'DeepSec review requires confirmation before launch.',
-          findings: [],
-          questions: [],
-          assumptions: [],
-          generatedAtMs: Date.now(),
-          warning: runResult.warning,
-        })));
-        return { messages: [] };
+        emit({
+          kind: 'output-delta',
+          channel: 'assistant',
+          text: JSON.stringify({
+            runRef: { runId: request.runId, callId: `deepsec:${request.runId}` },
+            summary: 'DeepSec review requires confirmation.',
+            overviewMarkdown: 'DeepSec review requires confirmation before launch.',
+            findings: [],
+            questions: [],
+            assumptions: [],
+            generatedAtMs: Date.now(),
+            warning: runResult.warning,
+          }),
+        });
+        emit({ kind: 'run-complete' });
+        return;
       }
 
-      const entries = parseDeepSecCommentOutMarkdown(runResult.commentOutMarkdown);
-      const findings = normalizeDeepSecFindings(entries);
-      const comments = readReviewComments(params.ctx);
-      if (comments && startInput.projectId) {
-        await mapDeepSecReviewComments({
-          projectId: startInput.projectId,
-          workspaceId: startInput.workspaceId,
-          sessionId: startInput.sessionId,
-          runId,
-          entries,
-          comments,
-        });
-      }
+      const findings = normalizeDeepSecFindings(parseDeepSecCommentOutMarkdown(runResult.commentOutMarkdown));
+      emit({ kind: 'output-delta', channel: 'assistant', text: createOutput({ runId: request.runId, findings, runResult }) });
       if (runResult.status === 'failed') {
-        emit(createModelOutputMessage(createOutput({ runId, findings, runResult })));
-        throw new Error(`DeepSec exited with code ${runResult.result.exitCode ?? 'null'}`);
+        throw new Error(`DeepSec exited with code ${readFailureCode(runResult.result)}`);
       }
+      emit({ kind: 'run-complete' });
+    } catch (error) {
+      if (signal.aborted) {
+        emit({ kind: 'run-cancelled' });
+        return;
+      }
+      emit({
+        kind: 'run-failed',
+        diagnostic: {
+          code: 'deepsec_execution_failed',
+          severity: 'error',
+          message: error instanceof Error ? error.message : 'DeepSec execution failed',
+        },
+      });
+    }
+  }
+
+  const execution = execute();
+  void execution.catch(() => undefined);
+  return Object.freeze({
+    async send() {
       return {
-        messages: [createModelOutputMessage(createOutput({ runId, findings, runResult }))],
+        status: 'unsupported' as const,
+        diagnostic: {
+          code: 'deepsec_follow_up_unsupported',
+          severity: 'error' as const,
+          message: 'DeepSec execution runs are single-shot',
+        },
       };
+    },
+    async stop() {
+      if (terminal) return { status: 'notRunning' as const };
+      abortController.abort(new Error('DeepSec execution run stopped'));
+      return { status: 'requested' as const };
+    },
+    watch(listener: (event: AgentExecutionRunEvent) => void) {
+      for (const event of history) listener(event);
+      if (!terminal) listeners.add(listener);
+      return {
+        dispose() {
+          listeners.delete(listener);
+        },
+      };
+    },
+    async dispose() {
+      if (disposed) return;
+      disposed = true;
+      abortController.abort(new Error('DeepSec execution run disposed'));
+      listeners.clear();
+      await execution;
+    },
+  });
+}
+
+export function createDeepSecExecutionRunFactory(): AgentExecutionRunRuntimeFactory {
+  return Object.freeze({
+    open(request: AgentExecutionRunOpenRequest, context: AgentRuntimeContext) {
+      if (request.kind !== 'create') throw new Error('DeepSec execution runs support create only');
+      return createRuntime(request, context);
     },
   });
 }

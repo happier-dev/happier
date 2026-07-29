@@ -1,8 +1,13 @@
 import type {
   RuntimeDescriptorV1,
+  ProviderBoundModelRef,
   SessionMetadata,
   SessionStateFieldId,
   SessionStateFieldValue,
+} from '@happier-dev/protocol';
+import {
+  ProviderBoundModelRefSchema,
+  SessionModelSelectionIntentV1Schema,
 } from '@happier-dev/protocol';
 
 import type { SessionStateFieldWriteValue } from './_types.js';
@@ -10,6 +15,7 @@ import {
   writeAcpConfigOptionIntentToMetadata,
   writeAcpSessionModeIntentToMetadata,
   writeModelIntentToMetadata,
+  readModelIntentFromMetadata,
   writePermissionModeIntentToMetadata,
 } from './bindings/intent.js';
 import { writeRuntimeDescriptorSessionState } from './bindings/runtimeDescriptor.js';
@@ -117,6 +123,90 @@ export function applyModelIntentSessionMetadata<TMetadata extends SessionMetadat
     selection: value.selection,
     updatedAt: value.updatedAt,
   }) as TMetadata;
+}
+
+export function createModelIntentMetadataCasCandidate(input: Readonly<{
+  selection: ProviderBoundModelRef;
+  nowMs?: () => number;
+}>): Readonly<{
+  update<TMetadata extends SessionMetadata>(metadata: TMetadata): TMetadata;
+  readState(): Readonly<{ accepted: boolean; updatedAt: number | null }>;
+}> {
+  const selection = ProviderBoundModelRefSchema.parse(input.selection);
+  const nowMs = input.nowMs ?? Date.now;
+  let updatedAt: number | null = null;
+  let accepted = false;
+
+  return Object.freeze({
+    update<TMetadata extends SessionMetadata>(metadata: TMetadata): TMetadata {
+      accepted = false;
+      const current = readModelIntentFromMetadata(metadata);
+      updatedAt ??= Math.max(
+        nowMs(),
+        (current?.updatedAt ?? 0) + 1,
+      );
+      if ((current?.updatedAt ?? 0) >= updatedAt) {
+        return metadata;
+      }
+      const next = writeModelIntentToMetadata(metadata, {
+        v: 1,
+        selection,
+        updatedAt,
+      }) as TMetadata;
+      const persisted = readModelIntentFromMetadata(next);
+      const canonical = SessionModelSelectionIntentV1Schema.safeParse(persisted);
+      const persistedSelection = canonical.success ? canonical.data.selection : null;
+      accepted = canonical.success
+        && canonical.data.updatedAt === updatedAt
+        && persistedSelection !== null
+        && persistedSelection.agentTargetKey === selection.agentTargetKey
+        && persistedSelection.providerConnectionId === selection.providerConnectionId
+        && persistedSelection.modelId === selection.modelId;
+      return next;
+    },
+    readState: () => ({ accepted, updatedAt }),
+  });
+}
+
+export function isInactiveModelIntentSessionActiveError(
+  error: unknown,
+): error is Error & {
+  code: 'session_active';
+  retryable: false;
+} {
+  return error instanceof Error
+    && (error as { code?: unknown }).code === 'session_active'
+    && (error as { retryable?: unknown }).retryable === false;
+}
+
+/**
+ * Canonical active/inactive disposition for a model-intent mutation.
+ *
+ * The initial activity projection is only a routing hint. An inactive write
+ * becomes authoritative only when its conditioned metadata CAS commits. If
+ * the Session row instead proves an active publisher, callers re-resolve that
+ * publisher once and must not fall back to metadata again.
+ */
+export async function runModelIntentAtAuthoritativeDisposition<
+  TInactive,
+  TActive,
+>(params: Readonly<{
+  observedActive: boolean;
+  updateInactiveIntent: () => Promise<TInactive>;
+  invokeObservedActiveOwner: () => Promise<TActive>;
+  resolveAndInvokeActiveOwnerAfterConflict: () => Promise<TActive>;
+}>): Promise<TInactive | TActive> {
+  if (params.observedActive) {
+    return await params.invokeObservedActiveOwner();
+  }
+  try {
+    return await params.updateInactiveIntent();
+  } catch (error) {
+    if (!isInactiveModelIntentSessionActiveError(error)) {
+      throw error;
+    }
+    return await params.resolveAndInvokeActiveOwnerAfterConflict();
+  }
 }
 
 export function clearModelIntentSessionMetadata<TMetadata extends SessionMetadata>(

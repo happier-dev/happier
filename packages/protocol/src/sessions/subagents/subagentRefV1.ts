@@ -36,7 +36,7 @@ export const SubagentTranscriptBindingV1Schema = z.object({
 export type SubagentTranscriptBindingV1 = z.infer<typeof SubagentTranscriptBindingV1Schema>;
 
 export const SubagentSpawnRefV1Schema = z.object({
-  toolCallId: z.string().trim().min(1).optional(),
+  toolCallId: z.string().min(1).refine((value) => value.trim().length > 0, 'toolCallId must not be blank').optional(),
 }).passthrough();
 export type SubagentSpawnRefV1 = z.infer<typeof SubagentSpawnRefV1Schema>;
 

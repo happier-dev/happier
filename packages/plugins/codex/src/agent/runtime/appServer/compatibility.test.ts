@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
     createCodexAppServerRpcError,
+    isCodexAppServerApplicationRejectionForMethod,
     isCodexAppServerInvalidParamsForFieldError,
     isCodexAppServerMethodNotFoundError,
     isCodexAppServerNoActiveTurnToSteerError,
@@ -38,5 +39,24 @@ describe('Codex app-server compatibility predicates', () => {
             code: -32602,
             message: 'Invalid params: experimental field unsupported',
         }))).toBe(true);
+    });
+
+    it('distinguishes a received JSON-RPC application rejection from transport failure', () => {
+        const rejection = createCodexAppServerRpcError({
+            method: 'thread/realtime/start',
+            code: -32602,
+        });
+        rejection.name = 'JsonRpcApplicationError';
+
+        expect(isCodexAppServerApplicationRejectionForMethod(
+            rejection,
+            'thread/realtime/start',
+        )).toBe(true);
+        expect(isCodexAppServerApplicationRejectionForMethod(
+            Object.assign(new Error('timed out'), {
+                code: 'PLUGIN_EXEC_CLIENT_REQUEST_TIMEOUT',
+            }),
+            'thread/realtime/start',
+        )).toBe(false);
     });
 });

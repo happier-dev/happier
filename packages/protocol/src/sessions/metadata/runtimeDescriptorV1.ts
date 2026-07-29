@@ -1,5 +1,11 @@
 import { z } from 'zod';
 import { getGeneratedRuntimeDescriptorContributionV1 } from '../../agents/runtimeDescriptorContributionsV1.js';
+import {
+  PluginContributionIdentityV1Schema,
+  resolveAgentIdFromPersistedContributionIdentityV1,
+  resolvePersistedContributionIdentityV1FromAgentId,
+  type PluginContributionIdentityV1,
+} from '../../plugins/contributionIdentity.js';
 
 type RuntimeDescriptorAgentShape = Readonly<Record<string, unknown>>;
 
@@ -19,6 +25,13 @@ export type RuntimeDescriptorEnvelopeV1<
 } & Record<string, unknown>>;
 
 export type RuntimeDescriptorV1 = RuntimeDescriptorEnvelopeV1;
+export type PersistedRuntimeDescriptorV1 =
+  | RuntimeDescriptorV1
+  | Readonly<{
+      v: 1;
+      agentIdentity: PluginContributionIdentityV1;
+      agent: RuntimeDescriptorAgentShape;
+    } & Record<string, unknown>>;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -43,22 +56,45 @@ function normalizeDeployedRuntimeDescriptorV1(value: unknown): unknown {
   const record = asRecord(value);
   if (!record) return value;
 
+  const hasAgentIdentity = Object.hasOwn(record, 'agentIdentity');
   const hasAgentId = Object.hasOwn(record, 'agentId');
   const hasProviderId = Object.hasOwn(record, 'providerId');
-  if (!hasProviderId) return normalizeLegacyRuntimeDescriptorPayloadKeys(record);
-
   const agentId = typeof record.agentId === 'string' && record.agentId.trim()
     ? record.agentId.trim()
     : null;
+  const agentIdentity = hasAgentIdentity
+    ? PluginContributionIdentityV1Schema.safeParse(record.agentIdentity)
+    : null;
+  if (hasAgentIdentity && !agentIdentity?.success) return undefined;
+  const identityAgentId = agentIdentity?.success
+    ? resolveAgentIdFromPersistedContributionIdentityV1(agentIdentity.data)
+    : null;
+  if (hasAgentIdentity && !identityAgentId) return undefined;
+  if (identityAgentId && agentId && identityAgentId !== agentId) return undefined;
+
+  const {
+    agentIdentity: _persistedAgentIdentity,
+    ...withoutAgentIdentity
+  } = record;
+  const identityNormalized = identityAgentId
+    ? { ...withoutAgentIdentity, agentId: identityAgentId }
+    : withoutAgentIdentity;
+  if (!hasProviderId) {
+    return normalizeLegacyRuntimeDescriptorPayloadKeys(identityNormalized);
+  }
+
   const providerId = typeof record.providerId === 'string' && record.providerId.trim()
     ? record.providerId.trim()
     : null;
-  if (!providerId || (hasAgentId && (!agentId || agentId !== providerId))) return undefined;
+  const normalizedAgentId = identityAgentId ?? agentId;
+  if (!providerId || ((hasAgentId || hasAgentIdentity) && (!normalizedAgentId || normalizedAgentId !== providerId))) {
+    return undefined;
+  }
 
-  const { providerId: _legacyProviderId, ...canonical } = record;
+  const { providerId: _legacyProviderId, ...canonical } = identityNormalized;
   return normalizeLegacyRuntimeDescriptorPayloadKeys({
     ...canonical,
-    agentId: agentId ?? providerId,
+    agentId: normalizedAgentId ?? providerId,
   });
 }
 
@@ -92,6 +128,22 @@ export const RuntimeDescriptorV1Schema = createRuntimeDescriptorV1Schema(z);
 export function readRuntimeDescriptorV1(value: unknown): RuntimeDescriptorV1 | null {
   const parsed = RuntimeDescriptorV1Schema.safeParse(value);
   return parsed.success ? parsed.data : null;
+}
+
+export function writeRuntimeDescriptorV1ForPersistence(
+  value: RuntimeDescriptorV1,
+): PersistedRuntimeDescriptorV1 {
+  const descriptor = RuntimeDescriptorV1Schema.parse(value);
+  const identity = resolvePersistedContributionIdentityV1FromAgentId(descriptor.agentId);
+  if (!identity) return descriptor;
+  const {
+    agentId: _runtimeAgentId,
+    ...rest
+  } = descriptor;
+  return {
+    ...rest,
+    agentIdentity: identity,
+  };
 }
 
 export function readRuntimeDescriptorV1ForAgent<TAgentId extends string>(

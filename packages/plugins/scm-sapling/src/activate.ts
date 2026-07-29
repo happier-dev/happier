@@ -1,9 +1,8 @@
-import type {
-  PluginApi,
-} from '@happier-dev/plugin-sdk';
+import type { PluginApi } from '@happier-dev/plugin-sdk';
 
-import { registerSaplingScmBackend } from './backend.js';
+import { createSaplingScmBackendRegistration } from './backend.js';
 
 export function activate(api: PluginApi): void {
-    registerSaplingScmBackend(api);
+    const { id, ...runtime } = createSaplingScmBackendRegistration();
+    api.scm.registerBackend(id, runtime);
 }

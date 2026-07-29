@@ -3,7 +3,7 @@ First-party Auggie plugin package for Stage E.2 focused extraction.
 This package owns Auggie plugin leaf data and Tier-2 ACP callbacks:
 
 - plugin manifest and backend activation,
-- `agentCliRuntime` definition data,
+- native Agent CLI/auth manifest metadata,
 - Auggie ACP argv, permission, transport, and allow-indexing leaves,
 - plugin-authored UI descriptors consumed by generated host/UI projections.
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+    PLUGIN_UI_HOST_REACT_RUNTIME_EXTERNAL_SPECIFIERS,
     PLUGIN_UI_HOST_RUNTIME_EXTERNAL_SPECIFIERS,
     PLUGIN_UI_HOST_RUNTIME_GLOBAL_KEY,
     isPluginUiHostRuntimeExternalGlobalInstalled,
@@ -9,10 +10,17 @@ import {
 describe('plugin UI host runtime externals', () => {
     it('declares the canonical global key and specifier list once', () => {
         expect(PLUGIN_UI_HOST_RUNTIME_GLOBAL_KEY).toBe('__happierPluginHostRuntime__');
+        expect(PLUGIN_UI_HOST_REACT_RUNTIME_EXTERNAL_SPECIFIERS).toEqual([
+            'react',
+            'react/jsx-runtime',
+            'react/jsx-dev-runtime',
+        ]);
         expect(PLUGIN_UI_HOST_RUNTIME_EXTERNAL_SPECIFIERS).toEqual([
             'react',
+            'react/jsx-runtime',
+            'react/jsx-dev-runtime',
             'react-native-web',
-            '@happier-dev/plugin-sdk/ui/hostApiClient',
+            '@happier-dev/plugin-sdk/ui/client',
         ]);
     });
 
@@ -27,8 +35,10 @@ describe('plugin UI host runtime externals', () => {
         expect(isPluginUiHostRuntimeExternalGlobalInstalled({
             [PLUGIN_UI_HOST_RUNTIME_GLOBAL_KEY]: {
                 react: {},
+                'react/jsx-runtime': {},
+                'react/jsx-dev-runtime': {},
                 'react-native-web': {},
-                '@happier-dev/plugin-sdk/ui/hostApiClient': {},
+                '@happier-dev/plugin-sdk/ui/client': {},
             },
         })).toBe(true);
     });

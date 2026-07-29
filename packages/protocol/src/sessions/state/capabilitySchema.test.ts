@@ -50,6 +50,8 @@ describe('SessionStateCapabilitiesV1Schema', () => {
       'display.title',
       'runtime.workState',
       'runtime.activity',
+      'runtime.externalAgent',
+      'runtime.externalSessionOperation',
       'runtime.usageLimitRecovery',
       'runtime.sessionRunner',
       'view.readState',
@@ -86,6 +88,22 @@ describe('SessionStateCapabilitiesV1Schema', () => {
     expect(parsed.runtime?.activity?.providerToHappier).toEqual({
       supported: true,
       source: 'event',
+    });
+  });
+
+  it('accepts external-Agent observation capabilities in the closed schema', () => {
+    const parsed = SessionStateCapabilitiesV1Schema.parse({
+      runtime: {
+        externalAgent: {
+          supported: true,
+        },
+      },
+    });
+
+    expect(parsed.runtime?.externalAgent).toEqual({
+      supported: true,
+      happierToProvider: { supported: false },
+      providerToHappier: { supported: false },
     });
   });
 

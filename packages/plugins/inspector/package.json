@@ -22,9 +22,8 @@
   ],
   "scripts": {
     "tsc": "node ../../../scripts/workspaces/runTypeScriptCli.mjs",
-    "build": "node ../../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.json",
-    "build:ui:web": "vite build",
-    "build:ui:ios": "happier-plugin-build-ui",
+    "build": "node ../../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json && happier-plugin-build-ui",
+    "build:ui": "happier-plugin-build-ui",
     "test": "vitest run",
     "typecheck": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
@@ -32,7 +31,11 @@
     "@happier-dev/plugin-sdk": "0.0.0"
   },
   "devDependencies": {
+    "@callstack/repack": "5.2.5",
+    "@react-native-community/cli": "20.1.2",
+    "@react-native/metro-config": "0.83.4",
     "@rspack/core": "2.1.3",
+    "@swc/helpers": "0.5.23",
     "@types/react": "19.2.0",
     "react": "19.2.0",
     "react-native": "0.83.4",

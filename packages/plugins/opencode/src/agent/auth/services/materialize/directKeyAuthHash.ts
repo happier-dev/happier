@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 
-import { isOpenCodeBrokerMarker } from '../broker/env.js';
+function isOpenCodeRequestAuthMarker(value: string): boolean {
+  return /^happier-request-auth:(?:openai|anthropic):\d+$/u.test(value);
+}
 
 export function hashOpenCodeDirectKeyAuthContent(rawAuthContent: unknown): string {
   const raw = typeof rawAuthContent === 'string' ? rawAuthContent : '';
@@ -22,7 +24,7 @@ export function hashOpenCodeDirectKeyAuthContent(rawAuthContent: unknown): strin
     if (entry.type !== 'api') continue;
     const key = entry.key;
     if (typeof key !== 'string' || key.length === 0) continue;
-    if (isOpenCodeBrokerMarker(key)) continue;
+    if (isOpenCodeRequestAuthMarker(key)) continue;
     directKeyEntries.push(`${name}=${key}`);
   }
 

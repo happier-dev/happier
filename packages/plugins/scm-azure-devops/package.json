@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./manifest": {
+      "types": "./dist/manifest.d.ts",
+      "default": "./dist/manifest.js"
     }
   },
   "files": [
@@ -17,7 +21,7 @@
   ],
   "scripts": {
     "tsc": "node ../../../scripts/workspaces/runTypeScriptCli.mjs",
-    "build": "node ../../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.json",
+    "build": "node ../../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
     "test": "vitest run",
     "typecheck": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
@@ -25,6 +29,7 @@
     "@happier-dev/plugin-sdk": "0.0.0"
   },
   "devDependencies": {
+    "@happier-dev/protocol": "0.0.0",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"
   }

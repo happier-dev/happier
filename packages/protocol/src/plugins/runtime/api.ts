@@ -7,7 +7,6 @@ export const PluginRuntimeCapabilityFamilyV1Schema = z.enum([
   'commands',
   'hooks',
   'resources',
-  'uiDescriptors',
   'settings',
   'executionRunProfiles',
   'mcp',

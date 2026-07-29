@@ -3,12 +3,23 @@ import { z } from 'zod';
 import { SessionIdSchema, SessionIndexedIdentifierMaxLengthV1, TurnIdSchema } from '../idsV1.js';
 import { SessionRuntimeIssueV1Schema } from '../control/runtimeIssueV1.js';
 import { normalizeLegacySessionTurnAgentIdentity } from './compat/agentIdentity.js';
+import {
+  AgentSessionProviderCheckpointMaxJsonBytesV1,
+  AgentSessionProviderCheckpointV1Schema,
+} from '../../runtime/agentSessionV1.js';
 
 const SessionTurnMutationIdV1Schema = z.string().trim().min(1).max(SessionIndexedIdentifierMaxLengthV1);
 const SessionTurnAgentIdV1Schema = z.string().trim().min(1).max(128);
 const SessionTurnAgentTurnIdV1Schema = z.string().trim().min(1).max(SessionIndexedIdentifierMaxLengthV1);
 const SessionTurnObservedAtV1Schema = z.number().int().nonnegative();
 const SessionTurnReasonV1Schema = z.string().trim().min(1).max(256);
+export const SessionTurnProviderCheckpointMaxJsonBytesV1 =
+  AgentSessionProviderCheckpointMaxJsonBytesV1;
+export const SessionTurnProviderCheckpointV1Schema =
+  AgentSessionProviderCheckpointV1Schema;
+export type SessionTurnProviderCheckpointV1 = z.infer<
+  typeof SessionTurnProviderCheckpointV1Schema
+>;
 
 export const SessionTurnLifecycleStatusV1Schema = z.enum([
   'in_progress',
@@ -31,6 +42,7 @@ export const SessionTurnTranscriptAnchorsV1Schema = z
     userMessageSeqs: z.array(z.number().int().nonnegative()).readonly().optional(),
     startSeqInclusive: z.number().int().nonnegative().optional(),
     endSeqInclusive: z.number().int().nonnegative().nullable().optional(),
+    providerCheckpoint: SessionTurnProviderCheckpointV1Schema.optional(),
   })
   .passthrough()
   .readonly();
@@ -59,6 +71,20 @@ const SessionTurnMutationBaseV1Schema = z
     agentId: SessionTurnAgentIdV1Schema.optional(),
   })
   .strict();
+
+const ExactSessionTurnMutationBaseV1Schema = SessionTurnMutationBaseV1Schema.omit({ agentId: true });
+
+export const ExactSessionTurnEndMutationV1Schema = ExactSessionTurnMutationBaseV1Schema.extend({
+  action: z.literal('end_session'),
+  turnId: TurnIdSchema,
+}).strict().readonly();
+export type ExactSessionTurnEndMutationV1 = z.infer<typeof ExactSessionTurnEndMutationV1Schema>;
+
+export function isExactSessionTurnEndMutationV1(
+  value: unknown,
+): value is ExactSessionTurnEndMutationV1 {
+  return ExactSessionTurnEndMutationV1Schema.safeParse(value).success;
+}
 
 const TurnScopedMutationBaseV1Schema = SessionTurnMutationBaseV1Schema.extend({
   turnId: TurnIdSchema,
@@ -109,7 +135,15 @@ const CanonicalSessionTurnMutationV1Schema = z.discriminatedUnion('action', [
     agentRollbackOrdinal: z.number().int().nonnegative().optional(),
     reason: SessionTurnReasonV1Schema.optional(),
   }).strict(),
-]);
+]).superRefine((mutation, context) => {
+  if (mutation.action !== 'end_session' || mutation.turnId === undefined) return;
+  if (!ExactSessionTurnEndMutationV1Schema.safeParse(mutation).success) {
+    context.addIssue({
+      code: 'custom',
+      message: 'Exact session end cannot author agent metadata',
+    });
+  }
+});
 
 export const SessionTurnMutationV1Schema = z.preprocess(
   normalizeLegacySessionTurnAgentIdentity,
@@ -141,3 +175,35 @@ export const SessionTurnMutationReceiptV1Schema = z
   .passthrough()
   .readonly();
 export type SessionTurnMutationReceiptV1 = z.infer<typeof SessionTurnMutationReceiptV1Schema>;
+
+export const ExactSessionTurnMutationPositiveReceiptV1Schema = z
+  .object({
+    v: z.literal(1),
+    sessionId: SessionIdSchema,
+    mutationId: SessionTurnMutationIdV1Schema,
+    turnId: TurnIdSchema,
+    action: z.literal('end_session'),
+    decision: z.enum(['applied', 'duplicate-terminal']),
+    observedAt: SessionTurnObservedAtV1Schema,
+    appliedAt: SessionTurnObservedAtV1Schema,
+  })
+  .passthrough()
+  .readonly();
+export type ExactSessionTurnMutationPositiveReceiptV1 = z.infer<
+  typeof ExactSessionTurnMutationPositiveReceiptV1Schema
+>;
+
+export function isExactSessionTurnMutationPositiveReceiptV1(
+  mutationValue: unknown,
+  receiptValue: unknown,
+): receiptValue is ExactSessionTurnMutationPositiveReceiptV1 {
+  const mutation = ExactSessionTurnEndMutationV1Schema.safeParse(mutationValue);
+  const receipt = ExactSessionTurnMutationPositiveReceiptV1Schema.safeParse(receiptValue);
+  if (!mutation.success || !receipt.success) return false;
+  return receipt.data.v === mutation.data.v
+    && receipt.data.sessionId === mutation.data.sessionId
+    && receipt.data.mutationId === mutation.data.mutationId
+    && receipt.data.action === mutation.data.action
+    && receipt.data.turnId === mutation.data.turnId
+    && receipt.data.observedAt === mutation.data.observedAt;
+}

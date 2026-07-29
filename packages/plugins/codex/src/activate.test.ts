@@ -3,16 +3,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type {
-  RegisterDaemonAuthBridgeV1,
-  PluginApiHookRegistrationV1,
-  PluginApiMcpDiscoveryProviderRegistrationV1,
-  PluginDisposable,
-  RegisterAgentRuntimeV1,
-} from '@happier-dev/plugin-sdk';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 
 import { activate } from './activate.js';
 import { CODEX_PROVIDER_BINDING_ADAPTER_V1 } from './agent/providerBinding/adapter.js';
+import { codexExternalSessionHooksContribution } from './agent/surfaces/sessions/external/externalSessionHooks.js';
+import { codexExternalSessionTakeoverContribution } from './agent/surfaces/sessions/external/takeover.js';
+import { codexExternalSessionsContribution } from './index.js';
+import { PLUGIN_MANIFEST } from './manifest.js';
 
 describe('activate', () => {
   const previousCodexHome = process.env.CODEX_HOME;
@@ -27,10 +25,7 @@ describe('activate', () => {
 
   it('registers Codex MCP discovery through the plugin API', async () => {
       const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-plugin-mcp-'));
-      const backendRegistrations: RegisterAgentRuntimeV1[] = [];
-      const daemonAuthBridgeRegistrations: RegisterDaemonAuthBridgeV1[] = [];
-      const hookRegistrations: PluginApiHookRegistrationV1[] = [];
-      const registrations: PluginApiMcpDiscoveryProviderRegistrationV1[] = [];
+      let activation: Awaited<ReturnType<typeof createPluginTestkit>> | undefined;
     try {
       await mkdir(codexHome, { recursive: true });
       await writeFile(join(codexHome, 'config.toml'), [
@@ -40,55 +35,50 @@ describe('activate', () => {
       ].join('\n'));
       process.env.CODEX_HOME = codexHome;
 
-      const api = {
-        registerAgentRuntime: (registration): PluginDisposable => {
-          backendRegistrations.push(registration);
-          return { dispose: () => undefined };
-        },
-        registerDaemonAuthBridge: (registration): PluginDisposable => {
-          daemonAuthBridgeRegistrations.push(registration);
-          return { dispose: () => undefined };
-        },
-        registerMcpDiscoveryProvider: (registration) => {
-          registrations.push(registration);
-          return { dispose: () => undefined };
-        },
-        registerHook: (registration: PluginApiHookRegistrationV1) => {
-          hookRegistrations.push(registration);
-          return { dispose: () => undefined };
-        },
-      };
-      activate(api);
+      activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+      const agent = activation.registration('agents', 'codex');
 
-      expect(backendRegistrations).toEqual([
+      expect(agent).toEqual(
         expect.objectContaining({
-          agentId: 'codex',
           providerBinding: CODEX_PROVIDER_BINDING_ADAPTER_V1,
-          create: expect.any(Function),
+          factory: expect.any(Function),
+          externalSessions: codexExternalSessionsContribution,
+          externalSessionTakeover: codexExternalSessionTakeoverContribution,
+          externalSessionHooks: codexExternalSessionHooksContribution,
+          externalSessionObservation: expect.any(Object),
         }),
+      );
+      expect(Object.keys(agent?.externalSessions ?? {}).sort()).toEqual([
+        'listCandidates',
+        'pageTranscript',
+        'readAfterTranscript',
+        'resolveLinkIdentity',
+        'resolveLinkedIdentity',
+        'resolveSource',
       ]);
-      expect(daemonAuthBridgeRegistrations).toEqual([
-        expect.objectContaining({
-          serviceId: 'openai-codex',
-          refresh: expect.any(Function),
-        }),
+      expect(Object.keys(
+        agent?.externalSessionHooks ?? {},
+      ).sort()).toEqual([
+        'installationVariants',
+        'mapHookEvent',
+        'resolveInstallation',
       ]);
-      expect(registrations.map((registration) => registration.id)).toEqual(['codex.config']);
-      expect(hookRegistrations.map((registration) => registration.hookId)).toEqual([
-        'agent.resolvePrerequisites',
-        'agent.spawnEnv.augment',
+      expect(Object.keys(
+        agent?.externalSessionObservation ?? {},
+      ).sort()).toEqual([
+        'describeResource',
+        'observeResource',
+        'reconcileResource',
       ]);
-      expect(hookRegistrations).toEqual([
-        expect.objectContaining({
-          hookId: 'agent.resolvePrerequisites',
-          filters: { agentId: 'codex' },
-        }),
-        expect.objectContaining({
-          hookId: 'agent.spawnEnv.augment',
-          filters: { agentId: 'codex' },
-        }),
-      ]);
-      await expect(registrations[0]?.discover()).resolves.toEqual({
+      expect(activation.registrations()).toEqual(expect.arrayContaining([
+        { family: 'mcp.discoveryProviders', localId: 'config' },
+        { family: 'hooks', localId: 'resolve-prerequisites' },
+        { family: 'hooks', localId: 'augment-spawn-env' },
+      ]));
+      const discovery = activation.registration('mcp.discoveryProviders', 'config');
+      if (!discovery) throw new Error('Missing Codex MCP discovery registration');
+      await expect(Reflect.apply(discovery, undefined, [{}])).resolves.toEqual({
+        items: [],
         servers: [{
           id: 'codex.config.docs',
           name: 'docs',
@@ -104,54 +94,58 @@ describe('activate', () => {
         warnings: [],
       });
     } finally {
+      await activation?.dispose();
       await rm(codexHome, { recursive: true, force: true });
     }
   });
 
   it('passes direct activation-hook payloads through to Codex spawn hooks', async () => {
-    const hookRegistrations: PluginApiHookRegistrationV1[] = [];
+    const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
     const resolveManagedInstallable = vi.fn(async () => ({
       ok: false as const,
       errorMessage: 'codex-acp unavailable',
     }));
 
-    activate({
-      registerAgentRuntime: () => ({ dispose: () => undefined }),
-      registerDaemonAuthBridge: () => ({ dispose: () => undefined }),
-      registerMcpDiscoveryProvider: () => ({ dispose: () => undefined }),
-      registerHook: (registration) => {
-        hookRegistrations.push(registration);
-        return { dispose: () => undefined };
-      },
-    });
+    const prerequisiteHook = activation.registration('hooks', 'resolve-prerequisites');
+    const envHook = activation.registration('hooks', 'augment-spawn-env');
 
-    const prerequisiteHook = hookRegistrations.find(
-      (registration) => registration.hookId === 'agent.resolvePrerequisites',
-    );
-    const envHook = hookRegistrations.find(
-      (registration) => registration.hookId === 'agent.spawnEnv.augment',
-    );
-
-    await expect(prerequisiteHook?.handler({
+    await expect(prerequisiteHook?.({
       runtimeSelection: {
         providerRuntimeSelection: { codexBackendMode: 'acp' },
       },
     }, {
       tools: { resolveManagedInstallable },
     })).resolves.toMatchObject({
-      allowed: false,
+      decision: 'deny',
       reasonCode: 'codex_acp_unavailable',
     });
     expect(resolveManagedInstallable).toHaveBeenCalledWith(expect.objectContaining({
       installableId: 'codex-acp',
     }));
 
-    await expect(Promise.resolve(envHook?.handler({
+    await expect(Promise.resolve(envHook?.({
       runtimeSelection: {
         providerRuntimeSelection: { codexBackendMode: 'appServer' },
       },
     }))).resolves.toEqual({
       HAPPIER_CODEX_BACKEND_MODE: 'appServer',
     });
+    await activation.dispose();
+  });
+
+  it('registers a native AgentRuntime with session and execution-run factories', async () => {
+    const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+
+    const factory = activation.registration('agents', 'codex')?.factory;
+    if (!factory) throw new Error('Missing Codex Agent registration');
+    const runtime = await factory({
+      plugin: { id: 'codex', version: '0.0.0' },
+      agent: { id: 'codex' },
+      signal: new AbortController().signal,
+    });
+
+    expect(runtime.sessions?.open).toBeTypeOf('function');
+    expect(runtime.executionRuns?.open).toBeTypeOf('function');
+    await activation.dispose();
   });
 });

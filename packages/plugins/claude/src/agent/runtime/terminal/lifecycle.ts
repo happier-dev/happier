@@ -76,7 +76,7 @@ function readTurnId(value: string | null | undefined): string | null {
     return typeof value === 'string' && value.trim().length > 0 ? value : null;
 }
 
-function isTaskNotificationPromptText(value: string | null | undefined): boolean {
+export function isClaudeTaskNotificationPromptText(value: string | null | undefined): boolean {
     return typeof value === 'string' && /^\s*<task-notification\b/iu.test(value);
 }
 
@@ -86,7 +86,7 @@ export function mapClaudeHookEventToTerminalLifecycleObservation(
     const turnId = readTurnId(event.turnId);
 
     if (event.eventName === 'UserPromptSubmit') {
-        if (isTaskNotificationPromptText(event.promptText)) return null;
+        if (isClaudeTaskNotificationPromptText(event.promptText)) return null;
         return {
             type: 'prompt_submitted',
             agentId: event.agentId,

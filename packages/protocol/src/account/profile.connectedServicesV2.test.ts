@@ -6,6 +6,77 @@ describe('AccountProfileSchema connectedServicesV2', () => {
   it('defaults connectedServicesV2 to an empty array', () => {
     const parsed = AccountProfileSchema.parse({ id: 'acct' });
     expect(parsed.connectedServicesV2).toEqual([]);
+    expect(parsed.connectedServiceCredentialRevisionsV1).toEqual([]);
+    expect(parsed.connectedAccountsV4).toEqual([]);
+    expect(parsed.connectedAccountGroupsV4).toEqual([]);
+  });
+
+  it('projects novel qualified accounts and groups without a legacy service enum', () => {
+    const service = {
+      pluginId: 'third-party.connected-accounts',
+      localId: 'service/with/path',
+    };
+    const parsed = AccountProfileSchema.parse({
+      id: 'acct',
+      connectedAccountsV4: [{
+        ref: { service, accountId: 'account/with/path' },
+        status: 'connected',
+        authenticationModeId: 'manual',
+        credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz',
+        configurationReady: false,
+        configurationRevision: null,
+        displayName: 'Novel account',
+        scopes: [],
+      }],
+      connectedAccountGroupsV4: [{
+        v: 1,
+        ref: { service, groupId: 'fallback' },
+        displayName: null,
+        policy: {},
+        activeConnectedAccountId: 'account/with/path',
+        generation: 0,
+        runtimeStateRevision: 0,
+        state: {},
+        createdAt: 1,
+        updatedAt: 1,
+        members: [],
+      }],
+    });
+
+    expect(parsed.connectedAccountsV4[0]?.ref.service).toEqual(service);
+    expect(parsed.connectedAccountGroupsV4[0]?.ref.service).toEqual(service);
+    expect(AccountProfileSchema.safeParse({
+      id: 'acct',
+      connectedAccountsV4: [{
+        ...parsed.connectedAccountsV4[0],
+        serviceId: 'openai',
+      }],
+    }).success).toBe(false);
+  });
+
+  it('parses exact opaque credential revisions while older projections may omit them', () => {
+    const parsed = AccountProfileSchema.parse({
+      id: 'acct',
+      connectedServiceCredentialRevisionsV1: [{
+        serviceId: 'openai-codex',
+        profileId: 'work',
+        credentialRevision: 'csr_1123456789ABCDEFGHJKMNPQRS',
+      }],
+    });
+
+    expect(parsed.connectedServiceCredentialRevisionsV1).toEqual([{
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      credentialRevision: 'csr_1123456789ABCDEFGHJKMNPQRS',
+    }]);
+    expect(AccountProfileSchema.safeParse({
+      id: 'acct',
+      connectedServiceCredentialRevisionsV1: [{
+        serviceId: 'openai-codex',
+        profileId: 'work',
+        credentialRevision: 'not-a-revision',
+      }],
+    }).success).toBe(false);
   });
 
   it('limits legacy connectedServices to cloud-vendor keys', () => {

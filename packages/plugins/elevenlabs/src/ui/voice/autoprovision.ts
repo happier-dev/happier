@@ -2,10 +2,14 @@ import { buildElevenLabsVoiceAgentPrompt } from '@happier-dev/agents';
 import {
   actionSpecToElevenLabsClientToolParameters,
   describeActionForVoiceTool,
+  isVoiceSdkSafeActionSpec,
   type ActionSpec,
 } from '@happier-dev/protocol';
 
-import type { ElevenLabsProvisionRequest } from '../../protocol/voice/index.js';
+import {
+  ElevenLabsProvisionToolSchema,
+  type ElevenLabsProvisionRequest,
+} from '../../protocol/voice/index.js';
 
 export type ElevenLabsTtsConfigInput = Readonly<{
   voiceId?: string | null;
@@ -20,7 +24,10 @@ export type ElevenLabsTtsConfigInput = Readonly<{
 }>;
 
 type ProvisionClient = Readonly<{
-  provision(request: ElevenLabsProvisionRequest): Promise<Readonly<Record<string, unknown>>>;
+  provision(
+    request: ElevenLabsProvisionRequest,
+    signal: AbortSignal,
+  ): Promise<Readonly<Record<string, unknown>>>;
 }>;
 
 export function createElevenLabsAutoprovision(input: Readonly<{
@@ -32,21 +39,28 @@ export function createElevenLabsAutoprovision(input: Readonly<{
     actionSpecs: readonly ActionSpec[];
   }>>;
 }>) {
-  const buildProvisionInput = async (tts?: ElevenLabsTtsConfigInput | null) => {
+  const buildProvisionInput = async (
+    signal: AbortSignal,
+    tts?: ElevenLabsTtsConfigInput | null,
+  ) => {
+    signal.throwIfAborted();
     const context = await input.buildContext();
+    signal.throwIfAborted();
+    const actionSpecs = context.actionSpecs.filter(isVoiceSdkSafeActionSpec);
     const prompt = buildElevenLabsVoiceAgentPrompt({
       disabledActionIds: context.disabledActionIds,
       extraSystemAppendBlocks: context.extraSystemAppendBlocks,
+      actionSpecs,
     }).replace(/Claude Code/giu, 'the coding assistant');
-    const availableActionIds = context.actionSpecs.map((spec) => spec.id);
-    const tools = context.actionSpecs.map((spec) => Object.freeze({
+    const availableActionIds = actionSpecs.map((spec) => spec.id);
+    const tools = ElevenLabsProvisionToolSchema.array().parse(actionSpecs.map((spec) => Object.freeze({
       name: String(spec.bindings?.voiceClientToolName ?? '').trim(),
       description: describeActionForVoiceTool(spec).trim(),
       parameters: actionSpecToElevenLabsClientToolParameters(spec, {
         disabledActionIds: context.disabledActionIds,
         availableActionIds,
       }),
-    })) satisfies Extract<ElevenLabsProvisionRequest, { kind: 'create' }>['tools'];
+    })));
     return Object.freeze({
       prompt,
       tools,
@@ -65,8 +79,10 @@ export function createElevenLabsAutoprovision(input: Readonly<{
   };
 
   return Object.freeze({
-    async findExistingAgents(): Promise<Array<{ agentId: string; name: string }>> {
-      const response = await input.client.provision({ kind: 'list' });
+    async findExistingAgents(signal: AbortSignal): Promise<Array<{ agentId: string; name: string }>> {
+      signal.throwIfAborted();
+      const response = await input.client.provision({ kind: 'list' }, signal);
+      signal.throwIfAborted();
       return Array.isArray(response.agents)
         ? response.agents.flatMap((row) => row && typeof row === 'object'
           && typeof (row as { agentId?: unknown }).agentId === 'string'
@@ -75,15 +91,28 @@ export function createElevenLabsAutoprovision(input: Readonly<{
           : [])
         : [];
     },
-    async createAgent(params: { tts?: ElevenLabsTtsConfigInput | null }): Promise<{ agentId: string }> {
-      const provision = await buildProvisionInput(params.tts);
-      const response = await input.client.provision({ kind: 'create', ...provision });
+    async createAgent(
+      params: { tts?: ElevenLabsTtsConfigInput | null },
+      signal: AbortSignal,
+    ): Promise<{ agentId: string }> {
+      const provision = await buildProvisionInput(signal, params.tts);
+      signal.throwIfAborted();
+      const response = await input.client.provision({ kind: 'create', ...provision }, signal);
+      signal.throwIfAborted();
       if (typeof response.agentId !== 'string') throw new Error('provider_response_invalid');
       return { agentId: response.agentId };
     },
-    async updateAgent(params: { agentId: string; tts?: ElevenLabsTtsConfigInput | null }): Promise<void> {
-      const provision = await buildProvisionInput(params.tts);
-      const response = await input.client.provision({ kind: 'update', agentId: params.agentId, ...provision });
+    async updateAgent(
+      params: { agentId: string; tts?: ElevenLabsTtsConfigInput | null },
+      signal: AbortSignal,
+    ): Promise<void> {
+      const provision = await buildProvisionInput(signal, params.tts);
+      signal.throwIfAborted();
+      const response = await input.client.provision(
+        { kind: 'update', agentId: params.agentId, ...provision },
+        signal,
+      );
+      signal.throwIfAborted();
       if (response.updated !== true) throw new Error('provider_response_invalid');
     },
   });

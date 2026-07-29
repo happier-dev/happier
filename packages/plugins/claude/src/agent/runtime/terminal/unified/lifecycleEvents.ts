@@ -1,29 +1,13 @@
-import type { PluginContextV1, TypedEventV1 } from '@happier-dev/plugin-sdk';
-import {
-  SESSION_PROVIDER_HOOK_EVENT_ID_V1,
-  SESSION_PROVIDER_TRANSCRIPT_EVENT_ID_V1,
-} from '@happier-dev/plugin-sdk/experimental/runtime/session';
-
 import type { ClaudeTerminalLifecycleObservation } from '../lifecycle.js';
 import {
   mapClaudeHookEventToTerminalLifecycleObservation,
   mapClaudeTranscriptEventToTerminalLifecycleObservation,
 } from '../lifecycle.js';
-import { readSessionHookSidechainAgentId } from '../../../hooks/sidechain.js';
+import {
+  classifyClaudeNativeHookLifecycle,
+  readClaudeCompactBoundaryEventId,
+} from '../../../transcripts/nativeSemanticProjection.js';
 import { CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID } from './constants.js';
-
-export const CLAUDE_UNIFIED_PROVIDER_HOOK_EVENT_ID = SESSION_PROVIDER_HOOK_EVENT_ID_V1;
-export const CLAUDE_UNIFIED_PROVIDER_TRANSCRIPT_EVENT_ID = SESSION_PROVIDER_TRANSCRIPT_EVENT_ID_V1;
-
-export type ClaudeUnifiedTerminalLifecycleObserver = Readonly<{
-  observeTerminalLifecycle(observation: ClaudeTerminalLifecycleObservation): Promise<void> | void;
-}>;
-
-export type ClaudeUnifiedTerminalLifecycleEventSubscriptionParams = Readonly<{
-  ctx: Pick<PluginContextV1, 'events' | 'logger'>;
-  happierSessionId: string;
-  observer: ClaudeUnifiedTerminalLifecycleObserver;
-}>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -38,33 +22,6 @@ function readTimestampMs(value: unknown): number | null {
   if (typeof value !== 'string' || value.trim().length === 0) return null;
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? parsed : null;
-}
-
-function readCompactBoundaryProviderEventId(
-  payload: Record<string, unknown>,
-  nested: Record<string, unknown>,
-  happierSessionId: string,
-): string | null {
-  const providerSessionId = readString(payload.providerSessionId)
-    ?? readString(payload.provider_session_id)
-    ?? readString(nested.session_id)
-    ?? readString(nested.sessionId)
-    ?? readString(payload.sessionId)
-    ?? happierSessionId;
-  const rawId = readString(nested.uuid)
-    ?? readString(nested.id)
-    ?? readString(payload.uuid)
-    ?? readString(payload.id)
-    ?? readString(payload.turnId)
-    ?? readString(nested.turnId);
-  if (rawId) return `claude:compact_boundary:${providerSessionId}:${rawId}`;
-  const timestampMs = readTimestampMs(nested.timestamp)
-    ?? readTimestampMs(nested.observedAtMs)
-    ?? readTimestampMs(nested.observed_at_ms)
-    ?? readTimestampMs(payload.timestamp)
-    ?? readTimestampMs(payload.observedAtMs)
-    ?? readTimestampMs(payload.observed_at_ms);
-  return timestampMs === null ? null : `claude:compact_boundary:${providerSessionId}:ts-${timestampMs}`;
 }
 
 function readNestedPayload(payload: Record<string, unknown>): Record<string, unknown> {
@@ -106,34 +63,21 @@ function readHookObservation(
   // incident cmq8171vw: subagent Stop/StopFailure terminalized the parent canonical turn).
   // Non-terminal sidechain tool/prompt hooks flow through only as runtime-activity evidence.
   // StopFailure still flows through — attributed — for the account-usage carve-out (HF-3).
-  const rawSidechainAgentId = readSessionHookSidechainAgentId(nested);
-  // Tolerated flat payload shapes reuse `agentId` as a provider-id alias; that is never a
-  // sidechain marker.
-  const sidechainAgentId = rawSidechainAgentId === CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID ? null : rawSidechainAgentId;
-  if (sidechainAgentId && eventName !== 'StopFailure') {
-    if (
-      eventName === 'PreToolUse'
-      || eventName === 'PostToolUse'
-      || eventName === 'UserPromptSubmit'
-      || eventName === 'Notification'
-    ) {
-      return {
-        type: 'sidechain_activity',
-        agentId: CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID,
-        source: 'hook',
-        sidechainAgentId,
-      };
-    }
-    if (eventName === 'Stop' || eventName === 'SessionEnd') {
-      return {
-        type: 'sidechain_terminal',
-        agentId: CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID,
-        source: 'hook',
-        sidechainAgentId,
-      };
-    }
-    return null;
+  const hookLifecycle = classifyClaudeNativeHookLifecycle({
+    eventName,
+    payload: nested,
+    primaryAgentId: CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID,
+  });
+  if (hookLifecycle.kind === 'sidechain_activity' || hookLifecycle.kind === 'sidechain_terminal') {
+    return {
+      type: hookLifecycle.kind,
+      agentId: CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID,
+      source: 'hook',
+      sidechainAgentId: hookLifecycle.sidechainAgentId,
+    };
   }
+  if (hookLifecycle.kind === 'ignored') return null;
+  const sidechainAgentId = hookLifecycle.sidechainAgentId;
 
   const detail = readString(payload.detail)
     ?? readString(nested.detail)
@@ -254,7 +198,11 @@ function readTranscriptObservation(
   }
 
   if (kind === 'compact_boundary') {
-    const agentEventId = readCompactBoundaryProviderEventId(payload, nested, happierSessionId);
+    const agentEventId = readClaudeCompactBoundaryEventId({
+      payload,
+      nestedPayload: nested,
+      fallbackSessionId: happierSessionId,
+    });
     return mapClaudeTranscriptEventToTerminalLifecycleObservation({
       agentId: CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID,
       kind,
@@ -284,52 +232,28 @@ function readTranscriptObservation(
   return null;
 }
 
-async function observeMappedLifecycleEvent(params: Readonly<{
-  ctx: Pick<PluginContextV1, 'logger'>;
-  observer: ClaudeUnifiedTerminalLifecycleObserver;
-  event: TypedEventV1;
-  happierSessionId: string;
-}>): Promise<void> {
-  if (!isRecord(params.event.payload)) return;
-  const observation = params.event.id === CLAUDE_UNIFIED_PROVIDER_HOOK_EVENT_ID
-    ? readHookObservation(params.event.payload, params.happierSessionId)
-    : readTranscriptObservation(params.event.payload, params.happierSessionId);
-  if (!observation) return;
-
-  try {
-    await params.observer.observeTerminalLifecycle(observation);
-  } catch (error) {
-    params.ctx.logger.warn('[ClaudeUnifiedTerminal] failed to apply lifecycle event', {
-      eventId: params.event.id,
-      error,
-    });
-  }
+export function mapClaudeUnifiedHookLifecyclePayload(
+  payload: unknown,
+  happierSessionId: string,
+): ClaudeTerminalLifecycleObservation | null {
+  return isRecord(payload)
+    ? readHookObservation({
+        ...payload,
+        providerId: CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID,
+        sessionId: happierSessionId,
+      }, happierSessionId)
+    : null;
 }
 
-export function subscribeClaudeUnifiedTerminalLifecycleEvents(
-  params: ClaudeUnifiedTerminalLifecycleEventSubscriptionParams,
-): () => void {
-  const hookSubscription = params.ctx.events.subscribe(
-    CLAUDE_UNIFIED_PROVIDER_HOOK_EVENT_ID,
-    async (event) => observeMappedLifecycleEvent({
-      ctx: params.ctx,
-      observer: params.observer,
-      event,
-      happierSessionId: params.happierSessionId,
-    }),
-  );
-  const transcriptSubscription = params.ctx.events.subscribe(
-    CLAUDE_UNIFIED_PROVIDER_TRANSCRIPT_EVENT_ID,
-    async (event) => observeMappedLifecycleEvent({
-      ctx: params.ctx,
-      observer: params.observer,
-      event,
-      happierSessionId: params.happierSessionId,
-    }),
-  );
-
-  return () => {
-    hookSubscription.unsubscribe();
-    transcriptSubscription.unsubscribe();
-  };
+export function mapClaudeUnifiedTranscriptLifecyclePayload(
+  payload: unknown,
+  happierSessionId: string,
+): ClaudeTerminalLifecycleObservation | null {
+  return isRecord(payload)
+    ? readTranscriptObservation({
+        ...payload,
+        providerId: CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID,
+        sessionId: happierSessionId,
+      }, happierSessionId)
+    : null;
 }

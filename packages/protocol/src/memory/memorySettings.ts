@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import { SecretStringV1Schema } from '../crypto/settingsSecretStringsV1.js';
-import { GENERATED_MEMORY_SUMMARIZER_BACKEND_ID } from '../providers/generated/memory/defaults.js';
+import { GENERATED_MEMORY_SUMMARIZER_BACKEND_ID } from '../agents/generated/memory/defaults.js';
 
 const MemoryDefaultScopeV1Schema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('global') }).passthrough(),

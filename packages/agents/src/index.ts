@@ -8,6 +8,11 @@ export const CANONICAL_AGENT_MODEL_CONFIG = CANONICAL_AGENT_MODEL_CONFIG_FROM_MO
 export const CANONICAL_AGENT_CLI_RUNTIME_SPECS = CANONICAL_AGENT_CLI_RUNTIME_SPECS_FROM_RUNTIME;
 
 export {
+  isNonSteerablePromptPayload,
+  parseSpecialCommand,
+} from '@happier-dev/protocol';
+
+export {
     AGENT_IDS,
     CANONICAL_AGENT_IDS,
     isAgentId,
@@ -96,6 +101,11 @@ export {
   resolveAgentSupportedConnectedServiceIds,
   resolveConnectedServiceDefaultProfileId,
   resolveConnectedServiceProfileLabel,
+  resolveConnectedServiceSessionSelection,
+  type ConnectedServiceSessionBindingIntent,
+  type ConnectedServiceSessionSelection,
+  type ConnectedServiceSessionSelectionAvailability,
+  type ConnectedServiceSessionSelectionResolution,
   type ConnectedServicesAccountGroupOption,
   type ConnectedServicesAccountGroupOptionsByServiceId,
   type ConnectedServicesProfileOption,
@@ -117,26 +127,6 @@ export {
   type AgentStateRequestCoverageOptionsKind,
   type AgentStateRequestCoverageRecord,
 } from './runtime/agentStateRequestCoverage.js';
-export type {
-  HostRuntimeControlAppServerDelegateInputV1,
-  HostRuntimeControlAppServerDelegateV1,
-  HostRuntimeControlAppServerRequestV1,
-  HostRuntimeControlConnectedServiceAuthApplyGenerationInputV1,
-  HostRuntimeControlConnectedServiceAuthApplyGenerationOutputV1,
-  HostRuntimeControlConnectedServiceRefreshInputV1,
-  HostRuntimeControlConnectedServicesDelegateV1,
-  HostRuntimeControlConnectedServiceRuntimeIdentityInputV1,
-  HostRuntimeControlConnectedServiceRuntimeIdentityOutputV1,
-  HostRuntimeControlContextV1,
-  HostRuntimeControlDiagnosticV1,
-  HostRuntimeControlFailureCodeV1,
-  HostRuntimeControlReachabilityDelegateV1,
-  HostRuntimeControlReachabilityInputV1,
-  HostRuntimeControlRequestOptionsV1,
-  HostRuntimeControlResultV1,
-  HostRuntimeControlServiceV1,
-  HostRuntimeControlSessionDelegateV1,
-} from './runtime/session/control.js';
 export type {
   TerminalHostKind,
   TerminalInjectionDuplicateRisk,
@@ -166,6 +156,7 @@ export type {
 export type {
   TerminalHostAdapter,
   TerminalHostAttachMetadata,
+  TerminalAttachmentId,
   TerminalHostHandle,
   TerminalHostPreference,
   TerminalInputState,
@@ -223,6 +214,14 @@ export {
   type BuiltInAcpYesNoAuto,
 } from './acp.js';
 export {
+  ACP_AGENT_CLI_TRANSPORT_TIMEOUTS,
+  ACP_HAPPIER_MCP_BRIDGE_STATIC_APPROVAL_TOOL_NAMES,
+  ACP_WRITE_LIKE_PERMISSION_KINDS,
+  createAcpToolNameInferencePreset,
+  normalizeAcpPermissionIntent,
+  resolveAcpToolPermissionPolicy,
+} from './acpPresets.js';
+export {
   buildBackendTargetKey,
   isBuiltInAgentTarget,
   isConfiguredAcpBackendTarget,
@@ -244,16 +243,6 @@ export {
   type AgentSessionModesKind,
 } from './sessionModes.js';
 export * as legacyCustomAcpCompat from './compat/customAcp.js';
-
-export {
-  type AgentSettingsDescriptor,
-  getAllAgentSettingsDefinitions,
-  getAgentSettingsDefaults,
-  getAgentSettingsDefinition,
-  getAgentSettingsFields,
-  getAgentSettingsShape,
-  type AgentSettingsDefinition,
-} from './agentSettings/index.js';
 
 export {
   getAgentAdvancedModeCapabilities,
@@ -306,6 +295,7 @@ export {
   PERMISSION_MODE_KEY,
   PERMISSION_MODE_UPDATED_AT_KEY,
   readRuntimeDescriptorSessionState,
+  readExternalSessionOperationState,
   readProviderSessionIdSessionState,
   readAcpConfigOptionIntentFromMetadata,
   readAcpSessionModeIntentFromMetadata,
@@ -320,6 +310,9 @@ export {
   rollbackFingerprintPublication,
   sanitizeSessionStateErrorCode,
   SESSION_STATE_FIELD_REGISTRY,
+  reduceExternalAgentObservationEvidenceV1,
+  readExternalAgentObservationSessionState,
+  writeExternalAgentObservationSessionState,
   resolveModelSelectionIntentFromSessionMetadata,
   resolveMetadataStringOverrideV1,
   resolvePermissionIntentFromSessionMetadata,
@@ -349,6 +342,12 @@ export {
   type TimestampedFieldUpdateResult,
   type TimestampedFieldValue,
   type ProviderSessionIdMetadataKey,
+  type ExternalAgentObservationBoundaryV1,
+  type ExternalAgentObservationReductionV1,
+  type ExternalAgentObservationEvidenceV1,
+  type ExternalAgentObservationSnapshotV1,
+  type ExternalAgentObservationStatusV1,
+  type ExternalAgentObservationTargetV1,
 } from './session/state/index.js';
 export {
   UNSUPPORTED_AGENT_SESSION_CAPABILITIES,
@@ -363,10 +362,8 @@ export {
   readNormalizedRuntimeDescriptor,
 } from './runtime/identity/runtimeDescriptor.js';
 export {
-  bridgeTranscriptSourceHandoffGap,
   catchUpTranscriptSourceWindow,
   readInitialTranscriptSourceWindow,
-  replayTranscriptSourceHistory,
   type TranscriptSourceFollowLease,
   type TranscriptSourceFollowUpdate,
   type TranscriptSourcePage,
@@ -421,9 +418,12 @@ export {
 } from './session/controls/metadataKeys.js';
 export {
   resolveVendorResumeIdFromSessionMetadata,
+  resolveObservedVendorResumeIdForResume,
   evaluateVendorResumeEligibility,
+  isLinkedVendorResumeIdentityCurrent,
   type VendorResumeEligibility,
   type VendorResumeEligibilityReasonCode,
+  type VendorResumeLinkedSessionCurrentAgent,
 } from './session/controls/vendorResumePolicy.js';
 export {
   evaluateExistingSessionAutomationEligibility,
@@ -466,8 +466,6 @@ export * as providers from './providerNamespace/index.js';
 
 export * from './cli/providerCliInstallGuidance.js';
 
-export * from './agentSettings/index.js';
-
 export type {
   BackendCatalogDefinition,
   AgentCatalogDefinition,
@@ -503,44 +501,17 @@ export type {
   CheckpointSurfaceV1,
   CheckpointTimingV1,
   CreateCheckpointRequestV1,
-  ExternalSessionActivityRequestV1,
-  ExternalSessionActivityResultV1,
-  ExternalSessionAvailabilityOperationV1,
-  ExternalSessionAvailabilityRequestV1,
   ExternalSessionCandidatePageV1,
   ExternalSessionFailureCodeV1,
-  ExternalSessionFileFollowHandleV1,
-  ExternalSessionFileFollowInputV1,
-  ExternalSessionFileFollowLineV1,
-  ExternalSessionFileFollowPolicyInputV1,
-  ExternalSessionFileFollowResetReasonV1,
-  ExternalSessionFileFollowRuntimeServiceV1,
-  ExternalSessionFileFollowStartAtV1,
-  ExternalSessionFileFollowStrategyV1,
-  ExternalSessionFollowLeaseRequestV1,
-  ExternalSessionFollowLeaseV1,
-  ExternalSessionFollowTranscriptPathResolutionV1,
-  ExternalSessionCandidateHostListRequestV1,
-  ExternalSessionCandidateHostRuntimeServiceV1,
   ExternalSessionListCandidatesRequestV1,
-  ExternalSessionProviderStoreKeyV1,
   ExternalSessionReadAfterRequestV1,
   ExternalSessionResolvedIdentityV1,
-  ExternalSessionResolveFollowTranscriptPathRequestV1,
   ExternalSessionResolveLinkedIdentityRequestV1,
   ExternalSessionResolveLinkIdentityRequestV1,
   ExternalSessionResolveSourceRequestV1,
   ExternalSessionResolveSourceResultV1,
-  ExternalSessionRuntimeContextV1,
-  ExternalSessionSurfaceV1,
-  ExternalSessionTakeoverLaunchRequestV1,
-  ExternalSessionTakeoverLaunchResultV1,
   ExternalSessionTranscriptPageRequestV1,
   ExternalSessionTranscriptPageV1,
-  ExternalSessionTranscriptStoreFollowRequestV1,
-  ExternalSessionTranscriptStorePageRequestV1,
-  ExternalSessionTranscriptStoreReadAfterRequestV1,
-  ExternalSessionTranscriptStoreRuntimeServiceV1,
   AcpForkSessionRequestV1,
   AcpForkSessionResultV1,
   AcpLoadSessionRequestV1,
@@ -570,41 +541,6 @@ export type {
   RestoreCheckpointRequestV1,
   RestoreCheckpointResultV1,
   SessionStateUpdateV1,
-  TerminalRuntimeDirectTranscriptBindingV1,
-  TerminalRuntimeDirectTranscriptMirrorHandleV1,
-  TerminalRuntimeAvailabilityOperationV1,
-  TerminalRuntimeAvailabilityRequestV1,
-  TerminalRuntimeControlReturnReasonV1,
-  TerminalRuntimeControlProjectionV1,
-  TerminalRuntimeHostOrchestrationV1,
-  TerminalRuntimeIdentityRequestV1,
-  TerminalRuntimeIdentityResultV1,
-  TerminalRuntimeInputTriggerHandlerV1,
-  TerminalRuntimeInputTriggerServiceV1,
-  TerminalRuntimeInputTriggerV1,
-  TerminalRuntimeLaunchRequestV1,
-  TerminalRuntimeAgentCliExecutableResolutionRequestV1,
-  TerminalRuntimeAgentCliExecutableResolutionV1,
-  TerminalRuntimeProcessExecutableGrantKindV1,
-  TerminalRuntimeProcessExecutableHostGrantV1,
-  TerminalRuntimeProcessExecutableV1,
-  TerminalRuntimeProcessHandleV1,
-  TerminalRuntimeProcessLaunchRequestV1,
-  TerminalRuntimeProcessServiceV1,
-  TerminalRuntimeProcessStdioV1,
-  TerminalRuntimeProcessTerminationV1,
-  TerminalRuntimeProjectionHostServiceV1,
-  TerminalRuntimeProviderSessionProjectionV1,
-  TerminalRuntimeRunResultV1,
-  TerminalRuntimeSurfaceV1,
-  TerminalRuntimeSubagentProjectionV1,
-  TerminalRuntimeSwitchHandlerServiceV1,
-  TerminalRuntimeSwitchHandlerV1,
-  TerminalRuntimeSwitchRequestV1,
-  TerminalRuntimeSwitchTargetV1,
-  TerminalRuntimeTranscriptBindingHostServiceV1,
-  TerminalRuntimeTranscriptBindingRequestV1,
-  TerminalRuntimeTranscriptBindingV1,
 } from './runtime/surfaces/index.js';
 export type {
   ExternalSessionAttachParamsV1,
@@ -621,7 +557,6 @@ export type {
   ExternalSessionTranscriptReadAfterParamsV1,
   ExternalSessionTranscriptReadAfterResultV1,
   ExternalSessionTranscriptUpdateV1,
-  PluginExternalSessionsServiceV1,
   PluginSubagentsServiceV1,
   SessionAgentStateWriteRequestV1,
   SessionAuthServiceV1,
@@ -630,6 +565,9 @@ export type {
   SessionMcpElicitResultV1,
   SessionMcpServiceV1,
   SessionMetadataWriteRequestV1,
+  SessionMediaPublishGeneratedRequestV1,
+  SessionMediaServiceV1,
+  SessionMediaSourceRootV1,
   SessionPermissionDecisionRequestV1,
   SessionPermissionDecisionResultV1,
   SessionPermissionDecisionV1,
@@ -640,7 +578,6 @@ export type {
   SessionPermissionPersistAllowRuleV1,
   SessionPermissionUpdateV1,
   SessionPermissionsServiceV1,
-  SessionProviderAcceptedUserMessageDeliveryQueryV1,
   SessionRuntimeAuthRefreshRequestV1,
   SessionRuntimeAuthRefreshResultV1,
   SessionRuntimeAuthServicesV1,
@@ -674,6 +611,7 @@ export {
   type RuntimeConfigUpdateOutcomeV1,
 } from './runtime/session/runtimeConfigUpdateOutcome.js';
 export {
+  deriveExternalSessionActivity,
   parseCheckpointAvailabilityRequestV1,
   parseCreateCheckpointRequestV1,
   parseResolveCheckpointRestoreTargetRequestV1,
@@ -703,5 +641,19 @@ export {
   getProviderConnectedServicesAdapter,
   getProviderRuntimePreferencesAdapter,
 } from './runtime/adjunctAdapters/index.js';
+export {
+  CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICES,
+  CLAUDE_UNIFIED_TERMINAL_WORKSPACE_TRUST_POLICIES,
+  DEFAULT_CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICE,
+  DEFAULT_CLAUDE_UNIFIED_TERMINAL_WORKSPACE_TRUST_POLICY,
+  normalizeClaudeUnifiedTerminalResumeChoice,
+  normalizeClaudeUnifiedTerminalWorkspaceTrustPolicy,
+  type ClaudeUnifiedTerminalResumeChoice,
+  type ClaudeUnifiedTerminalWorkspaceTrustPolicy,
+} from './runtime/preferences/claude.js';
+export {
+  CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE,
+  isClaudeUnifiedTerminalDialogChoiceAgentStateRequest,
+} from './providers/claude/permissionRequestSource.js';
 
 export * from './voice/index.js';

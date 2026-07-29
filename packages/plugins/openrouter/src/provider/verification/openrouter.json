@@ -1,0 +1,32 @@
+{
+  "v": 1,
+  "contributionKey": "happier.provider.openrouter/openrouter",
+  "reviewedAt": "2026-07-12",
+  "sources": [
+    { "id": "api-overview", "kind": "official-doc", "url": "https://openrouter.ai/docs/api/reference/overview", "accessedAt": "2026-07-12", "revision": "current-2026-07-12" },
+    { "id": "responses", "kind": "official-doc", "url": "https://openrouter.ai/docs/api/reference/responses/overview", "accessedAt": "2026-07-12", "revision": "beta-current-2026-07-12" },
+    { "id": "models", "kind": "official-doc", "url": "https://openrouter.ai/docs/guides/overview/models", "accessedAt": "2026-07-12", "revision": "current-2026-07-12" }
+  ],
+  "facts": [
+    { "path": "catalog.probes.openrouter-openai-responses.openai-models", "sourceIds": ["models"], "status": "verified" },
+    { "path": "catalog.source", "sourceIds": ["models"], "status": "verified" },
+    { "path": "credential.keyUrl", "sourceIds": ["api-overview"], "status": "verified" },
+    { "path": "credential.kind", "sourceIds": ["api-overview"], "status": "verified" },
+    { "path": "credential.required", "sourceIds": ["api-overview"], "status": "verified" },
+    { "path": "credential.transports.openrouter-http-bearer", "sourceIds": ["api-overview"], "status": "verified" },
+    { "path": "endpointTemplates.openrouter-openai-chat.baseUrl", "sourceIds": ["api-overview"], "status": "verified" },
+    { "path": "endpointTemplates.openrouter-openai-chat.capabilities.reasoningControls", "sourceIds": ["api-overview"], "status": "verified" },
+    { "path": "endpointTemplates.openrouter-openai-chat.capabilities.statefulResponses", "sourceIds": ["api-overview"], "status": "verified" },
+    { "path": "endpointTemplates.openrouter-openai-chat.capabilities.streaming", "sourceIds": ["api-overview"], "status": "verified" },
+    { "path": "endpointTemplates.openrouter-openai-chat.capabilities.toolRoundTrips", "sourceIds": ["api-overview"], "status": "verified" },
+    { "path": "endpointTemplates.openrouter-openai-chat.protocol", "sourceIds": ["api-overview"], "status": "verified" },
+    { "path": "endpointTemplates.openrouter-openai-responses.baseUrl", "sourceIds": ["responses"], "status": "verified" },
+    { "path": "endpointTemplates.openrouter-openai-responses.capabilities.reasoningControls", "sourceIds": ["responses"], "status": "verified" },
+    { "path": "endpointTemplates.openrouter-openai-responses.capabilities.statefulResponses", "sourceIds": ["responses"], "status": "verified" },
+    { "path": "endpointTemplates.openrouter-openai-responses.capabilities.streaming", "sourceIds": ["responses"], "status": "verified" },
+    { "path": "endpointTemplates.openrouter-openai-responses.capabilities.toolRoundTrips", "sourceIds": ["responses"], "status": "verified" },
+    { "path": "endpointTemplates.openrouter-openai-responses.protocol", "sourceIds": ["responses"], "status": "verified" },
+    { "path": "kind", "sourceIds": ["api-overview"], "status": "verified" },
+    { "path": "websiteUrl", "sourceIds": ["api-overview"], "status": "verified" }
+  ]
+}

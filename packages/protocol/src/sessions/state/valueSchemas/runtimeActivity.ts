@@ -1,1 +1,1 @@
-export { SessionRuntimeActivityProjectionV1Schema as SessionStateRuntimeActivityValueSchema } from '../../runtime/activity/sessionRuntimeActivityV1.js';
+export { SessionRuntimeActivitySnapshotSchema as SessionStateRuntimeActivityValueSchema } from '../../runtime/activity/sessionRuntimeActivity.js';

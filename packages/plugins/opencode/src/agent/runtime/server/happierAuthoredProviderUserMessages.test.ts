@@ -1,12 +1,55 @@
 import { describe, expect, it } from 'vitest';
 
-import { createPluginContextV1Fixture } from '@happier-dev/plugin-sdk/experimental/testing/adapterHarness';
-
 import { createOpenCodeHappierAuthoredProviderUserMessageIds } from './happierAuthoredProviderUserMessages.js';
+import type { OpenCodeRuntimeContext } from './runtimeContext.js';
+
+function createContextFixture(): OpenCodeRuntimeContext {
+  const storage = new Map<string, unknown>();
+  const abortController = new AbortController();
+  return {
+    logger: {
+      debug() {},
+      info() {},
+      warn() {},
+      error() {},
+    },
+    abort: {
+      signal: abortController.signal,
+      compose: (signals) => AbortSignal.any(signals),
+    },
+    config: { values: {} },
+    env: { list: () => ({}) },
+    managedServer: {
+      supervise: async () => {
+        throw new Error('managed server is outside this storage test');
+      },
+    },
+    ui: {
+      askQuestions: async () => ({ status: 'cancelled' }),
+    },
+    sessions: {
+      current: {
+        permissions: {
+          requestDecision: async () => ({ status: 'cancelled' }),
+        },
+      },
+      writeStateField: async () => undefined,
+    },
+    storage: {
+      session: {
+        get: async (key) => storage.get(key),
+        set: async (key, value) => {
+          storage.set(key, value);
+        },
+      },
+    },
+    experimental: { telemetry: { emit() {} } },
+  };
+}
 
 describe('createOpenCodeHappierAuthoredProviderUserMessageIds', () => {
   it('resolves delayed provider user rows from pending Happier-authored prompt anchors', async () => {
-    const { ctx } = createPluginContextV1Fixture();
+    const ctx = createContextFixture();
     const tracker = createOpenCodeHappierAuthoredProviderUserMessageIds({
       ctx,
       readProviderSessionId: () => 'provider-session-1',
@@ -34,7 +77,7 @@ describe('createOpenCodeHappierAuthoredProviderUserMessageIds', () => {
   });
 
   it('resolves delayed prompt-stack rows that wrap the pending Happier-authored prompt', async () => {
-    const { ctx } = createPluginContextV1Fixture();
+    const ctx = createContextFixture();
     const tracker = createOpenCodeHappierAuthoredProviderUserMessageIds({
       ctx,
       readProviderSessionId: () => 'provider-session-1',
@@ -59,7 +102,7 @@ describe('createOpenCodeHappierAuthoredProviderUserMessageIds', () => {
   });
 
   it('does not classify arbitrary external text that quotes a recent prompt as Happier-authored', async () => {
-    const { ctx } = createPluginContextV1Fixture();
+    const ctx = createContextFixture();
     const tracker = createOpenCodeHappierAuthoredProviderUserMessageIds({
       ctx,
       readProviderSessionId: () => 'provider-session-1',
@@ -79,7 +122,7 @@ describe('createOpenCodeHappierAuthoredProviderUserMessageIds', () => {
   });
 
   it('keeps pending prompt anchors scoped and timestamp fail-closed', async () => {
-    const { ctx } = createPluginContextV1Fixture();
+    const ctx = createContextFixture();
     let providerSessionId = 'provider-session-1';
     const tracker = createOpenCodeHappierAuthoredProviderUserMessageIds({
       ctx,

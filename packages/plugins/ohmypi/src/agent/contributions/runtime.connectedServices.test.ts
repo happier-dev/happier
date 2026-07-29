@@ -2,23 +2,27 @@ import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { buildConnectedServiceCredentialRecord } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
 
 import { OH_MY_PI_AGENT_RUNTIME_CONTRIBUTION } from './runtime.js';
-
-type RuntimeControlReachabilityCall = Readonly<Record<string, unknown>>;
-
-function readRuntimeConnectedServices() {
-  return OH_MY_PI_AGENT_RUNTIME_CONTRIBUTION.runtimeControl?.connectedServices;
-}
 
 function readConnectedServices() {
   return OH_MY_PI_AGENT_RUNTIME_CONTRIBUTION.connectedServices;
 }
 
 describe('OH_MY_PI_AGENT_RUNTIME_CONTRIBUTION connected-service runtime-control hooks', () => {
+  it('owns switch continuity on the canonical connectedServices contribution only', () => {
+    expect(OH_MY_PI_AGENT_RUNTIME_CONTRIBUTION).not.toHaveProperty('runtimeControl');
+    expect(readConnectedServices()).toMatchObject({
+      shouldRestartForServiceSwitch: expect.any(Function),
+      restartRematerializeRequiredReason: 'ohmypi_restart_rematerialize_required',
+      sameAuthGroupRequiresResumeReachability: true,
+      verifyResumeReachable: expect.any(Function),
+    });
+  });
+
   it('exports a provider-owned model preflight contribution for source-real dynamic probing', () => {
     expect(OH_MY_PI_AGENT_RUNTIME_CONTRIBUTION.preflightSessionControls).toEqual({
       failureCacheStrategy: 'cooldown',
@@ -174,9 +178,61 @@ describe('OH_MY_PI_AGENT_RUNTIME_CONTRIBUTION connected-service runtime-control 
       target: { agentId: 'ohMyPi' },
       selection: null,
     })).resolves.toEqual({
-      status: 'verified',
-      reason: 'provider_restart_rematerialization_authoritative',
+      status: 'unavailable',
+      retryable: true,
+      reason: 'ohmypi_provider_outcome_pending',
     });
+  });
+
+  it('proves one provider outcome only for the complete atomic five-service epoch', async () => {
+    const adapter = readConnectedServices()?.runtimeAuthAdapter as unknown as Readonly<{
+      verifyProviderOutcome?: (input: unknown) => Promise<unknown>;
+    }>;
+    const exactSelections = [
+      ['openai-codex', 'codex-work', 'csr_abcdefghijklmnopqrstuv'],
+      ['openai', 'openai-work', 'csr_bcdefghijklmnopqrstuvw'],
+      ['claude-subscription', 'claude-work', 'csr_cdefghijklmnopqrstuvwx'],
+      ['anthropic', 'anthropic-work', 'csr_defghijklmnopqrstuvwxy'],
+      ['gemini', 'gemini-work', 'csr_efghijklmnopqrstuvwxyz'],
+    ].map(([serviceId, profileId, credentialRevision]) => ({
+      kind: 'profile', serviceId, profileId, credentialRevision,
+    }));
+
+    const result = await adapter.verifyProviderOutcome?.({
+      target: { agentId: 'ohMyPi' },
+      selections: exactSelections,
+      outcome: { kind: 'provider_activity', event: 'assistant_message_end' },
+    });
+    expect(result).toMatchObject({
+      status: 'verified',
+      source: 'ohmypi_provider_activity',
+      targets: expect.arrayContaining(exactSelections.map((selection) => ({
+        serviceId: selection.serviceId,
+        profileId: selection.profileId,
+        groupId: null,
+        groupGeneration: null,
+        credentialRevision: selection.credentialRevision,
+      }))),
+    });
+    expect((result as { targets?: unknown[] } | undefined)?.targets).toHaveLength(5);
+
+    await expect(adapter.verifyProviderOutcome?.({
+      target: { agentId: 'ohMyPi' },
+      selections: exactSelections.slice(0, 4),
+      outcome: { kind: 'provider_activity', event: 'assistant_message_end' },
+    })).resolves.toMatchObject({ status: 'unavailable', reason: 'ohmypi_complete_selection_required' });
+    await expect(adapter.verifyProviderOutcome?.({
+      target: { agentId: 'ohMyPi' },
+      selections: exactSelections.map((selection, index) => index === 4
+        ? { ...selection, credentialRevision: undefined }
+        : selection),
+      outcome: { kind: 'provider_activity', event: 'assistant_message_end' },
+    })).resolves.toMatchObject({ status: 'unavailable', reason: 'ohmypi_exact_epoch_required' });
+    await expect(adapter.verifyProviderOutcome?.({
+      target: { agentId: 'ohMyPi' },
+      selections: exactSelections,
+      outcome: { kind: 'provider_activity', event: 'task_started' },
+    })).resolves.toMatchObject({ status: 'unavailable' });
   });
 
   it('rejects Gemini OAuth connected-service records instead of materializing them as API keys', async () => {
@@ -229,8 +285,8 @@ describe('OH_MY_PI_AGENT_RUNTIME_CONTRIBUTION connected-service runtime-control 
     })).rejects.toThrow(/Claude subscription OAuth credentials are not supported/i);
   });
 
-  it('exports provider-owned resume reachability through the public runtime-control contribution', async () => {
-    const connectedServices = readRuntimeConnectedServices();
+  it('exports provider-owned resume reachability through connectedServices', async () => {
+    const connectedServices = readConnectedServices();
     const root = await mkdtemp(join(tmpdir(), 'happier-ohmypi-contribution-reachable-'));
 
     try {
@@ -255,86 +311,20 @@ describe('OH_MY_PI_AGENT_RUNTIME_CONTRIBUTION connected-service runtime-control 
     }
   });
 
-  it('exports restart/rematerialize continuity and same-home reachability checks', async () => {
-    const connectedServices = readRuntimeConnectedServices();
-    const previousBinding = {
-      source: 'connected' as const,
-      selection: 'profile' as const,
-      serviceId: 'anthropic',
-      profileId: 'primary',
-      groupId: null,
-    };
-    const nextBinding = {
-      ...previousBinding,
-      profileId: 'backup',
-    };
-
-    await expect(connectedServices?.resolveSwitchContinuity?.({
-      runtimeControl: { reachability: { verifyMaterializedState: vi.fn() } } as never,
-      params: {
-        sessionId: 'sess_omp_1',
-        agentId: 'ohMyPi',
-        serviceId: 'anthropic',
-        previousBinding,
-        nextBinding,
-        fromBindings: { v: 1, bindingsByServiceId: {} },
-        toBindings: { v: 1, bindingsByServiceId: {} },
-      },
-    })).resolves.toEqual({
-      mode: 'restart_same_home',
-      reason: 'ohmypi_restart_rematerialize_required',
-    });
-
-    const verifyMaterializedState = vi.fn(async (_input: RuntimeControlReachabilityCall) => ({
-      ok: true,
-      value: { ok: true },
-    }));
-    await expect(connectedServices?.resolveSwitchContinuity?.({
-      runtimeControl: { reachability: { verifyMaterializedState } } as never,
-      params: {
-        sessionId: 'sess_omp_2',
-        agentId: 'ohMyPi',
-        serviceId: 'anthropic',
-        previousBinding,
-        nextBinding: previousBinding,
-        fromBindings: { v: 1, bindingsByServiceId: {} },
-        toBindings: { v: 1, bindingsByServiceId: {} },
-        connectedServiceMaterializationIdentityV1: {
-          v: 1,
-          id: 'mat_omp_1',
-          createdAt: 1,
-        },
-        vendorResumeId: 'omp-session-1',
-        targetMaterializedRoot: '/tmp/materialized',
-        targetMaterializedEnv: { PI_CODING_AGENT_DIR: '/tmp/materialized/omp-agent-dir' },
-        cwd: '/tmp/project',
-        candidatePersistedSessionFile: '/tmp/omp-session.jsonl',
-      },
-    })).resolves.toEqual({ mode: 'restart_same_home' });
-    expect(verifyMaterializedState).toHaveBeenCalledWith({
-      agentId: 'ohMyPi',
-      serviceId: 'anthropic',
-      targetMaterializedRoot: '/tmp/materialized',
-      targetMaterializedEnv: { PI_CODING_AGENT_DIR: '/tmp/materialized/omp-agent-dir' },
-      requestedStateMode: 'isolated',
-      effectiveStateMode: 'isolated',
-      materializationIdentity: {
-        v: 1,
-        id: 'mat_omp_1',
-        createdAt: 1,
-      },
-      vendorResumeId: 'omp-session-1',
-      cwd: '/tmp/project',
-      candidatePersistedSessionFile: '/tmp/omp-session.jsonl',
-    });
+  it('declares restart/rematerialize policy for every supported service', () => {
+    const connectedServices = readConnectedServices();
+    for (const serviceId of connectedServices.serviceIds) {
+      expect(connectedServices.shouldRestartForServiceSwitch(serviceId), serviceId).toBe(true);
+    }
+    expect(connectedServices.shouldRestartForServiceSwitch('unsupported')).toBe(false);
+    expect(connectedServices.restartRematerializeRequiredReason)
+      .toBe('ohmypi_restart_rematerialize_required');
+    expect(connectedServices.sameAuthGroupRequiresResumeReachability).toBe(true);
   });
 });
 
 describe('OH_MY_PI_AGENT_RUNTIME_CONTRIBUTION external-session host adapters', () => {
-  it('contributes a transcript store adapter from the plugin surface', async () => {
-    const createTranscriptStoreAdapter =
-      OH_MY_PI_AGENT_RUNTIME_CONTRIBUTION.externalSessions?.createTranscriptStoreAdapter;
-
-    expect(createTranscriptStoreAdapter).toBeTypeOf('function');
+  it('does not retain the migrated internal external-session carrier', () => {
+    expect(OH_MY_PI_AGENT_RUNTIME_CONTRIBUTION).not.toHaveProperty('externalSessions');
   });
 });

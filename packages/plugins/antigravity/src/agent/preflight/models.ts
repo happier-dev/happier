@@ -1,4 +1,4 @@
-import type { ExecRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
+import type { PluginExecService } from '@happier-dev/plugin-sdk/runtime';
 import { buildAntigravityCliModelsProbeEnv } from '../lifecycle/runtimeEnv.js';
 import { ANTIGRAVITY_CLI_MODELS_COMMAND_ARGS } from '../cliPrint/modelsProbePolicy.js';
 
@@ -35,25 +35,29 @@ export function buildAntigravityPreflightModelsFromModelsOutput(
 }
 
 export async function probeAntigravityPreflightModelsRaw(params: Readonly<{
-  exec: ExecRuntimeServiceV1;
+  exec: PluginExecService;
   cwd: string;
   timeoutMs: number;
   env?: NodeJS.ProcessEnv;
 }>): Promise<readonly AntigravityPreflightModel[] | null> {
-  const result = await params.exec.run({
-    kind: 'agent-cli',
-    agentId: 'antigravity',
-    args: ANTIGRAVITY_CLI_MODELS_COMMAND_ARGS,
+  const resolved = await params.exec.systemTools.resolve({
+    toolId: 'antigravity-cli',
+    purpose: 'Probe Antigravity models',
     cwd: params.cwd,
-    env: buildAntigravityCliModelsProbeEnv(params.env),
-  }, {
+  });
+  const result = await params.exec.run({
+    executable: resolved.executable,
+    args: ANTIGRAVITY_CLI_MODELS_COMMAND_ARGS,
+    cwd: { root: 'workspace', relativePath: '' },
+    env: { ...buildAntigravityCliModelsProbeEnv(params.env), CI: '1' },
     maxStderrBytes: PREFLIGHT_OUTPUT_MAX_BYTES,
     maxStdoutBytes: PREFLIGHT_OUTPUT_MAX_BYTES,
     timeoutMs: Math.max(MIN_PREFLIGHT_MODELS_TIMEOUT_MS, params.timeoutMs),
   });
-  if (result.exitCode !== 0) return null;
-  return buildAntigravityPreflightModelsFromModelsOutput(result.stdout)
-    ?? buildAntigravityPreflightModelsFromModelsOutput(result.stderr);
+  if (result.termination.observed.kind !== 'exit' || result.termination.observed.exitCode !== 0) return null;
+  const decoder = new TextDecoder();
+  return buildAntigravityPreflightModelsFromModelsOutput(decoder.decode(result.stdout))
+    ?? buildAntigravityPreflightModelsFromModelsOutput(decoder.decode(result.stderr));
 }
 
 export const ANTIGRAVITY_PREFLIGHT_SESSION_CONTROLS = Object.freeze({

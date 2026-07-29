@@ -13,11 +13,13 @@ import {
 import {
   ConnectedServicesDefaultAuthByAgentIdV1Schema,
   ConnectedServicesProviderStateSharingSettingsV1Schema,
+  DEFAULT_CONNECTED_ACCOUNT_PURPOSE_BINDINGS_V1,
   DEFAULT_CONNECTED_SERVICES_DEFAULT_AUTH_BY_AGENT_ID_V1,
   DEFAULT_CONNECTED_SERVICES_PROVIDER_STATE_SHARING_SETTINGS_V1,
   type ConnectedServicesDefaultAuthByAgentIdV1,
   type ConnectedServicesProviderStateSharingSettingsV1,
 } from './connectedServicesSettings.js';
+import { QualifiedConnectedAccountPurposeBindingsV1Schema } from '../../connect/connectedAccountPurposeBindings.js';
 import { WorkspaceRefV1Schema } from '../../workspaces/workspaceRefV1.js';
 import {
   AttentionDeliveryPolicyV1Schema,
@@ -436,6 +438,9 @@ export const AccountSettingsSchema = z.preprocess(
       connectedServicesDefaultAuthByAgentIdV1: ConnectedServicesDefaultAuthByAgentIdV1Schema.default(
         DEFAULT_CONNECTED_SERVICES_DEFAULT_AUTH_BY_AGENT_ID_V1,
       ),
+      connectedAccountPurposeBindingsV1: QualifiedConnectedAccountPurposeBindingsV1Schema.default(
+        DEFAULT_CONNECTED_ACCOUNT_PURPOSE_BINDINGS_V1,
+      ),
       connectedServicesProviderStateSharingSettingsV1:
         ConnectedServicesProviderStateSharingSettingsV1Schema.default(
           DEFAULT_CONNECTED_SERVICES_PROVIDER_STATE_SHARING_SETTINGS_V1,
@@ -461,6 +466,18 @@ export function getNotificationsSettingsV1FromAccountSettings(settingsLike: unkn
     ? (settingsLike as Record<string, unknown>)
     : null;
   return NotificationsSettingsV1Schema.parse(rec?.notificationsSettingsV1);
+}
+
+/**
+ * Canonical answer to "may this account receive Expo push notifications at all".
+ *
+ * Reads the attention delivery policy, which is this repository's canonical delivery owner and
+ * already derives `channels.expo_push.enabled` from the legacy `notificationsSettingsV1.pushEnabled`
+ * flag. Client-side token registration and OS permission prompting must consume this so the setting
+ * a user can see cannot diverge from the behavior it describes.
+ */
+export function isExpoPushNotificationChannelEnabled(settingsLike: unknown): boolean {
+  return accountSettingsParse(settingsLike).attentionDeliveryPolicyV1.channels.expo_push.enabled !== false;
 }
 
 export function resolveNotificationChannelsV1FromAccountSettings(settingsLike: unknown): NotificationChannelsV1 {

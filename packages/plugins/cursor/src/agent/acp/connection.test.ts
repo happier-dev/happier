@@ -1,80 +1,101 @@
+import type {
+  AgentAcpRuntimeOptions,
+  AgentSessionOpenRequest,
+  AgentSessionRuntime,
+  AgentSessionRuntimeContext,
+} from '@happier-dev/plugin-sdk/agent-runtime';
 import { describe, expect, it, vi } from 'vitest';
 
-import type {
-  AcpRuntimeHandleV1,
-  AcpSessionStartParamsV1,
-  AcpSessionRuntimeV1,
-  PluginContextV1,
-} from '@happier-dev/plugin-sdk';
+import { openCursorAcpSession } from './connection.js';
 
-import { createCursorAcpRuntimeConnection } from './connection.js';
-
-function createSessionRuntimeFixture() {
-  const startOrLoadSession = vi.fn(async (input?: AcpSessionStartParamsV1) => (
-    input?.providerSessionId ?? 'cursor-provider-created'
-  ));
-  const sessionRuntime: AcpSessionRuntimeV1 = {
-    startOrLoadSession,
-    beginTurnLifecycle: vi.fn(),
-    sendTurnPrompt: vi.fn(async () => undefined),
-    waitForTurnCompletion: vi.fn(async () => undefined),
-    subscribeRuntimeEvents: vi.fn(() => () => undefined),
-    cancelTurn: vi.fn(async () => undefined),
-    updateSessionRuntimeConfig: vi.fn(async () => undefined),
+function createFixture(request: AgentSessionOpenRequest) {
+  const composedSession: AgentSessionRuntime = {
+    send: vi.fn(async () => ({ status: 'admitted' as const })),
+    watch: () => ({ dispose: () => undefined }),
+    dispose: vi.fn(),
   };
-  const handle: AcpRuntimeHandleV1 = {
-    sessionRuntime,
-    dispose: vi.fn(async () => undefined),
-  };
-  const ctx = {
-    env: {
-      get: vi.fn(() => undefined),
-      list: vi.fn(() => ({})),
-    },
-    config: {
-      values: {},
-    },
-    logger: {
-      info: vi.fn(),
-      warn: vi.fn(),
-      error: vi.fn(),
-      debug: vi.fn(),
-    },
-    agentRuntime: {
-      acp: {
-        createRuntime: vi.fn(async () => handle),
+  const open = vi.fn(async (
+    _request: AgentSessionOpenRequest,
+    _options: AgentAcpRuntimeOptions,
+  ) => composedSession);
+  const context = {
+    protocols: { acp: { open } },
+    session: { id: request.sessionId },
+    ui: { askQuestions: vi.fn(), confirm: vi.fn() },
+    workState: { publisher: vi.fn(() => ({ publish: vi.fn() })) },
+    services: {
+      logger: { debug: vi.fn() },
+      settings: {
+        get: vi.fn(async () => null),
+      },
+      sessions: {
+        current: { media: { registerSourceRoot: vi.fn() } },
+        subagents: { observe: vi.fn() },
       },
     },
-    sessions: {
-      current: {
-        permissions: {
-          requestDecision: vi.fn(async () => ({ decision: 'approved' })),
-          getMode: vi.fn(() => 'default'),
-        },
-        writeMetadata: vi.fn(async () => undefined),
-      },
-    },
-  } as unknown as PluginContextV1;
-  return { ctx, startOrLoadSession };
+  } as unknown as AgentSessionRuntimeContext;
+  return { composedSession, context, open };
 }
 
-describe('createCursorAcpRuntimeConnection', () => {
-  it('does not treat generic Happier session ids as Cursor provider session ids', async () => {
-    const { ctx, startOrLoadSession } = createSessionRuntimeFixture();
-    const runtime = await createCursorAcpRuntimeConnection({
-      ctx,
-      sessionParams: {
-        backendId: 'cursor',
-        sessionId: 'happier-session-from-launch',
-        cwd: '/repo',
-        initialRuntimeState: {
-          sessionId: 'happier-session-from-state',
-        },
+describe('openCursorAcpSession', () => {
+  it('uses canonical Cursor settings and preserves provider resume identity', async () => {
+    const request: AgentSessionOpenRequest = {
+      kind: 'resume',
+      sessionId: 'host-session',
+      providerSessionId: 'cursor-session',
+      cwd: '/tmp/cursor',
+      configuration: {
+        mode: { value: null, updatedAtMs: 1 },
+        model: { value: null, updatedAtMs: 1 },
+        permissionIntent: { value: 'yolo', updatedAtMs: 1 },
+        options: {},
       },
+    };
+    const { context, open } = createFixture(request);
+    vi.mocked(context.services.settings.get).mockImplementation(async (id: string) => {
+      if (id === 'cursorBinaryPath') return ' /opt/cursor-agent ';
+      if (id === 'cursorAgentFallbackEnabled') return false;
+      if (id === 'cursorApiEndpoint') return ' https://cursor.example.test ';
+      return null;
     });
 
-    await runtime.send({ v: 1, text: 'hello cursor' });
+    await openCursorAcpSession(request, context);
 
-    expect(startOrLoadSession).toHaveBeenCalledWith({ mcpServers: [] });
+    expect(open).toHaveBeenCalledWith(request, expect.objectContaining({
+      transport: {
+        kind: 'stdio',
+        executable: { kind: 'systemTool', id: 'cursor-agent-no-fallback' },
+        preferredPath: '/opt/cursor-agent',
+        args: ['-e', 'https://cursor.example.test', '--force', 'acp'],
+      },
+    }));
+  });
+
+  it('keeps Cursor quirks on the public ACP definition hooks', async () => {
+    const request: AgentSessionOpenRequest = {
+      kind: 'create',
+      sessionId: 'host-session',
+      cwd: '/tmp/cursor',
+    };
+    const { composedSession, context, open } = createFixture(request);
+
+    const session = await openCursorAcpSession(request, context);
+    const options = open.mock.calls[0]?.[1];
+
+    expect(session).not.toBe(composedSession);
+    expect(options?.transport).toMatchObject({ args: ['acp'] });
+    expect(options?.definition).toMatchObject({
+      auth: { methodId: 'cursor_login' },
+      parameterizedModelPicker: true,
+      modelConfigOptionId: 'model',
+      mcp: { policy: 'pass_through' },
+    });
+    expect(options?.definition?.toolNameResolver?.({
+      toolName: 'other',
+      input: { _toolName: 'createPlan' },
+    })).toBe('ExitPlanMode');
+    expect(options?.definition?.sanitizeToolUpdateContent?.({
+      content: [{ type: 'diff', oldText: '--- a/file.ts\nold', newText: '+++ b/file.ts\nnew' }],
+    })).toEqual({ content: [{ type: 'diff', oldText: 'old', newText: 'new' }] });
   });
 });

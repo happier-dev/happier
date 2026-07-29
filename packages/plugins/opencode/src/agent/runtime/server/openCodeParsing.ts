@@ -8,6 +8,11 @@ export function normalizeString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+/** Validate an opaque provider identifier for presence without changing its bytes. */
+export function readNonBlankOpaqueIdentifier(value: unknown): string | null {
+  return typeof value === 'string' && value.trim().length > 0 ? value : null;
+}
+
 export function normalizeNonNegativeInteger(value: unknown): number | null {
   if (typeof value !== 'number' || !Number.isFinite(value)) return null;
   const normalized = Math.trunc(value);

@@ -11,6 +11,7 @@ import type { BackendTargetRefV1 } from '../../backends/targets/backendTargetRef
 import type { SessionRollbackTarget } from '../../sessions/rollback.js';
 import type { ReviewStartInput } from '../../reviews/reviewStart.js';
 import type { ReviewCommentActionIdV1 } from '../../reviews/comments/actions.js';
+import type { ReviewCommentPrincipalHeaderV1 } from '../../reviews/comments/actions.js';
 import type {
   SubagentLifecycleDetailV1,
   SubagentRefInputV1,
@@ -20,6 +21,7 @@ import type {
   SessionHandoffAbortRequest,
   SessionHandoffCommitRequest,
   SessionHandoffPrepareTargetRequest,
+  SessionHandoffPrepareTargetResumeRequest,
   SessionHandoffPrepareTargetResultGetRequest,
   SessionHandoffStatusGetRequest,
   SessionHandoffWorkspaceTransfer,
@@ -82,6 +84,9 @@ export type ActionExecutorContext = Readonly<{
    */
   bypassApprovals?: boolean;
 
+  /** Host-derived review author identity for canonical review-comment dispatch. */
+  reviewCommentPrincipal?: ReviewCommentPrincipalHeaderV1 | null;
+
   /**
    * Optional provenance for approvals created from an in-transcript tool call.
    *
@@ -107,6 +112,12 @@ export type ActionExecutorContext = Readonly<{
    * execute-time availability report the same disabled reason as spec discovery.
    */
   actionsSettings?: ActionsSettingsV1 | null;
+
+  /** Stable identity for one externally retryable action invocation. */
+  actionRequestId?: string | null;
+
+  /** Resolve the existing action attempt without repeating its outward write. */
+  resumeActionRequest?: boolean;
 }>;
 
 export type RuntimeActionInputById = Readonly<{
@@ -189,6 +200,7 @@ export type ActionExecutorDeps = Readonly<{
     actionId: ReviewCommentActionIdV1;
     input: unknown;
     serverId?: string | null;
+    reviewCommentPrincipal?: ReviewCommentPrincipalHeaderV1 | null;
   }>) => Promise<unknown>;
   runtimeActionExecute?: RuntimeActionExecute;
 
@@ -217,6 +229,7 @@ export type ActionExecutorDeps = Readonly<{
     serverId?: string | null;
   }>) => Promise<unknown>;
   sessionHandoffPrepareTarget?: (args: SessionHandoffPrepareTargetRequest) => Promise<unknown>;
+  sessionHandoffPrepareTargetResume?: (args: SessionHandoffPrepareTargetResumeRequest) => Promise<unknown>;
   sessionHandoffPrepareTargetResultGet?: (args: SessionHandoffPrepareTargetResultGetRequest) => Promise<unknown>;
   sessionHandoffCommit?: (args: SessionHandoffCommitRequest) => Promise<unknown>;
   sessionHandoffAbort?: (args: SessionHandoffAbortRequest) => Promise<unknown>;
@@ -257,6 +270,8 @@ export type ActionExecutorDeps = Readonly<{
     callerSurface?: keyof ActionSurfaces | null;
     callerPermissionMode?: string | null;
     sessionAgentSpawnPolicyV1?: unknown;
+    actionRequestId?: string | null;
+    resumeActionRequest?: boolean;
   }>) => Promise<unknown>;
   sessionSpawnPicker: (args: Readonly<{
     tag?: string;
@@ -304,6 +319,12 @@ export type ActionExecutorDeps = Readonly<{
   sessionStop?: (args: Readonly<{ sessionId: string; serverId?: string | null }>) => Promise<unknown>;
   sessionTerminalComposerClear?: (args: Readonly<{
     sessionId: string;
+    expectedStateAtMs?: number;
+    serverId?: string | null;
+  }>) => Promise<unknown>;
+  sessionPendingInputInterruptAndRun?: (args: Readonly<{
+    sessionId: string;
+    localId: string;
     expectedStateAtMs?: number;
     serverId?: string | null;
   }>) => Promise<unknown>;
@@ -386,6 +407,8 @@ export type ActionExecutorDeps = Readonly<{
   sessionUsageLimitWaitResumeCancel?: (args: Readonly<{
     sessionId: string;
     issueFingerprint?: string | null;
+    armedAtMs?: number;
+    runtimeAuthRecoveryAttemptId?: string;
     serverId?: string | null;
   }>) => Promise<unknown>;
   sessionUsageLimitCheckNow?: (args: Readonly<{
@@ -423,7 +446,7 @@ export type ActionExecutorDeps = Readonly<{
   sessionUserActionAnswer?: (args: Readonly<{
     sessionId: string;
     requestId?: string | null;
-    answers: readonly Readonly<{ question: string; answer: string }>[];
+    answers: readonly Readonly<{ question: string; values: readonly string[] }>[];
     decision?: 'approve' | 'reject' | 'request_changes';
     reason?: string;
     updatedPermissions?: unknown;

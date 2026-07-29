@@ -1,10 +1,12 @@
 import type {
-  ExecSystemToolServiceV1,
-  SystemToolLaunchGrantV1,
-} from '@happier-dev/plugin-sdk';
+  PluginResolvedSystemTool,
+  PluginSystemToolsService,
+} from '@happier-dev/plugin-sdk/runtime';
+
+import { DEEPSEC_SYSTEM_TOOL_ID } from './systemTool.js';
 
 export type ResolveDeepSecExecutableParams = Readonly<{
-  systemTools: ExecSystemToolServiceV1;
+  systemTools: PluginSystemToolsService;
   cwd: string;
   preferredExecutablePath?: string | null;
   signal?: AbortSignal;
@@ -12,9 +14,9 @@ export type ResolveDeepSecExecutableParams = Readonly<{
 
 export function resolveDeepSecExecutable(
   params: ResolveDeepSecExecutableParams,
-): Promise<SystemToolLaunchGrantV1> {
+): Promise<PluginResolvedSystemTool> {
   return params.systemTools.resolve({
-    toolId: 'deepsec',
+    toolId: DEEPSEC_SYSTEM_TOOL_ID,
     purpose: 'review security findings',
     cwd: params.cwd,
     preferredPath: params.preferredExecutablePath,

@@ -11,10 +11,8 @@ describe('Kilo OpenCode permission policy', () => {
     { mode: 'read-only', wildcard: 'deny', read: 'allow', edit: 'deny', bash: 'deny', external: 'deny' },
     { mode: 'plan', wildcard: 'deny', read: 'allow', edit: 'deny', bash: 'deny', external: 'deny' },
     { mode: 'safe-yolo', wildcard: 'ask', read: 'allow', edit: 'allow', bash: 'ask', external: 'ask' },
-    { mode: 'acceptEdits', wildcard: 'ask', read: 'allow', edit: 'allow', bash: 'ask', external: 'ask' },
     { mode: 'yolo', wildcard: 'allow', read: 'allow', edit: 'allow', bash: 'allow', external: 'allow' },
-    { mode: 'bypassPermissions', wildcard: 'allow', read: 'allow', edit: 'allow', bash: 'allow', external: 'allow' },
-  ])('maps permissionMode="$mode" to the source-equivalent OPENCODE_PERMISSION policy', ({
+  ] as const)('maps permissionIntent="$mode" to the source-equivalent OPENCODE_PERMISSION policy', ({
     mode,
     wildcard,
     read,
@@ -36,12 +34,12 @@ describe('Kilo OpenCode permission policy', () => {
   it('does not overwrite caller-provided OPENCODE_PERMISSION', () => {
     expect(buildKiloOpenCodePermissionEnv({
       env: { OPENCODE_PERMISSION: '{"custom":"allow"}' },
-      permissionMode: 'read-only',
+      permissionIntent: 'read-only',
     })).toEqual({});
   });
 
   it('uses the richer shared OpenCode-style policy vocabulary', () => {
-    expect(resolveKiloOpenCodePermissionPolicy('read_only')).toMatchObject({
+    expect(resolveKiloOpenCodePermissionPolicy('read-only')).toMatchObject({
       '*': 'deny',
       read: 'allow',
       glob: 'allow',

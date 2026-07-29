@@ -18,17 +18,29 @@ export const DaemonTerminalErrorSchema = z.object({
 }).passthrough();
 export type DaemonTerminalError = z.infer<typeof DaemonTerminalErrorSchema>;
 
+export const DaemonTerminalLaunchIntentSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('session_attach'),
+    sessionId: z.string().min(1).max(256),
+  }).strict(),
+]);
+export type DaemonTerminalLaunchIntent = z.infer<typeof DaemonTerminalLaunchIntentSchema>;
+
 export const DaemonTerminalEnsureRequestSchema = z.object({
   terminalKey: z.string().min(1).max(2000),
   cwd: z.string().min(1).max(10_000).optional(),
   cols: z.number().int().min(2).max(500).optional(),
   rows: z.number().int().min(2).max(500).optional(),
   initialCommand: z.string().max(100_000).optional(),
+  launch: DaemonTerminalLaunchIntentSchema.optional(),
   // Optional attribution metadata: the owning Happier session id. Additive and
   // back-compatible (older callers omit it). Stamped onto terminal->port
   // registrations so a service fact records who started it; never used as a scope filter.
   sessionId: z.string().min(1).max(256).optional(),
-}).passthrough();
+}).passthrough().refine(
+  (value) => value.initialCommand === undefined || value.launch === undefined,
+  { message: 'initialCommand and launch are mutually exclusive' },
+);
 export type DaemonTerminalEnsureRequest = z.infer<typeof DaemonTerminalEnsureRequestSchema>;
 
 export const DaemonTerminalEnsureResponseSchema = z.union([
@@ -138,7 +150,11 @@ export const DaemonTerminalRestartRequestSchema = z.object({
   cols: z.number().int().min(2).max(500).optional(),
   rows: z.number().int().min(2).max(500).optional(),
   initialCommand: z.string().max(100_000).optional(),
-}).passthrough();
+  launch: DaemonTerminalLaunchIntentSchema.optional(),
+}).passthrough().refine(
+  (value) => value.initialCommand === undefined || value.launch === undefined,
+  { message: 'initialCommand and launch are mutually exclusive' },
+);
 export type DaemonTerminalRestartRequest = z.infer<typeof DaemonTerminalRestartRequestSchema>;
 
 export const DaemonTerminalRestartResponseSchema = DaemonTerminalEnsureResponseSchema;

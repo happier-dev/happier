@@ -1,58 +1,83 @@
-import {
-  definePluginManifest,
-  type PluginAgentContributionV2,
-  type PluginManifestV2,
-  type PluginAgentSettingsContributionV1,
-} from '@happier-dev/plugin-sdk';
+import type { PluginManifest } from '@happier-dev/plugin-sdk/manifest';
 
-import { COPILOT_ACP_BACKEND_SPEC } from './agent/acp/definition.js';
 import { COPILOT_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
+import { COPILOT_UI_TRANSLATIONS } from './ui/translations.js';
 
-type CopilotPluginManifestV2 = Omit<PluginManifestV2, 'contributes'> & Readonly<{
-  contributes: Readonly<{
-    agents: ReadonlyArray<PluginAgentContributionV2>;
-    agentSettings: ReadonlyArray<PluginAgentSettingsContributionV1>;
-  }>;
-}>;
+const COPILOT_AUTH_ENV_KEYS = [
+  'COPILOT_GITHUB_TOKEN',
+  'GH_TOKEN',
+  'GITHUB_TOKEN',
+] as const;
 
-export const PLUGIN_MANIFEST = definePluginManifest({
+export const PLUGIN_MANIFEST = {
   schemaVersion: 2,
   id: 'happier.agent.copilot',
   version: '0.0.0',
-  displayName: 'copilot',
-  description: undefined,
-  engines: { happier: '^0.0.0' },
-  activationEvents: ['onAgent:copilot'],
-  uses: ['agents'],
-  entrypoints: { main: './dist/index.js' },
-  permissions: { required: [], optional: [] },
+  displayName: 'GitHub Copilot',
+  engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
+  entrypoints: { daemon: './dist/index.js' },
+  hostAccess: {
+    required: [{
+      id: 'copilot-process',
+      capability: 'process',
+      reason: 'Run the declared GitHub Copilot CLI executable.',
+      scope: {
+        executables: [{ kind: 'systemTool', id: 'copilot-cli' }],
+        envKeys: [...COPILOT_AUTH_ENV_KEYS],
+      },
+    }],
+    optional: [],
+  },
   contributes: {
-    agents: [
-      {
-        kindVersion: 1,
-        id: 'copilot',
-        runtime: {
-          kind: 'acp',
-          transport: COPILOT_ACP_BACKEND_SPEC.transport,
-          ux: COPILOT_ACP_BACKEND_SPEC.ux,
-          capabilities: COPILOT_ACP_BACKEND_SPEC.capabilities,
-          sessionIdHeaderName: COPILOT_ACP_BACKEND_SPEC.sessionIdHeaderName,
-          toolNameInference: COPILOT_ACP_BACKEND_SPEC.toolNameInference,
-          stderrRules: COPILOT_ACP_BACKEND_SPEC.stderrRules,
-          mcp: COPILOT_ACP_BACKEND_SPEC.mcp,
+    agents: [{
+      id: 'copilot',
+      title: 'GitHub Copilot',
+      runtime: { kind: 'custom' },
+      cli: {
+        displayName: 'GitHub Copilot CLI',
+        executable: {
+          binaryName: 'copilot',
+          knownUserBinDirSuffixes: null,
+          sourcePreference: 'system-first',
         },
-        capabilities: {
-          executionRun: { supported: true },
-          session: {
-            media: {
-              acceptsImageInput: { supported: false },
-              emitsSessionMedia: { supported: false },
-              nativeImageGeneration: { supported: false },
-            },
+        install: {
+          managed: {
+            kind: 'managed_package',
+            packageName: '@github/copilot',
+            binaryName: 'copilot',
           },
+          manual: { kind: 'command' },
+          guideUrl: null,
+          docsUrl: 'https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli',
+        },
+        auth: {
+          support: 'login_terminal',
+          probe: {
+            parser: 'copilotGhAuth',
+            backgroundChecks: 'safe',
+            statusArgs: null,
+            envVars: [...COPILOT_AUTH_ENV_KEYS],
+          },
+          loginLaunches: [{ kind: 'primary', args: ['login'] }],
         },
       },
-    ],
-    agentSettings: [COPILOT_AGENT_SETTINGS_CONTRIBUTION],
+      primary: 'sessions',
+      capabilities: {
+        sessions: {
+          open: ['create', 'resume'],
+          delivery: ['newTurn', 'steer', 'followUp'],
+          cancel: true,
+        },
+      },
+    }],
+    systemTools: [{
+      id: 'copilot-cli',
+      title: 'GitHub Copilot CLI',
+      executableNames: ['copilot'],
+    }],
+    ui: {
+      translations: [{ locale: 'en', messages: COPILOT_UI_TRANSLATIONS.en }],
+    },
+    settings: [COPILOT_AGENT_SETTINGS_CONTRIBUTION],
   },
-} satisfies CopilotPluginManifestV2);
+} satisfies PluginManifest;

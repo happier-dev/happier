@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 const provider = {
-  id: 'scm.azure-devops',
+  id: 'happier.scm.hosting.azure-devops/azure-devops',
   kind: 'azure-devops',
   displayName: 'Azure DevOps',
   baseUrl: 'https://dev.azure.com/happier-dev',
@@ -14,21 +14,16 @@ describe('Azure DevOps CLI auth diagnostics', () => {
     expect(mod).not.toBeNull();
     if (!mod) return;
 
-    const runCommand = vi.fn();
     await expect(mod.detectAzureDevopsCliAuth({
       provider,
-      runtimeServices: {
-        resolveInstallableCommand: async () => ({ kind: 'missing' }),
-        runCommand,
-      },
+      runtimeServices: {},
     })).resolves.toEqual(expect.objectContaining({
       kind: 'missing-cli',
-      capabilityId: 'dep.az',
+      capabilityId: 'azure-cli',
       remediation: expect.objectContaining({
         kind: 'install_required',
       }),
     }));
-    expect(runCommand).not.toHaveBeenCalled();
   });
 
   it('reports unauthenticated Azure CLI as login remediation without running login', async () => {
@@ -36,7 +31,7 @@ describe('Azure DevOps CLI auth diagnostics', () => {
     expect(mod).not.toBeNull();
     if (!mod) return;
 
-    const runCommand = vi.fn(async () => ({
+    const executeCommand = vi.fn(async () => ({
       ok: false,
       stdout: '',
       stderr: 'Please run az login to setup account.',
@@ -46,20 +41,19 @@ describe('Azure DevOps CLI auth diagnostics', () => {
     await expect(mod.detectAzureDevopsCliAuth({
       provider,
       runtimeServices: {
-        resolveInstallableCommand: async () => ({ kind: 'available', source: 'system', binPath: '/usr/local/bin/az' }),
-        runCommand,
+        executeCommand,
       },
     })).resolves.toEqual(expect.objectContaining({
       kind: 'missing-auth',
-      capabilityId: 'dep.az',
+      capabilityId: 'azure-cli',
       remediation: expect.objectContaining({
         kind: 'auth_required',
         commandPreview: ['az', 'login'],
       }),
     }));
-    expect(runCommand).toHaveBeenCalledTimes(1);
-    expect(runCommand).toHaveBeenCalledWith(expect.objectContaining({
-      binPath: '/usr/local/bin/az',
+    expect(executeCommand).toHaveBeenCalledTimes(1);
+    expect(executeCommand).toHaveBeenCalledWith(expect.objectContaining({
+      executable: { kind: 'systemTool', id: 'azure-cli' },
       args: ['account', 'show', '--output', 'json'],
     }));
   });
@@ -72,8 +66,7 @@ describe('Azure DevOps CLI auth diagnostics', () => {
     await expect(mod.detectAzureDevopsCliAuth({
       provider,
       runtimeServices: {
-        resolveInstallableCommand: async () => ({ kind: 'available', source: 'system', binPath: '/usr/local/bin/az' }),
-        runCommand: async () => ({
+        executeCommand: async () => ({
           ok: true,
           stdout: JSON.stringify({ user: { name: 'dev@example.com' }, tenantId: 'tenant-1' }),
           stderr: '',
@@ -82,7 +75,7 @@ describe('Azure DevOps CLI auth diagnostics', () => {
       },
     })).resolves.toEqual(expect.objectContaining({
       kind: 'authenticated',
-      capabilityId: 'dep.az',
+      capabilityId: 'azure-cli',
       accountName: 'dev@example.com',
       tenantId: 'tenant-1',
     }));

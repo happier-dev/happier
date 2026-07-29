@@ -17,6 +17,15 @@ describe('pi compaction turn outcome', () => {
 
     expect(
       resolvePiCompactionTurnOutcome({
+        agentSettled: false,
+        lastAssistantStopReason: 'stop',
+        lastCompactionEnd: { willRetry: false, errorMessage: null },
+      }),
+    ).toBe('pause');
+
+    expect(
+      resolvePiCompactionTurnOutcome({
+        agentSettled: true,
         lastAssistantStopReason: 'stop',
         lastCompactionEnd: { willRetry: false, errorMessage: 'You have hit your usage limit' },
       }),
@@ -24,6 +33,7 @@ describe('pi compaction turn outcome', () => {
 
     expect(
       resolvePiCompactionTurnOutcome({
+        agentSettled: true,
         lastAssistantStopReason: 'stop',
         lastCompactionEnd: { willRetry: false, errorMessage: null },
       }),
@@ -31,6 +41,7 @@ describe('pi compaction turn outcome', () => {
 
     expect(
       resolvePiCompactionTurnOutcome({
+        agentSettled: true,
         lastAssistantStopReason: null,
         lastCompactionEnd: { willRetry: false, errorMessage: 'overflow recovery failed' },
       }),
@@ -38,6 +49,7 @@ describe('pi compaction turn outcome', () => {
 
     expect(
       resolvePiCompactionTurnOutcome({
+        agentSettled: true,
         lastAssistantStopReason: null,
         lastCompactionEnd: {
           payload: { phase: 'failed', errorCode: 'context_limit' },
@@ -49,6 +61,7 @@ describe('pi compaction turn outcome', () => {
 
     expect(
       resolvePiCompactionTurnOutcome({
+        agentSettled: true,
         lastAssistantStopReason: 'error',
         lastCompactionEnd: { willRetry: false, errorMessage: 'context still too large' },
       }),
@@ -56,6 +69,7 @@ describe('pi compaction turn outcome', () => {
 
     expect(
       resolvePiCompactionTurnOutcome({
+        agentSettled: false,
         lastAssistantStopReason: 'error',
         lastCompactionEnd: { willRetry: true, errorMessage: 'transient' },
       }),
@@ -63,6 +77,7 @@ describe('pi compaction turn outcome', () => {
 
     expect(
       resolvePiCompactionTurnOutcome({
+        agentSettled: true,
         lastAssistantStopReason: 'length',
         lastCompactionEnd: { willRetry: false, errorMessage: null },
       }),
@@ -70,6 +85,7 @@ describe('pi compaction turn outcome', () => {
 
     expect(
       resolvePiCompactionTurnOutcome({
+        agentSettled: true,
         lastAssistantStopReason: 'stop',
         lastCompactionEnd: null,
       }),

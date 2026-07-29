@@ -63,38 +63,6 @@ export const AGENT_DEFINITION = Object.freeze({
     defaultMode: 'default',
     allowedModes: ['default'],
   },
-  authProbeConfig: {
-    agentId: PI_AGENT_ID,
-    binaryNames: ['pi'],
-    statusCommand: null,
-    parser: 'piEnvOnly',
-    backgroundChecks: 'safe',
-    envVars: ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY'],
-  },
-  localCli: {
-    agentId: PI_AGENT_ID,
-    detectKey: 'pi',
-    machineLoginKey: 'pi',
-    supportKind: 'status_only',
-    loginLaunch: null,
-  },
-  agentCliRuntime: {
-    id: PI_AGENT_ID,
-    title: 'Pi Coding Agent CLI',
-    binaryName: 'pi',
-    knownUserBinDirSuffixes: null,
-    sourcePreferenceDefault: 'system-first',
-    managedInstall: {
-      kind: 'managed_package',
-      packageName: '@earendil-works/pi-coding-agent',
-      binaryName: 'pi',
-    },
-    manualInstallKind: 'command',
-    manualInstallRecipes: null,
-    acceptsJavaScriptFileOverride: false,
-    installGuideUrl: 'https://github.com/badlogic/pi-mono',
-    docsUrl: null,
-  },
   runtimeContributions: {
     agentCatalogEntry: {
       importName: 'PI_AGENT_RUNTIME_CONTRIBUTION',
@@ -119,5 +87,4 @@ export const AGENT_DEFINITION = Object.freeze({
       canonicalReader: 'readCanonicalPiAgentRuntimeDescriptorV1',
     },
   },
-  agentSettings: null,
 } as const);

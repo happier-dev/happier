@@ -3,13 +3,13 @@ import type {
   ScmCommitBackoutResponse,
   ScmCommitCreateRequest,
   ScmCommitCreateResponse,
-} from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm';
 import {
   SCM_COMMIT_MESSAGE_MAX_LENGTH,
   SCM_OPERATION_ERROR_CODES,
   resolveScmScopedChangedPaths,
-} from '@happier-dev/plugin-sdk/scm';
-import type { ScmBackendRuntimeContext as ScmBackendContext } from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/experimental/scm';
+import type { ScmBackendRuntimeContext as ScmBackendContext } from '@happier-dev/plugin-sdk/experimental/scm/backend';
 
 import { getSaplingHead } from '../repository.js';
 import { normalizeCommitRef, normalizePathspec, runSaplingCommand as runScmCommand } from '../runtime.js';

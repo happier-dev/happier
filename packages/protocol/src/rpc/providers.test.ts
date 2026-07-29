@@ -1,17 +1,22 @@
 import { describe, expect, it } from 'vitest';
 
+import { createProviderErrorV1 } from '../providers/errors.js';
+
 import {
   DaemonProviderModelsRequestV1Schema,
   DaemonProviderModelsResponseV1Schema,
   DaemonProviderModelLoadRequestV1Schema,
   DaemonProviderProbeRequestV1Schema,
+  DaemonProviderProbeResponseV1Schema,
   DaemonProviderConnectionsDescribeRequestV1Schema,
   DaemonProviderConnectionMutationRequestV1Schema,
   DaemonProviderConnectionsDescribeResponseV1Schema,
+  DaemonProviderAgentCompatibilitySummaryV1Schema,
   DaemonProviderModelProjectionRequestV1Schema,
   DaemonProviderModelProjectionResponseV1Schema,
   DaemonProviderModelSettingsMutationRequestV1Schema,
   DaemonProviderBindingStatusRequestV1Schema,
+  DaemonProviderBindingStatusResponseV1Schema,
   DaemonProviderProfileMigrationPreviewRequestV1Schema,
   DaemonProviderProfileMigrationPreviewResponseV1Schema,
   DaemonProviderProfileMigrationConfirmRequestV1Schema,
@@ -44,6 +49,7 @@ function reviewedLegacyProfileMapping() {
       role: 'named' as const,
       displayName: 'Company gateway',
       displayNameMode: 'custom' as const,
+      deployment: { kind: 'external' as const },
       revision: 0,
       createdAt: 10,
       updatedAt: 10,
@@ -55,6 +61,21 @@ function reviewedLegacyProfileMapping() {
 }
 
 describe('provider machine RPC contracts', () => {
+  it('uses closed compatibility reason codes and status-correct reason cardinality', () => {
+    expect(DaemonProviderAgentCompatibilitySummaryV1Schema.safeParse({
+      agentTargetKey: 'backend:codex', agentName: 'Codex',
+      status: 'experimental', reasons: ['compatibility_evidence_missing'],
+    }).success).toBe(true);
+    expect(DaemonProviderAgentCompatibilitySummaryV1Schema.safeParse({
+      agentTargetKey: 'backend:codex', agentName: 'Codex',
+      status: 'experimental', reasons: ['future_untyped_reason'],
+    }).success).toBe(false);
+    expect(DaemonProviderAgentCompatibilitySummaryV1Schema.safeParse({
+      agentTargetKey: 'backend:codex', agentName: 'Codex',
+      status: 'verified', reasons: ['compatibility_evidence_missing'],
+    }).success).toBe(false);
+  });
+
   it('uses stable daemon method ids', () => {
     expect(RPC_METHODS.DAEMON_PROVIDERS_PROBE).toBe('daemon.providers.probe');
     expect(RPC_METHODS.DAEMON_PROVIDERS_MODELS).toBe('daemon.providers.models');
@@ -68,6 +89,96 @@ describe('provider machine RPC contracts', () => {
     expect(RPC_METHODS.DAEMON_PROVIDERS_PROFILE_MIGRATION_CONFIRM).toBe('daemon.providers.profileMigration.confirm');
     expect(RPC_METHODS.DAEMON_PROVIDERS_PROFILE_MIGRATION_CONFLICT_CONFIRM)
       .toBe('daemon.providers.profileMigration.conflict.confirm');
+  });
+
+  it('returns probed model ids when the provider does not supply display names', () => {
+    expect(DaemonProviderProbeResponseV1Schema.parse({
+      status: 'success',
+      models: [{ id: 'provider-model-without-display-name' }],
+      requestFingerprint: `probe-request:v1:${'a'.repeat(43)}`,
+    })).toEqual({
+      status: 'success',
+      models: [{ id: 'provider-model-without-display-name' }],
+      requestFingerprint: `probe-request:v1:${'a'.repeat(43)}`,
+    });
+  });
+
+  it('rejects duplicate model ids in a successful probe response', () => {
+    expect(DaemonProviderProbeResponseV1Schema.safeParse({
+      status: 'success',
+      models: [{ id: 'duplicate-model' }, { id: 'duplicate-model', name: 'Duplicate' }],
+      requestFingerprint: `probe-request:v1:${'a'.repeat(43)}`,
+    }).success).toBe(false);
+  });
+
+  it('rejects successful probe responses above the canonical catalog limit', () => {
+    expect(DaemonProviderProbeResponseV1Schema.safeParse({
+      status: 'success',
+      models: Array.from({ length: 5_001 }, (_, index) => ({ id: `provider-model-${index}` })),
+      requestFingerprint: `probe-request:v1:${'a'.repeat(43)}`,
+    }).success).toBe(false);
+  });
+
+  it('describes a closed built-in authoring review without granting the browser endpoint authority', () => {
+    const selectedCandidateId = 'discovery-candidate:v1:selected';
+    const request = {
+      machineId: 'machine-1',
+      authoringPreview: {
+        connectionId: 'pc_preview',
+        contributionKey: 'acme.gateway/main',
+        displayName: null,
+        selectedCandidateId,
+        endpointOverrides: [{
+          endpointTemplateId: 'chat',
+          baseUrl: 'https://remote.gateway.example/v1',
+        }],
+      },
+    } as const;
+    expect(DaemonProviderConnectionsDescribeRequestV1Schema.parse(request)).toEqual(request);
+    expect(DaemonProviderConnectionsDescribeResponseV1Schema.safeParse({
+      status: 'success',
+      connections: [], available: [], discoveryCandidates: [], localInstallations: [],
+      diagnostics: [], diagnosticsTruncated: false, availableTruncated: false,
+      discoveryCandidatesTruncated: false,
+      authoringPreview: {
+        status: 'resolved', connectionId: 'pc_preview', contributionKey: 'acme.gateway/main', created: true,
+        candidateId: selectedCandidateId,
+        scope: 'machine',
+        machineId: 'machine-1',
+        endpoints: [{
+          endpointTemplateId: 'chat', protocol: 'openai-chat',
+          normalizedUrl: 'http://127.0.0.1:1234/v1', locality: 'loopback', scope: 'machine',
+        }],
+        credential: { slotId: 'apiKey', label: 'api_key', required: false },
+        fingerprint: 'authoring-review:v1:reviewed',
+        revision: 1,
+      },
+    }).success).toBe(true);
+    expect(DaemonProviderConnectionsDescribeResponseV1Schema.safeParse({
+      status: 'success', connections: [], available: [], discoveryCandidates: [], localInstallations: [],
+      diagnostics: [], diagnosticsTruncated: false, availableTruncated: false,
+      discoveryCandidatesTruncated: false,
+      authoringPreview: {
+        status: 'selection_required', connectionId: 'pc_preview',
+        contributionKey: 'acme.gateway/main', created: true,
+        credential: null,
+        candidates: [{
+          candidateId: selectedCandidateId,
+          scope: 'machine', machineId: 'machine-1',
+          endpoints: [{
+            endpointTemplateId: 'chat', protocol: 'openai-chat',
+            normalizedUrl: 'http://127.0.0.1:1234/v1', locality: 'loopback', scope: 'machine',
+          }],
+        }, {
+          candidateId: 'discovery-candidate:v1:alternate',
+          scope: 'machine', machineId: 'machine-1',
+          endpoints: [{
+            endpointTemplateId: 'chat', protocol: 'openai-chat',
+            normalizedUrl: 'http://127.0.0.1:1235/v1', locality: 'loopback', scope: 'machine',
+          }],
+        }],
+      },
+    }).success).toBe(true);
   });
 
   it('defines a strict redacted conflict-resolution contract', () => {
@@ -134,6 +245,14 @@ describe('provider machine RPC contracts', () => {
     expect(DaemonProviderBindingStatusRequestV1Schema.safeParse({
       ...value, agentTargetKey: 'backend:claude',
     }).success).toBe(false);
+    expect(DaemonProviderBindingStatusResponseV1Schema.parse({
+      status: 'changed',
+      nextBindingSecurityFingerprint: 'binding-security:v1:b',
+    })).toEqual({
+      status: 'changed',
+      nextBindingSecurityFingerprint: 'binding-security:v1:b',
+    });
+    expect(DaemonProviderBindingStatusResponseV1Schema.safeParse({ status: 'changed' }).success).toBe(false);
   });
 
   it('accepts strict connection describe and mutation contracts without grant fingerprints or raw secrets', () => {
@@ -141,13 +260,34 @@ describe('provider machine RPC contracts', () => {
       .toEqual({ machineId: 'machine-1' });
     const create = {
       action: 'createContribution', machineId: 'machine-1', connectionId: 'pc_1',
-      contributionKey: 'acme.gateway:providers:main', displayName: null,
+      contributionKey: 'acme.gateway/main', displayName: null,
       savedSecretId: 'secret_1', enable: true,
+      authoringReview: {
+        candidateId: null,
+        fingerprint: 'authoring-review:v1:reviewed',
+        revision: 0,
+        endpointOverrides: [{
+          endpointTemplateId: 'chat',
+          baseUrl: 'https://remote.gateway.example/v1',
+        }],
+      },
     } as const;
     expect(DaemonProviderConnectionMutationRequestV1Schema.parse(create)).toEqual(create);
+    const { authoringReview: _authoringReview, ...unreviewedCreate } = create;
+    expect(DaemonProviderConnectionMutationRequestV1Schema.safeParse(unreviewedCreate).success).toBe(false);
     expect(DaemonProviderConnectionMutationRequestV1Schema.safeParse({ ...create, rawSecret: 'nope' }).success).toBe(false);
     expect(DaemonProviderConnectionMutationRequestV1Schema.safeParse({
       ...create, connectionSecurityFingerprint: 'caller-controlled',
+    }).success).toBe(false);
+    expect(DaemonProviderConnectionMutationRequestV1Schema.safeParse({
+      ...create,
+      authoringReview: {
+        ...create.authoringReview,
+        endpointOverrides: [
+          ...create.authoringReview.endpointOverrides,
+          ...create.authoringReview.endpointOverrides,
+        ],
+      },
     }).success).toBe(false);
     const custom = {
       action: 'createCustom' as const, machineId: 'machine-1', connectionId: 'pc_custom',
@@ -172,17 +312,28 @@ describe('provider machine RPC contracts', () => {
     }).success).toBe(false);
     expect(DaemonProviderConnectionMutationRequestV1Schema.parse({
       action: 'enableDetected', machineId: 'machine-1', connectionId: 'pc_local',
-      contributionKey: 'happier.provider.ollama:providers:ollama',
+      candidateId: 'discovery-candidate:v1:current',
+      displayName: null, savedSecretId: null,
+    })).toMatchObject({ action: 'enableDetected', candidateId: 'discovery-candidate:v1:current' });
+    expect(DaemonProviderConnectionMutationRequestV1Schema.safeParse({
+      action: 'enableDetected', machineId: 'machine-1', connectionId: 'pc_local',
+      contributionKey: 'happier.provider.ollama/ollama',
       endpointTemplateId: 'native', normalizedEndpointUrl: 'http://127.0.0.1:22434/',
       displayName: null, savedSecretId: null,
-    })).toMatchObject({ action: 'enableDetected', normalizedEndpointUrl: 'http://127.0.0.1:22434/' });
+    }).success).toBe(false);
     expect(DaemonProviderConnectionMutationRequestV1Schema.parse({
       action: 'startLocal', machineId: 'machine-1', connectionId: 'pc_local',
-      contributionKey: 'happier.provider.ollama:providers:ollama',
+      contributionKey: 'happier.provider.ollama/ollama',
     })).toMatchObject({ action: 'startLocal' });
     expect(DaemonProviderConnectionMutationRequestV1Schema.parse({
       action: 'setEnabled', machineId: 'machine-1', connectionId: 'pc_1', enabled: false, scope: 'machine',
     })).toMatchObject({ action: 'setEnabled', enabled: false, scope: 'machine' });
+    expect(DaemonProviderConnectionMutationRequestV1Schema.parse({
+      action: 'setEnabled', machineId: 'machine-1', connectionId: 'pc_1', enabled: false, scope: 'connection',
+    })).toMatchObject({ action: 'setEnabled', enabled: false, scope: 'connection' });
+    expect(DaemonProviderConnectionMutationRequestV1Schema.safeParse({
+      action: 'setEnabled', machineId: 'machine-1', connectionId: 'pc_1', enabled: true, scope: 'connection',
+    }).success).toBe(false);
     expect(DaemonProviderConnectionMutationRequestV1Schema.parse({
       action: 'bindSecret', machineId: 'machine-1', connectionId: 'pc_1',
       credentialSlotId: 'apiKey', savedSecretId: null, scope: 'account',
@@ -198,6 +349,55 @@ describe('provider machine RPC contracts', () => {
     expect(DaemonProviderConnectionMutationRequestV1Schema.safeParse({
       action: 'update', machineId: 'machine-1', connectionId: 'pc_1', expectedRevision: 0,
       endpointOverrides: [], endpointScope: 'account',
+    }).success).toBe(false);
+
+    const managedUpdate = {
+      action: 'update' as const,
+      machineId: 'machine-1',
+      connectionId: 'pc_1',
+      expectedRevision: 0,
+      deployment: {
+        kind: 'managedLocal' as const,
+        purposeBindingDefaults: {
+          upstream: {
+            kind: 'group' as const,
+            service: {
+              pluginId: 'happier.connected-account.openai',
+              localId: 'openai',
+            },
+            groupId: 'team',
+          },
+        },
+      },
+    };
+    expect(DaemonProviderConnectionMutationRequestV1Schema.parse(managedUpdate))
+      .toEqual(managedUpdate);
+    expect(DaemonProviderConnectionMutationRequestV1Schema.safeParse({
+      ...managedUpdate,
+      deployment: {
+        kind: 'managedLocal',
+        purposeBindingDefaults: {},
+      },
+    }).success).toBe(false);
+    expect(DaemonProviderConnectionMutationRequestV1Schema.safeParse({
+      ...managedUpdate,
+      deployment: {
+        ...managedUpdate.deployment,
+        purposeBindingDefaults: {
+          upstream: {
+            ...managedUpdate.deployment.purposeBindingDefaults.upstream,
+            profileId: 'active-member-must-not-persist',
+            generation: 4,
+          },
+        },
+      },
+    }).success).toBe(false);
+    expect(DaemonProviderConnectionMutationRequestV1Schema.safeParse({
+      ...managedUpdate,
+      deployment: {
+        kind: 'external',
+        purposeBindingDefaults: managedUpdate.deployment.purposeBindingDefaults,
+      },
     }).success).toBe(false);
   });
 
@@ -236,6 +436,273 @@ describe('provider machine RPC contracts', () => {
     })).toMatchObject({ status: 'success' });
   });
 
+  it('describes managed connection effects without exposing launch-local authority', () => {
+    const managedConnection = {
+      connectionId: 'pc_managed',
+      contributionKey: 'happier.provider.gateway/gateway',
+      provenance: 'first_party',
+      displayName: 'Managed Gateway',
+      providerName: 'Managed Gateway',
+      icon: null,
+      role: 'named',
+      displayNameMode: 'automatic',
+      sourceStatus: 'available',
+      probeCapability: 'catalog',
+      manualModelPolicy: 'catalog-only',
+      compatibility: [],
+      grants: { accountEnabled: false, enabledMachineIds: ['machine-1'] },
+      credential: null,
+      deployment: {
+        kind: 'managedLocal',
+        targetMachineId: 'machine-1',
+        effects: {
+          implementationIdentity: {
+            pluginId: 'happier.provider.gateway',
+            localId: 'gateway',
+          },
+          process: {
+            localServiceId: 'gateway',
+            manager: 'happier',
+            lifetime: 'session',
+            network: 'loopback',
+            restart: 'never',
+          },
+          dependency: {
+            kind: 'packaged-runtime-binary',
+            directorySegments: ['cliproxyapi', 'unpacked'],
+            executableBaseName: 'cliproxyapi',
+          },
+          protocols: ['openai-chat', 'openai-responses'],
+          connectedAccountPurposes: [{
+            purpose: 'upstream',
+            service: {
+              pluginId: 'happier.connected-account.openai',
+              localId: 'openai',
+            },
+            required: true,
+            materializationKinds: ['httpHeaders'],
+            target: {
+              kind: 'account',
+              account: {
+                service: {
+                  pluginId: 'happier.connected-account.openai',
+                  localId: 'openai',
+                },
+                accountId: 'work',
+              },
+            },
+          }],
+        },
+      },
+      endpoints: [],
+      scope: 'machine',
+      authorized: true,
+      authorizationError: null,
+      revision: 1,
+      runtime: { health: 'not_checked', modelCount: null, checkedAt: null },
+    } as const;
+    const response = {
+      status: 'success' as const,
+      connections: [managedConnection],
+      available: [],
+      discoveryCandidates: [],
+      localInstallations: [],
+      availableTruncated: false,
+      diagnostics: [],
+      diagnosticsTruncated: false,
+    };
+
+    expect(DaemonProviderConnectionsDescribeResponseV1Schema.parse(response))
+      .toMatchObject({ connections: [{ deployment: managedConnection.deployment, endpoints: [] }] });
+    expect(DaemonProviderConnectionsDescribeResponseV1Schema.safeParse({
+      ...response,
+      connections: [{
+        ...managedConnection,
+        sourceStatus: 'unavailable',
+        authorized: false,
+        deployment: {
+          kind: 'managedLocal',
+          targetMachineId: 'machine-1',
+          effects: null,
+        },
+      }],
+    }).success).toBe(true);
+    expect(DaemonProviderConnectionsDescribeResponseV1Schema.safeParse({
+      ...response,
+      connections: [{
+        ...managedConnection,
+        deployment: {
+          ...managedConnection.deployment,
+          effects: { ...managedConnection.deployment.effects, assignedPort: 31_337 },
+        },
+      }],
+    }).success).toBe(false);
+    expect(DaemonProviderConnectionsDescribeResponseV1Schema.safeParse({
+      ...response,
+      connections: [{
+        ...managedConnection,
+        deployment: {
+          ...managedConnection.deployment,
+          effects: { ...managedConnection.deployment.effects, bearer: 'must-not-cross-rpc' },
+        },
+      }],
+    }).success).toBe(false);
+    expect(DaemonProviderConnectionsDescribeResponseV1Schema.safeParse({
+      ...response,
+      connections: [{ ...managedConnection, provenance: 'external' }],
+    }).success).toBe(false);
+  });
+
+  it('projects only declared purpose/service facts for managed authoring availability', () => {
+    const managedLocalOption = {
+      targetMachineId: 'machine-1',
+      connectedAccountPurposes: [{
+        purpose: 'upstream',
+        service: {
+          pluginId: 'happier.connected-account.openai',
+          localId: 'openai',
+        },
+        required: true,
+        materializationKinds: ['httpHeaders'],
+      }],
+    };
+    const connection = {
+      connectionId: 'pc_1',
+      contributionKey: 'happier.provider.gateway/gateway',
+      provenance: 'first_party',
+      displayName: 'Gateway',
+      providerName: 'Gateway',
+      icon: null,
+      role: 'default',
+      displayNameMode: 'automatic',
+      sourceStatus: 'available',
+      probeCapability: 'catalog',
+      manualModelPolicy: 'catalog-only',
+      compatibility: [],
+      grants: { accountEnabled: false, enabledMachineIds: [] },
+      credential: null,
+      deployment: { kind: 'external' },
+      managedLocalOption,
+      endpoints: [{
+        endpointTemplateId: 'responses',
+        protocol: 'openai-responses',
+        baseUrl: 'https://gateway.example/v1',
+        effectiveSource: 'template',
+      }],
+      scope: null,
+      authorized: false,
+      authorizationError: null,
+      revision: 0,
+      runtime: {
+        health: 'not_checked',
+        modelCount: null,
+        checkedAt: null,
+      },
+    } as const;
+    const response = {
+      status: 'success' as const,
+      connections: [connection],
+      available: [],
+      discoveryCandidates: [],
+      localInstallations: [],
+      availableTruncated: false,
+      diagnostics: [],
+      diagnosticsTruncated: false,
+    };
+
+    expect(DaemonProviderConnectionsDescribeResponseV1Schema.parse(response))
+      .toMatchObject({ connections: [{ managedLocalOption }] });
+    expect(DaemonProviderConnectionsDescribeResponseV1Schema.safeParse({
+      ...response,
+      connections: [{ ...connection, provenance: 'external' }],
+    }).success).toBe(false);
+    expect(DaemonProviderConnectionsDescribeResponseV1Schema.safeParse({
+      ...response,
+      connections: [{
+        ...connection,
+        managedLocalOption: {
+          ...managedLocalOption,
+          connectedAccountPurposes: [{
+            ...managedLocalOption.connectedAccountPurposes[0],
+            target: { kind: 'group', groupId: 'must-not-be-projected' },
+          }],
+        },
+      }],
+    }).success).toBe(false);
+  });
+
+  it('exposes only an opaque current probe-observation identity on connection views', () => {
+    const connection = {
+      connectionId: 'pc_1', contributionKey: null, displayName: 'Gateway', providerName: 'Gateway', icon: null,
+      websiteUrl: 'https://gateway.example',
+      role: 'named', displayNameMode: 'custom', sourceStatus: 'available',
+      probeCapability: 'catalog', manualModelPolicy: 'allowed', compatibility: [],
+      grants: { accountEnabled: true, enabledMachineIds: [] },
+      credential: {
+        required: true,
+        accountBound: true,
+        boundMachineIds: [],
+        keyUrl: 'https://gateway.example/keys',
+      },
+      endpoints: [{
+        endpointTemplateId: 'openai', protocol: 'openai-chat',
+        baseUrl: 'https://gateway.example/v1', effectiveSource: 'template',
+      }],
+      scope: 'account', authorized: true, authorizationError: null, revision: 2,
+      probeObservationIdentity: 'probe-observation:v1:opaque-current-facts',
+      runtime: { health: 'available', modelCount: 1, checkedAt: 10 },
+    } as const;
+    const response = {
+      status: 'success' as const,
+      connections: [connection], available: [], discoveryCandidates: [], localInstallations: [],
+      availableTruncated: false, diagnostics: [], diagnosticsTruncated: false,
+    };
+
+    expect(DaemonProviderConnectionsDescribeResponseV1Schema.parse(response))
+      .toMatchObject({
+        connections: [{
+          websiteUrl: 'https://gateway.example',
+          credential: { keyUrl: 'https://gateway.example/keys' },
+          probeObservationIdentity: connection.probeObservationIdentity,
+        }],
+      });
+    const { probeObservationIdentity: _legacyMissingIdentity, ...legacyConnection } = connection;
+    expect(DaemonProviderConnectionsDescribeResponseV1Schema.parse({
+      ...response,
+      connections: [legacyConnection],
+    }).connections[0]?.probeObservationIdentity).toBeNull();
+    expect(DaemonProviderConnectionsDescribeResponseV1Schema.safeParse({
+      ...response,
+      connections: [{ ...connection, probeObservationIdentity: 'secret-one' }],
+    }).success).toBe(false);
+    expect(DaemonProviderConnectionsDescribeResponseV1Schema.safeParse({
+      ...response,
+      connections: [{ ...connection, websiteUrl: 'http://gateway.example' }],
+    }).success).toBe(false);
+    expect(DaemonProviderConnectionsDescribeResponseV1Schema.safeParse({
+      ...response,
+      connections: [{
+        ...connection,
+        credential: { ...connection.credential, keyUrl: 'javascript:alert(1)' },
+      }],
+    }).success).toBe(false);
+    expect(DaemonProviderConnectionsDescribeResponseV1Schema.safeParse({
+      ...response,
+      available: [{
+        contributionKey: 'acme.gateway/main', name: 'Acme', kind: 'cloud',
+        provenance: 'first_party', icon: null, websiteUrl: 'http://gateway.example', credential: null,
+      }],
+    }).success).toBe(false);
+    expect(DaemonProviderConnectionsDescribeResponseV1Schema.safeParse({
+      ...response,
+      available: [{
+        contributionKey: 'acme.gateway/main', name: 'Acme', kind: 'cloud',
+        provenance: 'first_party', icon: null,
+        credential: { required: true, keyUrl: 'file:///tmp/key' },
+      }],
+    }).success).toBe(false);
+  });
+
   it('defines a strict redacted exact-target model projection contract', () => {
     const request = {
       machineId: 'machine-1',
@@ -260,6 +727,7 @@ describe('provider machine RPC contracts', () => {
         connectionRole: 'named', connectionDisplayNameMode: 'custom',
         connectionRevision: 1,
         modelLoadAction: 'descriptor_absent',
+        modelLoadPreflightPolicy: null,
         authorization: { authorized: true }, manualModelPolicy: 'allowed', supportsFreeformModelIds: true,
         suppressedConnectedServiceIds: ['openai-codex'],
         rows: [{
@@ -267,7 +735,7 @@ describe('provider machine RPC contracts', () => {
           descriptor: { id: 'same-id', name: 'Same' },
           sources: { manual: false, static: true, probe: false }, confidence: 'verified_static',
           compatibility: {
-            result: { status: 'experimental', selectedProtocol: 'openai-responses', reasons: ['missing evidence'], confirmationScope: { kind: 'model', modelId: 'same-id' } },
+            result: { status: 'experimental', selectedProtocol: 'openai-responses', reasons: ['compatibility_evidence_missing'], confirmationScope: { kind: 'model', modelId: 'same-id' } },
             compatibilityFingerprint: 'compatibility:v1:abc', confirmed: false,
           },
           endpointHealth: 'not_checked', catalog: { stale: false }, loadState: 'unknown',
@@ -287,6 +755,40 @@ describe('provider machine RPC contracts', () => {
     expect(DaemonProviderModelProjectionResponseV1Schema.safeParse({
       ...response, groups: [{ ...response.groups[0], endpointUrl: 'https://private.example' }],
     }).success).toBe(false);
+  });
+
+  it('closes current Provider selection recovery over typed missing-source, deleted-connection, and missing-model states', () => {
+    const ref = {
+      agentTargetKey: 'backend:codex', providerConnectionId: 'pc_1', modelId: 'same-id',
+    } as const;
+    const cases = [
+      {
+        kind: 'contribution_unavailable',
+        error: createProviderErrorV1('provider_contribution_unavailable', { connectionId: 'pc_1', machineId: 'machine-1' }),
+      },
+      {
+        kind: 'connection_deleted',
+        error: createProviderErrorV1('provider_connection_not_found', { connectionId: 'pc_1', machineId: 'machine-1' }),
+      },
+      {
+        kind: 'model_not_found',
+        error: createProviderErrorV1('provider_model_not_found', { connectionId: 'pc_1', machineId: 'machine-1' }),
+      },
+    ] as const;
+    for (const recovery of cases) {
+      expect(DaemonProviderModelProjectionResponseV1Schema.parse({
+        status: 'success',
+        agentTargetKey: 'backend:codex',
+        groups: [],
+        currentSelectionRecovery: {
+          ...recovery,
+          ref,
+          displaySnapshot: {
+            providerName: 'Gateway', connectionName: 'Work', modelName: 'Same',
+          },
+        },
+      })).toMatchObject({ currentSelectionRecovery: recovery });
+    }
   });
 
   it('accepts only intent-level bounded model settings mutations', () => {
@@ -327,6 +829,9 @@ describe('provider machine RPC contracts', () => {
     expect(DaemonProviderModelLoadRequestV1Schema.parse({
       action: 'load', connectionId: 'pc_1', machineId: 'machine-1', modelId: 'model-a',
     })).toEqual({ action: 'load', connectionId: 'pc_1', machineId: 'machine-1', modelId: 'model-a' });
+    expect(DaemonProviderModelLoadRequestV1Schema.parse({
+      action: 'cancel', connectionId: 'pc_1', machineId: 'machine-1', modelId: 'model-a',
+    })).toEqual({ action: 'cancel', connectionId: 'pc_1', machineId: 'machine-1', modelId: 'model-a' });
     expect(DaemonProviderModelsResponseV1Schema.parse({
       status: 'success', connectionId: 'pc_1', connectionRevision: 4,
       manualModelPolicy: 'allowed',

@@ -103,7 +103,9 @@ describe('createStrictSafeGuardedRequireRspackPlugin', () => {
             constructor(public readonly value: string) {}
         }
         const updatedAssets: Record<string, FakeRawSource> = {};
-        let registeredCallback: ((assets: Record<string, { source: () => string }>) => void) | null = null;
+        const registeredCallback: {
+            current?: (assets: Record<string, { source: () => string }>) => void;
+        } = {};
         const compiler: RspackCompatibleCompiler = {
             hooks: {
                 compilation: {
@@ -112,7 +114,7 @@ describe('createStrictSafeGuardedRequireRspackPlugin', () => {
                             hooks: {
                                 processAssets: {
                                     tap: (_options, cb) => {
-                                        registeredCallback = cb;
+                                        registeredCallback.current = cb;
                                     },
                                 },
                             },
@@ -131,9 +133,9 @@ describe('createStrictSafeGuardedRequireRspackPlugin', () => {
 
         const plugin = createStrictSafeGuardedRequireRspackPlugin();
         plugin.apply(compiler);
-        expect(registeredCallback).not.toBeNull();
+        expect(registeredCallback.current).toBeTypeOf('function');
 
-        registeredCallback?.({
+        registeredCallback.current?.({
             'ios.bundle.js': { source: () => REAL_GUARDED_REQUIRE_RUNTIME_SNIPPET },
             'ios.bundle.js.map': { source: () => '{"version":3}' },
             'unrelated.js': { source: () => 'export const x = 1;' },

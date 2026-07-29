@@ -10,6 +10,12 @@ describe('BackendTargetRefV2 compatibility', () => {
     expect(typeof (protocol as any).buildBackendTargetKeyV2).toBe('function');
     expect(typeof (protocol as any).parseBackendTargetKeyV2).toBe('function');
     expect(typeof (protocol as any).readBackendTargetRefV2).toBe('function');
+    expect((protocol as any).BackendTargetKeyV2Schema.safeParse(
+      'agent:acme.plugin/provider',
+    ).success).toBe(true);
+    expect((protocol as any).BackendTargetKeyV2InputSchema.parse('agent:ohMyPi')).toBe(
+      'agent:happier.agent.ohmypi/ohmypi',
+    );
   });
 
   it('reads V2 targets, V2 keys, and legacy V1 shapes into the additive V2 form', () => {
@@ -72,6 +78,12 @@ describe('BackendTargetRefV2 compatibility', () => {
       configuredBackendId: 'review-bot',
       sourceKind: 'configured',
     });
+    expect((protocol as any).BackendTargetKeyV2InputSchema.parse('agent:claude')).toBe(
+      'backend:claude',
+    );
+    expect((protocol as any).BackendTargetKeyV2InputSchema.parse('acpBackend:claude')).toBe(
+      'backend:claude:configured:claude',
+    );
   });
 
   it('retains the legacy builtInAgent carrier for plugin backend ids at V1 compatibility boundaries', () => {
@@ -190,5 +202,39 @@ describe('BackendTargetRefV2 compatibility', () => {
       configuredBackendId: 'review-bot',
       sourceKind: 'configured',
     });
+  });
+
+  it('uses structured durable Oh My Pi identity while keeping flat runtime routing derived', () => {
+    const runtimeTarget = {
+      kind: 'backend',
+      backendId: 'ohMyPi',
+      sourceKind: 'built_in',
+    };
+    const persistedTarget = {
+      kind: 'agent',
+      identity: {
+        pluginId: 'happier.agent.ohmypi',
+        localId: 'ohmypi',
+      },
+    };
+
+    expect((protocol as any).writePersistedBackendTargetRefV2(runtimeTarget)).toEqual(persistedTarget);
+    expect((protocol as any).readBackendTargetRefV2(persistedTarget)).toEqual(runtimeTarget);
+    expect((protocol as any).readBackendTargetRefV2({
+      kind: 'builtInAgent',
+      agentId: 'ohMyPi',
+    })).toEqual(runtimeTarget);
+    expect((protocol as any).buildBackendTargetKeyV2(runtimeTarget)).toBe(
+      'agent:happier.agent.ohmypi/ohmypi',
+    );
+    expect((protocol as any).parseBackendTargetKeyV2(
+      'agent:happier.agent.ohmypi/ohmypi',
+    )).toEqual(runtimeTarget);
+    expect((protocol as any).readBackendTargetRefV2(
+      'agent:happier.agent.ohmypi/ohmypi',
+    )).toEqual(runtimeTarget);
+    expect((protocol as any).readBackendTargetRefV2('agent:ohMyPi')).toEqual(runtimeTarget);
+    expect(JSON.stringify((protocol as any).writePersistedBackendTargetRefV2(runtimeTarget)))
+      .not.toContain('ohMyPi');
   });
 });

@@ -1,5 +1,4 @@
 import {
-  ANTIGRAVITY_AGENT_CLI_RUNTIME,
   ANTIGRAVITY_AGENT_ID,
   ANTIGRAVITY_BACKEND_ID,
   ANTIGRAVITY_BINARY_NAME,
@@ -19,7 +18,7 @@ export const AGENT_DEFINITION = Object.freeze({
       supportedServiceIds: ['gemini'],
       supportedKindsByServiceId: { gemini: ['token'] },
     },
-    resume: { vendorResume: 'unsupported', vendorResumeIdField: null },
+    resume: { vendorResume: 'supported', vendorResumeIdField: 'antigravitySessionId' },
     sessionStorage: { direct: false, persisted: true },
     sessionCapabilities: {
       sessionListing: 'unsupported',
@@ -40,25 +39,6 @@ export const AGENT_DEFINITION = Object.freeze({
   sessionModeDescriptor: { source: 'none', semantics: 'none', runtimeSwitch: 'none' },
   sessionModesKind: 'none',
   modelConfig: ANTIGRAVITY_AGENT_MODEL_CONFIG,
-  authProbeConfig: {
-    agentId: ANTIGRAVITY_AGENT_ID,
-    binaryNames: [ANTIGRAVITY_BINARY_NAME],
-    statusCommand: null,
-    parser: 'none',
-    backgroundChecks: 'manual_only',
-  },
-  localCli: {
-    agentId: ANTIGRAVITY_AGENT_ID,
-    detectKey: ANTIGRAVITY_BINARY_NAME,
-    machineLoginKey: 'antigravity-cli',
-    supportKind: 'login_terminal',
-    loginLaunch: {
-      command: ANTIGRAVITY_BINARY_NAME,
-      args: [],
-    },
-  },
-  agentCliRuntime: ANTIGRAVITY_AGENT_CLI_RUNTIME,
-  agentSettings: null,
   runtimeContributions: {
     agentCatalogEntry: {
       importName: 'ANTIGRAVITY_AGENT_RUNTIME_CONTRIBUTION',

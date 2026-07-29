@@ -39,6 +39,7 @@ export const UsageObservationCostSchema = z.object({
   ]).optional(),
   currency: z.string().trim().min(1),
   breakdown: z.record(z.string(), NonNegativeNumberSchema).optional(),
+  effectiveUsd: NonNegativeNumberSchema.optional(),
 }).strict();
 export type UsageObservationCost = z.infer<typeof UsageObservationCostSchema>;
 
@@ -51,7 +52,7 @@ export type UsageObservationContext = z.infer<typeof UsageObservationContextSche
 export const UsageEventIngestRequestSchema = z.object({
   sessionId: z.string().trim().min(1),
   observedAt: z.number().int().min(0),
-  providerId: z.string().trim().min(1),
+  agentId: z.string().trim().min(1),
   backendMode: OptionalNonEmptyStringSchema,
   modelId: OptionalNonEmptyStringSchema,
   projectKey: OptionalNonEmptyStringSchema,
@@ -78,7 +79,7 @@ export const UsageAnalyticsGranularitySchema = z.enum([
 export type UsageAnalyticsGranularity = z.infer<typeof UsageAnalyticsGranularitySchema>;
 
 export const UsageAnalyticsBreakdownDimensionSchema = z.enum([
-  'provider',
+  'agent',
   'model',
   'session',
   'project',
@@ -90,7 +91,7 @@ export type UsageAnalyticsBreakdownDimension = z.infer<typeof UsageAnalyticsBrea
 
 export const UsageAnalyticsQueryFiltersSchema = z.object({
   sessionIds: z.array(z.string().trim().min(1)).optional(),
-  providerIds: z.array(z.string().trim().min(1)).optional(),
+  agentIds: z.array(z.string().trim().min(1)).optional(),
   modelIds: z.array(z.string().trim().min(1)).optional(),
   projectKeys: z.array(z.string().trim().min(1)).optional(),
   workspaceIds: z.array(z.string().trim().min(1)).optional(),
@@ -105,6 +106,7 @@ export const UsageAnalyticsQueryRequestSchema = z.object({
     endMs: z.number().int().min(0).optional(),
   }).strict().optional(),
   granularity: UsageAnalyticsGranularitySchema.default('day'),
+  timeZoneOffsetMinutes: z.number().int().min(-840).max(840).default(0),
   costMode: z.enum(['auto', 'reported', 'estimated']).optional(),
   breakdowns: z.array(UsageAnalyticsBreakdownDimensionSchema).max(7).optional(),
   filters: UsageAnalyticsQueryFiltersSchema.optional(),
@@ -123,6 +125,7 @@ export const UsageAnalyticsTotalsSchema = z.object({
   eventCount: z.number().int().min(0),
   tokens: UsageObservationTokensSchema,
   cost: UsageObservationCostSchema,
+  context: UsageObservationContextSchema.optional(),
 }).strict();
 export type UsageAnalyticsTotals = z.infer<typeof UsageAnalyticsTotalsSchema>;
 
@@ -132,6 +135,7 @@ export const UsageAnalyticsSeriesBucketSchema = z.object({
   eventCount: z.number().int().min(0),
   tokens: UsageObservationTokensSchema,
   cost: UsageObservationCostSchema,
+  context: UsageObservationContextSchema.optional(),
 }).strict();
 export type UsageAnalyticsSeriesBucket = z.infer<typeof UsageAnalyticsSeriesBucketSchema>;
 
@@ -141,11 +145,14 @@ export const UsageAnalyticsBreakdownEntrySchema = z.object({
   eventCount: z.number().int().min(0),
   tokens: UsageObservationTokensSchema,
   cost: UsageObservationCostSchema,
+  context: UsageObservationContextSchema.optional(),
+  latestContextUsedTokens: NonNegativeNumberSchema.optional(),
+  latestContextWindowTokens: NonNegativeNumberSchema.optional(),
 }).strict();
 export type UsageAnalyticsBreakdownEntry = z.infer<typeof UsageAnalyticsBreakdownEntrySchema>;
 
 export const UsageAnalyticsBreakdownsSchema = z.object({
-  provider: z.array(UsageAnalyticsBreakdownEntrySchema).optional(),
+  agent: z.array(UsageAnalyticsBreakdownEntrySchema).optional(),
   model: z.array(UsageAnalyticsBreakdownEntrySchema).optional(),
   session: z.array(UsageAnalyticsBreakdownEntrySchema).optional(),
   project: z.array(UsageAnalyticsBreakdownEntrySchema).optional(),
@@ -187,6 +194,7 @@ const UsageAnalyticsInsightsSchema = z.object({
   busiestMonth: UsageAnalyticsKeyedLabelSchema.optional(),
   busiestDay: UsageAnalyticsKeyedLabelSchema.optional(),
   busiestHour: UsageAnalyticsKeyedLabelSchema.optional(),
+  cacheSavingsUsd: NonNegativeNumberSchema.optional(),
 }).strict();
 
 const UsageAnalyticsLeaderSchema = z.object({
@@ -198,7 +206,7 @@ const UsageAnalyticsLeaderSchema = z.object({
 }).strict();
 
 const UsageAnalyticsLeadersSchema = z.object({
-  providers: z.array(UsageAnalyticsLeaderSchema).optional(),
+  agents: z.array(UsageAnalyticsLeaderSchema).optional(),
   models: z.array(UsageAnalyticsLeaderSchema).optional(),
   sessions: z.array(UsageAnalyticsLeaderSchema).optional(),
   projects: z.array(UsageAnalyticsLeaderSchema).optional(),
@@ -213,7 +221,9 @@ const UsageAnalyticsTimelineLeaderBucketSchema = z.object({
 }).strict();
 
 const UsageAnalyticsMessageStatsSchema = z.object({
+  /** Usage-contributing sessions selected by the query; identical to insights.sessionsUsed when insights are present. */
   sessionCount: z.number().int().min(0),
+  /** Messages created in those sessions within the query's date window. */
   messageCount: z.number().int().min(0),
 }).strict();
 

@@ -1,9 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 
 import type {
-    ConnectedServiceCredentialKind,
-    ConnectedServiceCredentialRecordV1,
-    ConnectedServiceId,
     ScmHostingProviderContribution,
     ScmHostingRepositoryPublishTarget,
     ScmHostingRepositorySummary,
@@ -15,6 +12,7 @@ import type {
     ScmPullRequestReference,
     ScmPullRequestState,
     ScmPullRequestSummary,
+    ManagedExecutableRef,
 } from '@happier-dev/protocol';
 
 export type ScmHostingProviderRemoteDetectionInput = Readonly<{
@@ -26,6 +24,10 @@ export type ScmHostingProviderResolvedRemote = Readonly<{
     id: string;
     kind: string;
     displayName: string;
+    /** Released-predecessor display field retained during the provider-ref transition. */
+    name?: string;
+    /** Canonical authored category when the predecessor-safe wire kind is `unknown`. */
+    providerKind?: string;
     baseUrl: string;
     repositoryWebUrl?: string;
     nameWithOwner?: string;
@@ -74,83 +76,6 @@ export type ScmHostingProviderRuntimeBasicAuthMaterializationResult =
         reason: string;
     }>;
 
-export type ScmHostingProviderRuntimeAuthMaterializationMissingReason =
-    | 'unsupported_materialization'
-    | 'unsupported_provider'
-    | 'unsupported_host'
-    | 'credential_unavailable';
-
-export type ScmHostingProviderRuntimeTokenMaterializerRequest = Readonly<{
-    kind: 'scm_hosting_token';
-    providerId: string;
-    host: string;
-    profileId?: string | null;
-    records: readonly ConnectedServiceCredentialRecordV1[];
-}>;
-
-export type ScmHostingProviderRuntimeTokenMaterializerResult =
-    | Readonly<{
-        kind: 'available';
-        token: string;
-        profileId: string;
-        serviceId: ConnectedServiceId;
-        credentialKind: ConnectedServiceCredentialKind;
-        providerAccountId: string | null;
-        providerEmail: string | null;
-    }>
-    | Readonly<{
-        kind: 'missing';
-        reason: ScmHostingProviderRuntimeAuthMaterializationMissingReason;
-    }>;
-
-export type ScmHostingProviderRuntimeTokenMaterializer = Readonly<{
-    serviceId: ConnectedServiceId;
-    materialize(
-        request: ScmHostingProviderRuntimeTokenMaterializerRequest
-    ): Promise<ScmHostingProviderRuntimeTokenMaterializerResult> | ScmHostingProviderRuntimeTokenMaterializerResult;
-}>;
-
-export type ScmHostingProviderRuntimeBasicAuthMaterializerRequest = Readonly<{
-    kind: 'scm_hosting_basic_auth';
-    providerId: string;
-    host: string;
-    profileId?: string | null;
-    records: readonly ConnectedServiceCredentialRecordV1[];
-}>;
-
-export type ScmHostingProviderRuntimeBasicAuthMaterializerResult =
-    | Readonly<{
-        kind: 'available';
-        username: string;
-        password: string;
-        profileId: string;
-        serviceId: ConnectedServiceId;
-        credentialKind: 'bitbucket_basic_auth';
-        providerAccountId: string | null;
-        providerEmail: string | null;
-    }>
-    | Readonly<{
-        kind: 'missing';
-        reason: ScmHostingProviderRuntimeAuthMaterializationMissingReason;
-    }>;
-
-export type ScmHostingProviderRuntimeBasicAuthMaterializer = Readonly<{
-    serviceId: ConnectedServiceId;
-    materialize(
-        request: ScmHostingProviderRuntimeBasicAuthMaterializerRequest
-    ): Promise<ScmHostingProviderRuntimeBasicAuthMaterializerResult> | ScmHostingProviderRuntimeBasicAuthMaterializerResult;
-}>;
-
-export type ScmHostingProviderRuntimeCommandResolution =
-    | Readonly<{
-        kind: 'available';
-        source: 'system' | 'managed' | string;
-        binPath: string;
-    }>
-    | Readonly<{
-        kind: 'missing';
-    }>;
-
 export type ScmHostingProviderRuntimeCommandResult = Readonly<{
     ok: boolean;
     stdout: string;
@@ -158,8 +83,9 @@ export type ScmHostingProviderRuntimeCommandResult = Readonly<{
     exitCode: number | null;
 }>;
 
-export type ScmHostingProviderDescriptor = Readonly<Omit<ScmHostingProviderContribution, 'urlSafety'> & {
+export type ScmHostingProviderDescriptor = Readonly<Omit<ScmHostingProviderContribution, 'title'> & {
     pluginId?: string;
+    displayName: string;
     urlSafety?: Readonly<{
         allowedSchemes: readonly string[];
         allowedBaseUrls: readonly string[];
@@ -169,6 +95,7 @@ export type ScmHostingProviderDescriptor = Readonly<Omit<ScmHostingProviderContr
 
 export type ScmHostingProviderRuntimeBinding = Readonly<{
     pluginId: string;
+    generation: string;
     registration: ScmHostingProviderRuntimeRegistration;
 }>;
 
@@ -227,23 +154,22 @@ export type ScmHostingProviderRuntimeServices = Readonly<{
         host: string;
         provider: ScmHostingProviderRef;
         profileId?: string | null;
-    }>) => Promise<ScmHostingProviderRuntimeTokenMaterializationResult>;
+    }>, options?: Readonly<{ signal?: AbortSignal }>) => Promise<ScmHostingProviderRuntimeTokenMaterializationResult>;
     resolveScmHostingBasicAuthMaterialization?: (input: Readonly<{
         kind: 'scm_hosting_basic_auth';
         providerId: string;
         host: string;
         provider: ScmHostingProviderRef;
         profileId?: string | null;
-    }>) => Promise<ScmHostingProviderRuntimeBasicAuthMaterializationResult>;
-    resolveInstallableCommand?: (input: Readonly<{
-        capabilityId: string;
-    }>) => Promise<ScmHostingProviderRuntimeCommandResolution>;
-    runCommand?: (input: Readonly<{
-        binPath: string;
+    }>, options?: Readonly<{ signal?: AbortSignal }>) => Promise<ScmHostingProviderRuntimeBasicAuthMaterializationResult>;
+    executeCommand?: (input: Readonly<{
+        executable: ManagedExecutableRef;
         args: readonly string[];
         timeoutMs: number;
         env?: Readonly<Record<string, string>>;
-    }>) => Promise<ScmHostingProviderRuntimeCommandResult>;
+        maxStdoutBytes?: number;
+        maxStderrBytes?: number;
+    }>, options?: Readonly<{ signal?: AbortSignal }>) => Promise<ScmHostingProviderRuntimeCommandResult>;
 }>;
 
 const SCM_HOSTING_PROVIDER_RUNTIME_SERVICES_STORAGE_KEY = Symbol.for(
@@ -263,20 +189,56 @@ function resolveScmHostingProviderRuntimeServicesStorage(): AsyncLocalStorage<Sc
 }
 
 const scmHostingProviderRuntimeServicesStorage = resolveScmHostingProviderRuntimeServicesStorage();
+const scmHostingProviderOperationSignalStorage = new AsyncLocalStorage<AbortSignal>();
 
 export function runWithScmHostingProviderRuntimeServices<T>(
     services: ScmHostingProviderRuntimeServices,
     callback: () => T,
+    options?: Readonly<{ signal?: AbortSignal }>,
 ): T {
-    return scmHostingProviderRuntimeServicesStorage.run(services, callback);
+    return scmHostingProviderRuntimeServicesStorage.run(services, () => (
+        options?.signal
+            ? scmHostingProviderOperationSignalStorage.run(options.signal, callback)
+            : callback()
+    ));
 }
 
 export function readCurrentScmHostingProviderRuntimeServices(): ScmHostingProviderRuntimeServices | null {
-    return scmHostingProviderRuntimeServicesStorage.getStore() ?? null;
+    const services = scmHostingProviderRuntimeServicesStorage.getStore() ?? null;
+    const signal = scmHostingProviderOperationSignalStorage.getStore();
+    if (!services || !signal) return services;
+    return Object.freeze({
+        ...services,
+        ...(services.resolveScmHostingTokenMaterialization ? {
+            resolveScmHostingTokenMaterialization: (
+                input: Parameters<NonNullable<ScmHostingProviderRuntimeServices['resolveScmHostingTokenMaterialization']>>[0],
+                options?: Parameters<NonNullable<ScmHostingProviderRuntimeServices['resolveScmHostingTokenMaterialization']>>[1],
+            ) => services.resolveScmHostingTokenMaterialization!(
+                input,
+                options ?? { signal },
+            ),
+        } : {}),
+        ...(services.resolveScmHostingBasicAuthMaterialization ? {
+            resolveScmHostingBasicAuthMaterialization: (
+                input: Parameters<NonNullable<ScmHostingProviderRuntimeServices['resolveScmHostingBasicAuthMaterialization']>>[0],
+                options?: Parameters<NonNullable<ScmHostingProviderRuntimeServices['resolveScmHostingBasicAuthMaterialization']>>[1],
+            ) => services.resolveScmHostingBasicAuthMaterialization!(
+                input,
+                options ?? { signal },
+            ),
+        } : {}),
+        ...(services.executeCommand ? {
+            executeCommand: (
+                input: Parameters<NonNullable<ScmHostingProviderRuntimeServices['executeCommand']>>[0],
+                options?: Parameters<NonNullable<ScmHostingProviderRuntimeServices['executeCommand']>>[1],
+            ) => services.executeCommand!(input, options ?? { signal }),
+        } : {}),
+    });
 }
 
 type ScmHostingProviderOperationRuntimeInput = Readonly<{
     runtimeServices?: ScmHostingProviderRuntimeServices;
+    signal?: AbortSignal;
 }>;
 
 export type ScmHostingProviderPullRequestListInput = ScmHostingProviderOperationRuntimeInput & Readonly<{
@@ -380,8 +342,4 @@ export type ScmHostingProviderRuntimeAdapter = Readonly<Record<string, unknown> 
 export type ScmHostingProviderRuntimeRegistration = Readonly<{
     id: string;
     adapter: ScmHostingProviderRuntimeAdapter;
-    auth?: Readonly<{
-        tokenMaterializer?: ScmHostingProviderRuntimeTokenMaterializer;
-        basicAuthMaterializer?: ScmHostingProviderRuntimeBasicAuthMaterializer;
-    }>;
 }>;

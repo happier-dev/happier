@@ -17,6 +17,11 @@ const LegacyProfileEnvironmentNameSchema = z.string().regex(/^[A-Z_][A-Z0-9_]*$/
 
 export const ProviderLegacyProfileMigrationDescriptorV1Schema = z.object({
   sourceProfileId: z.string().trim().min(1).max(256),
+  descriptorRevision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).default(1),
+  implicitModelAliasReplacements: z.array(z.object({
+    legacyModelId: ProviderModelIdSchema,
+    replacementModelId: ProviderModelIdSchema,
+  }).strict()).max(16).default([]),
   credentialBinding: z.object({
     legacyEnvVarName: LegacyProfileEnvironmentNameSchema,
     credentialSlotId: ProviderLocalIdSchema,
@@ -37,6 +42,15 @@ export const ProviderLegacyProfileMigrationDescriptorV1Schema = z.object({
   if (value.primaryModel && !value.migratedEnvironmentVariables.some((entry) => entry.name === value.primaryModel?.legacyEnvVarName)) {
     ctx.addIssue({ code: 'custom', path: ['primaryModel', 'legacyEnvVarName'], message: 'Primary model environment must have a migrated disposition' });
   }
+  const legacyIds = value.implicitModelAliasReplacements.map((entry) => entry.legacyModelId);
+  if (new Set(legacyIds).size !== legacyIds.length) {
+    ctx.addIssue({ code: 'custom', path: ['implicitModelAliasReplacements'], message: 'Implicit model aliases must be unique' });
+  }
+  value.implicitModelAliasReplacements.forEach((entry, index) => {
+    if (entry.legacyModelId === entry.replacementModelId) {
+      ctx.addIssue({ code: 'custom', path: ['implicitModelAliasReplacements', index], message: 'Implicit model alias replacement must change the model id' });
+    }
+  });
 });
 export type ProviderLegacyProfileMigrationDescriptorV1 = z.infer<typeof ProviderLegacyProfileMigrationDescriptorV1Schema>;
 
@@ -85,8 +99,8 @@ export const ProviderContributionV1Schema = z.object({
     if (protocols.has(endpoint.protocol)) ctx.addIssue({ code: 'custom', path: ['endpointTemplates', index, 'protocol'], message: 'Only one endpoint per protocol is allowed' });
     endpointIds.add(endpoint.id);
     protocols.add(endpoint.protocol);
-    if (value.kind !== 'local' && endpoint.localUrlCandidates) {
-      ctx.addIssue({ code: 'custom', path: ['endpointTemplates', index, 'localUrlCandidates'], message: 'Local URL candidates are local-contribution only' });
+    if (value.kind !== 'local' && !value.discovery && endpoint.localUrlCandidates) {
+      ctx.addIssue({ code: 'custom', path: ['endpointTemplates', index, 'localUrlCandidates'], message: 'Local URL candidates require a local contribution or discovery descriptor' });
     }
     if (endpoint.localUrlCandidates
       && new Set(endpoint.localUrlCandidates).size !== endpoint.localUrlCandidates.length) {
@@ -115,9 +129,6 @@ export const ProviderContributionV1Schema = z.object({
     if (!hasLoadStateParser) ctx.addIssue({ code: 'custom', path: ['modelLoad'], message: 'Model loading requires a catalog parser that reports load state' });
   }
   if (value.discovery) {
-    if (value.kind !== 'local') {
-      ctx.addIssue({ code: 'custom', path: ['discovery'], message: 'Discovery is local-contribution only' });
-    }
     if (!endpointIds.has(value.discovery.availabilityProbe.endpointTemplateId)) {
       ctx.addIssue({ code: 'custom', path: ['discovery', 'availabilityProbe', 'endpointTemplateId'], message: 'Discovery availability endpoint is not declared' });
     }
@@ -152,6 +163,18 @@ export const ProviderContributionV1Schema = z.object({
         ctx.addIssue({ code: 'custom', path: ['legacyProfileMigrations', index, 'credentialBinding', 'credentialSlotId'], message: 'Legacy credential binding must reference the contribution credential slot' });
       }
     }
+    const staticModelIds = new Set('staticModels' in value.catalog
+      ? value.catalog.staticModels.map((model) => model.id)
+      : []);
+    descriptor.implicitModelAliasReplacements.forEach((replacement, replacementIndex) => {
+      if (!staticModelIds.has(replacement.replacementModelId)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['legacyProfileMigrations', index, 'implicitModelAliasReplacements', replacementIndex, 'replacementModelId'],
+          message: 'Implicit model alias replacements must target a verified static model',
+        });
+      }
+    });
   });
 });
 export type ProviderContributionV1 = z.infer<typeof ProviderContributionV1Schema>;

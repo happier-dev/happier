@@ -1,11 +1,10 @@
 import type {
-  PluginContextV1,
-  SessionRuntimeActivityPublisher,
   SessionSystemRecordReadRequestV1,
   SessionSystemRecordReadResultV1,
   SessionSystemRecordWriteRequestV1,
   SessionMetadataWriteRequestV1,
-} from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/experimental/sessions';
+import type { AgentTranscriptFileFollowService } from '@happier-dev/plugin-sdk/agent-runtime';
 import {
   ACTIVITY_SESSION_SYSTEM_RECORD_KINDS,
   SESSION_SYSTEM_RECORD_ACTIVITY_NAMESPACE,
@@ -28,7 +27,7 @@ import {
   type ClaudeWorkflowJournalFollower,
 } from './journalFollower.js';
 import type { WorkflowActivityObservation } from './types.js';
-import { buildClaudeProviderTaskRuntimeActivitySourceId } from '../runtime/remote/sdk/providerActivity.js';
+import type { ClaudeProviderTaskActivity } from '../runtime/remote/sdk/providerActivity.js';
 
 /**
  * Centralized Claude Dynamic Workflow ACTIVITY runtime for the unified terminal (CWF2/CWF3/CWF4).
@@ -70,7 +69,10 @@ export type ClaudeWorkflowMetadataWriter = (
 
 export type ClaudeUnifiedWorkflowRuntime = Readonly<{
   /** Observe one raw transcript value (same raw channel as the goal source). Non-workflow noise ignored. */
-  observeTranscriptMessage(message: unknown): WorkflowActivityObservation;
+  observeTranscriptMessage(
+    message: unknown,
+    context?: Readonly<{ historicalReplay?: boolean }>,
+  ): WorkflowActivityObservation;
   /** Workflow-owned subagent tool-use ids — the CWF4 hook to suppress duplicate work-state rows. */
   getWorkflowOwnedAgentToolUseIds(): ReadonlySet<string>;
   /** Terminate persisted non-terminal runs that this fresh runtime did not replay live. */
@@ -93,11 +95,11 @@ export function createClaudeUnifiedWorkflowRuntime(params: Readonly<{
   /** Headline metadata write, bound to the host `ctx.sessions.current.writeMetadata` capability. */
   writeMetadata: ClaudeWorkflowMetadataWriter;
   /** Optional host transcript file follower, used for Claude Workflow sidecar journals. */
-  fileFollow?: Pick<PluginContextV1['agentRuntime']['transcripts']['fileFollow'], 'follow'>;
-  /** Optional provider-neutral runtime activity projection publisher for live workflow liveness. */
-  runtimeActivityPublisher?: SessionRuntimeActivityPublisher | null;
+  fileFollow?: Pick<AgentTranscriptFileFollowService, 'follow'>;
   /** Persisted headline from the session snapshot that created this fresh runtime. */
   initialWorkflowActivityHeadline?: unknown;
+  /** Feed exact Workflow membership changes into the runtime's existing provider-activity ledger. */
+  onProviderTaskActivity?: (activity: ClaudeProviderTaskActivity) => Promise<void> | void;
   /** Grace for transcript replay to re-observe a genuinely resumed persisted run. */
   startupReconcileGraceMs?: number;
   debounceMs?: number;
@@ -109,13 +111,6 @@ export function createClaudeUnifiedWorkflowRuntime(params: Readonly<{
     getCurrentClaudeSessionId: params.getCurrentClaudeSessionId,
   });
 
-  // W-4 lease heartbeat: tie runtime-activity liveness to the durable write cadence. Assigned after
-  // the runtime-activity helpers below exist; called on EVERY successful durable commit (not only on
-  // `changedRunIds` observations) so a long-running workflow with sparse progress — or a turn-end
-  // coalesced flush that commits without a fresh observation — never lets the ephemeral "working"
-  // lease lapse while its durable record still says active.
-  let renewRuntimeLeaseAfterCommit: (snapshot: SessionWorkflowRunSnapshotV1) => void = () => {};
-
   const commitRecord = async (snapshot: SessionWorkflowRunSnapshotV1): Promise<void> => {
     await params.writeSystemRecord({
       namespace: WORKFLOW_ACTIVITY_NAMESPACE,
@@ -124,7 +119,6 @@ export function createClaudeUnifiedWorkflowRuntime(params: Readonly<{
       payload: snapshot,
       reason: 'claude_workflow_activity_record',
     });
-    renewRuntimeLeaseAfterCommit(snapshot);
   };
 
   const readCommittedRunSnapshot = params.readSystemRecord
@@ -178,112 +172,22 @@ export function createClaudeUnifiedWorkflowRuntime(params: Readonly<{
   });
 
   let journalFollower: ClaudeWorkflowJournalFollower | null = null;
-  const publishedRuntimeSourceIdByRunId = new Map<string, string>();
-
-  const runRuntimeActivityEffect = (
-    message: string,
-    effect: () => Promise<void> | void,
+  let providerTaskActivityTail: Promise<void> = Promise.resolve();
+  const publishProviderTaskActivities = (
+    activities: readonly ClaudeProviderTaskActivity[] | undefined,
   ): void => {
-    try {
-      void Promise.resolve(effect()).catch((error) => {
-        params.logError?.(message, error);
-      });
-    } catch (error) {
-      params.logError?.(message, error);
+    if (!params.onProviderTaskActivity || !activities?.length) return;
+    for (const activity of activities) {
+      const publish = async (): Promise<void> => {
+        try {
+          await params.onProviderTaskActivity?.(activity);
+        } catch (error) {
+          params.logError?.('exact workflow provider-task activity failed (non-fatal)', error);
+        }
+      };
+      providerTaskActivityTail = providerTaskActivityTail.then(publish, publish);
     }
   };
-
-  const workflowRuntimeSourceId = (runId: string): string | null => {
-    const sourceKey = tracker.getRuntimeActivitySourceKeyForRunId(runId) ?? runId;
-    return buildClaudeProviderTaskRuntimeActivitySourceId(sourceKey);
-  };
-
-  const ensurePublishedRuntimeSourceId = (
-    runId: string,
-    sourceId: string,
-    runtimeActivityPublisher: SessionRuntimeActivityPublisher,
-  ): boolean => {
-    const existing = publishedRuntimeSourceIdByRunId.get(runId);
-    if (existing === sourceId) return false;
-    if (existing) {
-      runRuntimeActivityEffect('workflow runtime activity source rekey clear failed', () => (
-        runtimeActivityPublisher.clearSource(existing)
-      ));
-    }
-    publishedRuntimeSourceIdByRunId.set(runId, sourceId);
-    return true;
-  };
-
-  const publishRuntimeActivityObservation = (observation: WorkflowActivityObservation): void => {
-    const runtimeActivityPublisher = params.runtimeActivityPublisher;
-    if (!runtimeActivityPublisher) return;
-
-    const terminalRunIds = new Set(observation.terminalRunIds);
-    const activeRunIds = new Set([
-      ...observation.startedRunIds,
-      ...observation.changedRunIds,
-      ...(observation.runtimeActivityRunIds ?? []),
-    ]);
-    for (const runId of activeRunIds) {
-      if (terminalRunIds.has(runId)) continue;
-      const sourceId = workflowRuntimeSourceId(runId);
-      if (!sourceId) continue;
-      if (ensurePublishedRuntimeSourceId(runId, sourceId, runtimeActivityPublisher)) {
-        runRuntimeActivityEffect('workflow runtime activity source active failed', () => (
-          runtimeActivityPublisher.markSourceActive({
-            sourceId,
-            sourceKind: 'provider_detached_task',
-          })
-        ));
-      } else {
-        runRuntimeActivityEffect('workflow runtime activity source renew failed', () => (
-          runtimeActivityPublisher.renewSource(sourceId)
-        ));
-      }
-    }
-    for (const runId of observation.terminalRunIds) {
-      const sourceId = workflowRuntimeSourceId(runId);
-      if (!sourceId) continue;
-      const existingSourceId = publishedRuntimeSourceIdByRunId.get(runId);
-      publishedRuntimeSourceIdByRunId.delete(runId);
-      if (existingSourceId && existingSourceId !== sourceId) {
-        runRuntimeActivityEffect('workflow runtime activity terminal clear failed', () => (
-          runtimeActivityPublisher.clearSource(existingSourceId)
-        ));
-      }
-      runRuntimeActivityEffect('workflow runtime activity terminal clear failed', () => (
-        runtimeActivityPublisher.clearSource(sourceId)
-      ));
-    }
-  };
-
-  const clearPublishedRuntimeSources = (): void => {
-    const runtimeActivityPublisher = params.runtimeActivityPublisher;
-    const sourceIds = new Set(publishedRuntimeSourceIdByRunId.values());
-    publishedRuntimeSourceIdByRunId.clear();
-    if (!runtimeActivityPublisher) return;
-    for (const sourceId of sourceIds) {
-      runRuntimeActivityEffect('workflow runtime activity dispose clear failed', () => (
-        runtimeActivityPublisher.clearSource(sourceId)
-      ));
-    }
-  };
-
-  renewRuntimeLeaseAfterCommit = (snapshot: SessionWorkflowRunSnapshotV1): void => {
-    const runtimeActivityPublisher = params.runtimeActivityPublisher;
-    if (!runtimeActivityPublisher) return;
-    // Terminal runs clear their source via the observation path; do not renew a lease we are about
-    // to (or already did) clear.
-    if (isTerminalWorkflowRunStatus(snapshot.status)) return;
-    const sourceId = publishedRuntimeSourceIdByRunId.get(snapshot.runId) ?? workflowRuntimeSourceId(snapshot.runId);
-    if (!sourceId) return;
-    // `renewSource` is a no-op when the source is not active, so an out-of-order commit before the
-    // source is announced simply does nothing — safe.
-    runRuntimeActivityEffect('workflow runtime activity commit-heartbeat failed', () => (
-      runtimeActivityPublisher.renewSource(sourceId)
-    ));
-  };
-
   const reconcileStartupInterruptedRuns = async (
     candidates: readonly WorkflowInterruptedRunSeed[],
   ): Promise<void> => {
@@ -294,27 +198,28 @@ export function createClaudeUnifiedWorkflowRuntime(params: Readonly<{
       const observation = tracker.reconcileInterruptedRunFromHeadline(candidate, { updatedAt });
       if (observation.changedRunIds.length === 0) continue;
       changed = true;
-      publishRuntimeActivityObservation(observation);
       coalesced.notify(observation);
     }
     if (changed) await coalesced.flush();
   };
 
-  const observeTrackerValue = (message: unknown): WorkflowActivityObservation => {
-    const observation = tracker.observe(message, { updatedAt: Date.now() });
-    if (
-      observation.startedRunIds.length > 0
-      || observation.terminalRunIds.length > 0
-      || observation.changedRunIds.length > 0
-      || (observation.runtimeActivityRunIds?.length ?? 0) > 0
-    ) {
-      publishRuntimeActivityObservation(observation);
-    }
-    for (const runId of observation.terminalRunIds) {
-      journalFollower?.markRunCompleted(runId);
-    }
-    if (observation.changedRunIds.length > 0) {
-      coalesced.notify(observation);
+  const observeTrackerValue = (
+    message: unknown,
+    context?: Readonly<{ historicalReplay?: boolean }>,
+  ): WorkflowActivityObservation => {
+    const historicalReplay = context?.historicalReplay === true;
+    const observation = tracker.observe(message, {
+      updatedAt: Date.now(),
+      live: !historicalReplay,
+    });
+    if (!historicalReplay) {
+      publishProviderTaskActivities(observation.providerTaskActivities);
+      for (const runId of observation.terminalRunIds) {
+        journalFollower?.markRunCompleted(runId);
+      }
+      if (observation.changedRunIds.length > 0) {
+        coalesced.notify(observation);
+      }
     }
     return observation;
   };
@@ -357,9 +262,11 @@ export function createClaudeUnifiedWorkflowRuntime(params: Readonly<{
   }
 
   return {
-    observeTranscriptMessage(message) {
-      const observation = observeTrackerValue(message);
-      journalFollower?.observeTranscriptMessage(message);
+    observeTranscriptMessage(message, context) {
+      const observation = observeTrackerValue(message, context);
+      if (context?.historicalReplay !== true) {
+        journalFollower?.observeTranscriptMessage(message);
+      }
       return observation;
     },
     getWorkflowOwnedAgentToolUseIds() {
@@ -369,13 +276,13 @@ export function createClaudeUnifiedWorkflowRuntime(params: Readonly<{
     async flush() {
       await journalFollower?.syncAll();
       await coalesced.flush();
+      await providerTaskActivityTail;
     },
     dispose() {
       if (startupReconcileTimer !== null) {
         clearTimeout(startupReconcileTimer);
         startupReconcileTimer = null;
       }
-      clearPublishedRuntimeSources();
       journalFollower?.dispose();
       coalesced.dispose();
     },

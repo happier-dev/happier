@@ -14,6 +14,8 @@ import {
 } from './intent.js';
 import { runtimeDescriptorBinding } from './runtimeDescriptor.js';
 import { runtimeActivityBinding } from './runtimeActivity.js';
+import { externalAgentObservationBinding } from './externalAgent.js';
+import { externalSessionOperationBinding } from './externalSessionOperation.js';
 import { sessionRunnerRuntimeBinding } from './sessionRunnerRuntime.js';
 import { sessionWorkStateBinding } from './workState.js';
 import { sessionUsageLimitRecoveryBinding } from './usageLimitRecovery.js';
@@ -30,6 +32,8 @@ const SESSION_STATE_METADATA_BINDINGS = {
   'display.title': summaryTextBinding,
   'runtime.workState': sessionWorkStateBinding,
   'runtime.activity': runtimeActivityBinding,
+  'runtime.externalAgent': externalAgentObservationBinding,
+  'runtime.externalSessionOperation': externalSessionOperationBinding,
   'runtime.usageLimitRecovery': sessionUsageLimitRecoveryBinding,
   'runtime.sessionRunner': sessionRunnerRuntimeBinding,
 } satisfies Partial<{ [F in SessionStateFieldId]: SessionStateBinding<F> }>;
@@ -96,10 +100,17 @@ export function clearSessionStateFieldFromMetadata(
       delete next.sessionWorkStateV1;
       break;
     case 'runtime.activity':
+      delete next.runtimeActivityState;
       delete next.runtimeActivityActiveCount;
       delete next.runtimeActivityObservedAt;
-      delete next.runtimeActivityExpiresAt;
       delete next.runtimeActivitySourceClass;
+      delete next.runtimeActivityRevision;
+      break;
+    case 'runtime.externalAgent':
+      delete next.externalAgentObservationV1;
+      break;
+    case 'runtime.externalSessionOperation':
+      delete next.externalSessionOperationV1;
       break;
     case 'runtime.usageLimitRecovery':
       delete next.sessionUsageLimitRecoveryV1;

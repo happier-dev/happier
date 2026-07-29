@@ -2,8 +2,7 @@ import type {
   TerminalInputInjectionResult,
   TerminalInputReadinessV1,
   TerminalPromptInput,
-} from '@happier-dev/plugin-sdk/experimental/runtime/session';
-import { resolveTerminalPromptProviderAcceptanceTimeoutMs } from '@happier-dev/plugin-sdk/experimental/runtime/session';
+} from '@happier-dev/agents';
 
 import { classifyClaudeUnifiedInjectionFailure } from './injectionFailurePolicy.js';
 import { normalizeClaudeUnifiedPromptIdentityText } from './promptIdentity.js';
@@ -32,13 +31,21 @@ export type ClaudeUnifiedPromptInjectionFailure = Readonly<{
 
 export type ClaudeUnifiedPromptDeliveryBlockedReason =
   | 'provider_rejected_before_acceptance'
-  | 'provider_acceptance_timeout'
   | 'provider_unavailable_before_acceptance'
   | 'terminal_composer_draft'
   | 'capture_style_unavailable'
   | 'runtime_config_blocked'
+  | 'resume_identity_mismatch'
   | 'terminal_host_unreachable'
   | 'ambiguous_terminal_delivery';
+
+export function isClaudeUnifiedPromptDeliveryBlockReversible(
+  reason: ClaudeUnifiedPromptDeliveryBlockedReason,
+): boolean {
+  return reason === 'terminal_composer_draft'
+    || reason === 'runtime_config_blocked'
+    || reason === 'provider_unavailable_before_acceptance';
+}
 
 export type ClaudeUnifiedPromptTerminalRejection = Readonly<{
   deliveryBlockedReason?: ClaudeUnifiedPromptDeliveryBlockedReason;
@@ -65,11 +72,20 @@ export type ClaudeUnifiedInputArbiter = Readonly<{
   observeReadiness(readiness: TerminalInputReadinessV1): void;
   observeCompaction(event: Readonly<{ phase: 'started' | 'completed' }>): void;
   drain(): Promise<void>;
-  confirmProviderAcceptance(evidence?: Readonly<{ promptText?: string; includeTimedOutAmbiguous?: boolean; agentTurnId?: string | null }>): Promise<boolean>;
+  confirmProviderAcceptance(evidence?: Readonly<{
+    promptText?: string;
+    exactPromptText?: boolean;
+    includeTimedOutAmbiguous?: boolean;
+    agentTurnId?: string | null;
+  }>): Promise<boolean>;
   observeTerminalPromptCustody(input: TerminalPromptInput): Promise<boolean>;
+  readPendingInputInterruptAndRunLocalId(): string | null;
+  claimPendingInputInterruptAndRun(localId: string): boolean;
   observePendingProviderAcceptanceTerminalFailure(
     rejection?: ClaudeUnifiedPromptTerminalRejection,
   ): boolean;
+  blockHeadBeforeProvider(rejection: Required<ClaudeUnifiedPromptTerminalRejection>): boolean;
+  clearHeadBeforeProviderBlock(reason: ClaudeUnifiedPromptDeliveryBlockedReason): boolean;
   rejectHeadBeforeProvider(rejection: Required<ClaudeUnifiedPromptTerminalRejection>): boolean;
   /**
    * User-authorized terminal composer clear wake: the terminal owner has verified that the
@@ -77,13 +93,6 @@ export type ClaudeUnifiedInputArbiter = Readonly<{
    * prompt retry scheduling, so the UI never needs a polling loop.
    */
   notifyTerminalComposerCleared(readinessAfterClear: TerminalInputReadinessV1): void;
-  /**
-   * Arms the provider-acceptance timeout for a steered prompt. Steered prompts are
-   * natively queued by Claude until the running turn ends, so the short acceptance
-   * timeout must not run while the turn is in flight; the runtime arms it on
-   * turn-end evidence instead. No-op when nothing is pending or already armed.
-   */
-  armPendingProviderAcceptanceTimeout(): void;
   snapshot(): ClaudeUnifiedInputArbiterSnapshot;
   dispose(): void;
 }>;
@@ -117,8 +126,7 @@ export type ClaudeUnifiedInputArbiterOptions = Readonly<{
    * unshift) so a respawn/relaunch can deliver them.
    */
   onUndeliverableInputs?: (inputs: readonly TerminalPromptInput[]) => void;
-  isPromptDeliveryAccepted?: (input: TerminalPromptInput) => boolean;
-  providerAcceptanceTimeoutMs?: number;
+  onPendingInputInterruptAndRunLocalIdChange?: (localId: string | null) => void;
   injectionRetryLimit?: number;
   injectionRetryBaseDelayMs?: number;
 }>;
@@ -128,7 +136,6 @@ type PendingProviderAcceptance = Readonly<{
   acceptance: ClaudeUnifiedPromptAcceptance;
 }>;
 
-const DEFAULT_PROVIDER_ACCEPTANCE_TIMEOUT_MS = 5_000;
 const DEFAULT_INJECTION_RETRY_LIMIT = 3;
 const DEFAULT_INJECTION_RETRY_BASE_DELAY_MS = 250;
 
@@ -163,19 +170,16 @@ function buildProviderAcceptanceTimeoutResult(
 function promptTextMatchesQueuedInput(
   input: TerminalPromptInput,
   promptText: string | undefined,
+  exactPromptText: boolean,
 ): boolean {
+  if (exactPromptText) return typeof promptText === 'string' && input.text === promptText;
   if (typeof promptText !== 'string') return true;
   const normalizedEvidence = normalizeClaudeUnifiedPromptIdentityText(promptText);
   if (!normalizedEvidence) return true;
   return normalizeClaudeUnifiedPromptIdentityText(input.text) === normalizedEvidence;
 }
 
-function isCompactPromptInput(input: TerminalPromptInput): boolean {
-  const text = normalizeClaudeUnifiedPromptIdentityText(input.text);
-  return text === '/compact' || text.startsWith('/compact ');
-}
-
-function hasCanonicalPendingOwner(input: TerminalPromptInput): boolean {
+export function hasCanonicalPendingOwner(input: TerminalPromptInput): boolean {
   if (input.origin.kind !== 'ui_pending') return false;
   if (input.origin.localIds?.some((localId) => (
     typeof localId === 'string' && localId.trim().length > 0
@@ -232,10 +236,6 @@ export function createClaudeUnifiedInputArbiter(
   options: ClaudeUnifiedInputArbiterOptions,
 ): ClaudeUnifiedInputArbiter {
   const queue: TerminalPromptInput[] = [];
-  const providerAcceptanceTimeoutMs = nonNegativeInteger(
-    options.providerAcceptanceTimeoutMs,
-    DEFAULT_PROVIDER_ACCEPTANCE_TIMEOUT_MS,
-  );
   const injectionRetryLimit = nonNegativeInteger(
     options.injectionRetryLimit,
     DEFAULT_INJECTION_RETRY_LIMIT,
@@ -253,29 +253,54 @@ export function createClaudeUnifiedInputArbiter(
   let compactionActive = false;
   let retryAttempt = 0;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
-  let providerAcceptanceTimer: ReturnType<typeof setTimeout> | null = null;
   let drainInFlight: Promise<void> | null = null;
   let pendingProviderAcceptance: PendingProviderAcceptance | null = null;
   let injectingProviderAcceptance: PendingProviderAcceptance | null = null;
   let providerAcceptanceObservedDuringInjection: PendingProviderAcceptance | null = null;
-  let pendingAcceptanceCompletedCompaction = false;
-  let ambiguousProviderAcceptanceFailure: PendingProviderAcceptance | null = null;
+  let retainedHeadDeliveryBlocker: Readonly<{
+    input: TerminalPromptInput;
+    reason: ClaudeUnifiedPromptDeliveryBlockedReason;
+  }> | null = null;
   const providerAcceptanceUnknownTerminalInputs = new Set<TerminalPromptInput>();
   const terminalCustodyInputs = new Set<TerminalPromptInput>();
   const terminalCustodyAcceptances: PendingProviderAcceptance[] = [];
-  const terminalCustodyTimers = new Map<TerminalPromptInput, ReturnType<typeof setTimeout>>();
-  let ambiguousProviderAcceptanceRetryAttempt = 0;
-  let pendingAcceptanceTimeoutAwaitingArm: Extract<TerminalInputInjectionResult, { status: 'failed' }> | null = null;
+  const interruptRequestedInputs = new WeakSet<object>();
+  let publishedPendingInputInterruptAndRunLocalId: string | null | undefined;
+
+  function readPendingInputInterruptAndRunLocalId(): string | null {
+    if (disposed || !readiness?.activeTurnId) return null;
+    const custodyHead = terminalCustodyAcceptances[0];
+    if (!custodyHead || custodyHead.acceptance.acceptedAs !== 'in_flight_steer') return null;
+    if (interruptRequestedInputs.has(custodyHead.input)) return null;
+    const localIds = custodyHead.input.origin.localIds;
+    return localIds?.length === 1 && typeof localIds[0] === 'string' && localIds[0].trim().length > 0
+      ? localIds[0].trim()
+      : null;
+  }
+
+  function publishPendingInputInterruptAndRunLocalId(): void {
+    const localId = readPendingInputInterruptAndRunLocalId();
+    if (publishedPendingInputInterruptAndRunLocalId === localId) return;
+    publishedPendingInputInterruptAndRunLocalId = localId;
+    options.onPendingInputInterruptAndRunLocalIdChange?.(localId);
+  }
+
+  function claimPendingInputInterruptAndRun(localId: string): boolean {
+    if (readPendingInputInterruptAndRunLocalId() !== localId) return false;
+    const custodyHead = terminalCustodyAcceptances[0];
+    if (!custodyHead) return false;
+    interruptRequestedInputs.add(custodyHead.input);
+    publishPendingInputInterruptAndRunLocalId();
+    return true;
+  }
 
   const providerAcceptancePendingCount = (): number =>
     terminalCustodyAcceptances.length +
-    (pendingProviderAcceptance ? 1 : 0) +
-    (ambiguousProviderAcceptanceFailure ? 1 : 0);
+    (pendingProviderAcceptance ? 1 : 0);
 
   const pendingInjectionCount = (): number =>
     queue.reduce((count, input) => {
       if (pendingProviderAcceptance?.input === input) return count;
-      if (ambiguousProviderAcceptanceFailure?.input === input) return count;
       if (providerAcceptanceUnknownTerminalInputs.has(input)) return count;
       return count + 1;
     }, 0);
@@ -288,7 +313,9 @@ export function createClaudeUnifiedInputArbiter(
       providerAcceptancePendingCount: providerAcceptancePendingCount(),
       disposed,
       headInputState,
-      headDeliveryBlocker: queue.length > 0 ? resolveReadinessDeliveryBlocker(readiness) : null,
+      headDeliveryBlocker: retainedHeadDeliveryBlocker
+        ? { reason: retainedHeadDeliveryBlocker.reason }
+        : queue.length > 0 ? resolveReadinessDeliveryBlocker(readiness) : null,
       lastDeferredReason,
       lastFailureReason,
     };
@@ -300,26 +327,6 @@ export function createClaudeUnifiedInputArbiter(
     retryTimer = null;
   }
 
-  function clearProviderAcceptanceTimer(): void {
-    if (!providerAcceptanceTimer) return;
-    clearTimeout(providerAcceptanceTimer);
-    providerAcceptanceTimer = null;
-  }
-
-  function clearTerminalCustodyTimer(input: TerminalPromptInput): void {
-    const timer = terminalCustodyTimers.get(input);
-    if (!timer) return;
-    clearTimeout(timer);
-    terminalCustodyTimers.delete(input);
-  }
-
-  function clearTerminalCustodyTimers(): void {
-    for (const timer of terminalCustodyTimers.values()) {
-      clearTimeout(timer);
-    }
-    terminalCustodyTimers.clear();
-  }
-
   function scheduleRetry(retryAfterMs: number): void {
     clearRetryTimer();
     retryTimer = setTimeout(() => {
@@ -327,59 +334,6 @@ export function createClaudeUnifiedInputArbiter(
       void drain().catch(() => undefined);
     }, retryAfterMs);
     retryTimer.unref?.();
-  }
-
-  function notifyAmbiguousTimeout(
-    input: TerminalPromptInput,
-    result: Extract<TerminalInputInjectionResult, { status: 'failed' }>,
-  ): void {
-    if (terminalCustodyInputs.has(input)) {
-      lastFailureReason = null;
-      headInputState = 'awaiting_provider_acceptance';
-      return;
-    }
-    ambiguousProviderAcceptanceFailure = pendingProviderAcceptance;
-    pendingProviderAcceptance = null;
-    pendingAcceptanceCompletedCompaction = false;
-    lastFailureReason = result.reason;
-    if (ambiguousProviderAcceptanceRetryAttempt >= 1) {
-      headInputState = 'failed_terminal';
-      providerAcceptanceUnknownTerminalInputs.add(input);
-      options.onInjectionFailure?.({
-        input,
-        result,
-        failureState: 'failed_terminal',
-      });
-      return;
-    }
-    headInputState = 'failed_ambiguous';
-    options.onInjectionFailure?.({
-      input,
-      result,
-      failureState: 'failed_ambiguous',
-    });
-    if (hasCanonicalPendingOwner(input)) {
-      void drain().catch(() => undefined);
-      return;
-    }
-    if (isCompactPromptInput(input)) return;
-    void drain().catch(() => undefined);
-  }
-
-  function scheduleProviderAcceptanceTimeout(
-    input: TerminalPromptInput,
-    result: Extract<TerminalInputInjectionResult, { status: 'failed' }>,
-    timeoutMs = resolveProviderAcceptanceTimeoutMs(input),
-  ): void {
-    clearProviderAcceptanceTimer();
-    providerAcceptanceTimer = setTimeout(() => {
-      providerAcceptanceTimer = null;
-      if (pendingProviderAcceptance?.input === input && compactionActive) return;
-      if (pendingProviderAcceptance?.input === input) {
-        notifyAmbiguousTimeout(input, result);
-      }
-    }, timeoutMs);
-    providerAcceptanceTimer.unref?.();
   }
 
   function clearInjectionAcceptanceForInput(input: TerminalPromptInput): void {
@@ -401,17 +355,6 @@ export function createClaudeUnifiedInputArbiter(
       providerAcceptanceObservedDuringInjection = null;
     }
     return acceptance;
-  }
-
-  function resolveProviderAcceptanceTimeoutMs(
-    input: TerminalPromptInput,
-    result?: Extract<TerminalInputInjectionResult, { status: 'injected' }>,
-    baseTimeoutMs = providerAcceptanceTimeoutMs,
-  ): number {
-    return resolveTerminalPromptProviderAcceptanceTimeoutMs(input.text, {
-      baseTimeoutMs,
-      ...(result ? { bytesWritten: result.bytesWritten } : {}),
-    });
   }
 
   function removeTerminalCustodyAcceptance(input: TerminalPromptInput): PendingProviderAcceptance | null {
@@ -453,7 +396,6 @@ export function createClaudeUnifiedInputArbiter(
     const pending = removeTerminalCustodyAcceptance(input);
     if (!pending) return;
     terminalCustodyInputs.delete(input);
-    terminalCustodyTimers.delete(input);
     providerAcceptanceUnknownTerminalInputs.add(input);
     lastFailureReason = result.reason;
     headInputState = 'failed_terminal';
@@ -467,18 +409,6 @@ export function createClaudeUnifiedInputArbiter(
       result,
       failureState: 'failed_terminal',
     });
-  }
-
-  function scheduleTerminalCustodyAcceptanceTimeout(
-    input: TerminalPromptInput,
-    result: Extract<TerminalInputInjectionResult, { status: 'failed' }>,
-  ): void {
-    clearTerminalCustodyTimer(input);
-    const timer = setTimeout(() => {
-      terminalizeTerminalCustodyAcceptance(input, result);
-    }, resolveProviderAcceptanceTimeoutMs(input));
-    timer.unref?.();
-    terminalCustodyTimers.set(input, timer);
   }
 
   function createPromptAcceptance(): ClaudeUnifiedPromptAcceptance {
@@ -499,10 +429,40 @@ export function createClaudeUnifiedInputArbiter(
     return { ...acceptance, agentTurnId: agentTurnId.trim() };
   }
 
-  async function acceptHeadPrompt(evidence?: Readonly<{ promptText?: string; includeTimedOutAmbiguous?: boolean; agentTurnId?: string | null }>): Promise<boolean> {
+  async function acceptHeadPrompt(evidence?: Readonly<{
+    promptText?: string;
+    exactPromptText?: boolean;
+    includeTimedOutAmbiguous?: boolean;
+    agentTurnId?: string | null;
+  }>): Promise<boolean> {
+    if (typeof evidence?.promptText === 'string') {
+      const matchingInputs = new Set<TerminalPromptInput>();
+      for (const pending of terminalCustodyAcceptances) {
+        if (promptTextMatchesQueuedInput(
+          pending.input,
+          evidence.promptText,
+          evidence.exactPromptText === true,
+        )) matchingInputs.add(pending.input);
+      }
+      for (const input of queue) {
+        if (promptTextMatchesQueuedInput(
+          input,
+          evidence.promptText,
+          evidence.exactPromptText === true,
+        )) matchingInputs.add(input);
+      }
+      // Native prompt_submitted evidence has text/turn identity but no Pending localId. More than
+      // one text match is therefore ambiguous: FIFO selection could settle a neighbor on duplicate
+      // evidence. A later exact identity source may still resolve either input.
+      if (matchingInputs.size !== 1) return false;
+    }
     const terminalCustodyAcceptance = terminalCustodyAcceptances[0];
     if (terminalCustodyAcceptance) {
-      if (!promptTextMatchesQueuedInput(terminalCustodyAcceptance.input, evidence?.promptText)) return false;
+      if (!promptTextMatchesQueuedInput(
+        terminalCustodyAcceptance.input,
+        evidence?.promptText,
+        evidence?.exactPromptText === true,
+      )) return false;
       terminalCustodyAcceptances.shift();
       await acceptPrompt({
         ...terminalCustodyAcceptance,
@@ -511,12 +471,15 @@ export function createClaudeUnifiedInputArbiter(
       return true;
     }
 
-    const pending = pendingProviderAcceptance
-      ?? (evidence?.includeTimedOutAmbiguous ? ambiguousProviderAcceptanceFailure : null);
+    const pending = pendingProviderAcceptance;
     if (!pending) {
       const injecting = injectingProviderAcceptance;
       if (!injecting || queue[0] !== injecting.input) return false;
-      if (!promptTextMatchesQueuedInput(injecting.input, evidence?.promptText)) return false;
+      if (!promptTextMatchesQueuedInput(
+        injecting.input,
+        evidence?.promptText,
+        evidence?.exactPromptText === true,
+      )) return false;
       providerAcceptanceObservedDuringInjection = {
         ...injecting,
         acceptance: withProviderTurnId(injecting.acceptance, evidence?.agentTurnId),
@@ -524,7 +487,11 @@ export function createClaudeUnifiedInputArbiter(
       return true;
     }
     if (queue[0] !== pending.input) return false;
-    if (!promptTextMatchesQueuedInput(pending.input, evidence?.promptText)) return false;
+    if (!promptTextMatchesQueuedInput(
+      pending.input,
+      evidence?.promptText,
+      evidence?.exactPromptText === true,
+    )) return false;
 
     queue.shift();
     await acceptPrompt({
@@ -537,17 +504,9 @@ export function createClaudeUnifiedInputArbiter(
   async function acceptPrompt(pending: PendingProviderAcceptance): Promise<void> {
     if (pendingProviderAcceptance?.input === pending.input) {
       pendingProviderAcceptance = null;
-      pendingAcceptanceCompletedCompaction = false;
-      pendingAcceptanceTimeoutAwaitingArm = null;
-      clearProviderAcceptanceTimer();
-    }
-    if (ambiguousProviderAcceptanceFailure?.input === pending.input) {
-      ambiguousProviderAcceptanceFailure = null;
-      ambiguousProviderAcceptanceRetryAttempt = 0;
     }
     providerAcceptanceUnknownTerminalInputs.delete(pending.input);
     terminalCustodyInputs.delete(pending.input);
-    clearTerminalCustodyTimer(pending.input);
     retryAttempt = 0;
     lastDeferredReason = null;
     lastFailureReason = null;
@@ -560,28 +519,9 @@ export function createClaudeUnifiedInputArbiter(
     }
   }
 
-  async function acceptPendingProviderProgressEvidence(): Promise<boolean> {
-    const pending = pendingProviderAcceptance;
-    if (!pending || queue[0] !== pending.input) return false;
-    if (pending.acceptance.acceptedAs !== 'new_turn') return false;
-    queue.shift();
-    await acceptPrompt(pending);
-    return true;
-  }
-
-  function resolveQueueHeadKnownProviderDeliveryAcceptance(): PendingProviderAcceptance | null {
-    const input = queue[0];
-    if (!input || options.isPromptDeliveryAccepted?.(input) !== true) return null;
-    if (pendingProviderAcceptance?.input === input) return pendingProviderAcceptance;
-    if (ambiguousProviderAcceptanceFailure?.input === input) return ambiguousProviderAcceptanceFailure;
-    if (injectingProviderAcceptance?.input === input) return injectingProviderAcceptance;
-    return hasCanonicalPendingOwner(input) ? { input, acceptance: createPromptAcceptance() } : null;
-  }
-
   async function observeTerminalPromptCustody(input: TerminalPromptInput): Promise<boolean> {
     if (disposed || queue[0] !== input) return false;
-    const currentAcceptance = pendingProviderAcceptance
-      ?? (ambiguousProviderAcceptanceFailure?.input === input ? ambiguousProviderAcceptanceFailure : null);
+    const currentAcceptance = pendingProviderAcceptance;
     if (!currentAcceptance || currentAcceptance.input !== input) return false;
 
     terminalCustodyInputs.add(input);
@@ -589,14 +529,7 @@ export function createClaudeUnifiedInputArbiter(
     queue.shift();
     if (pendingProviderAcceptance?.input === input) {
       pendingProviderAcceptance = null;
-      clearProviderAcceptanceTimer();
     }
-    if (ambiguousProviderAcceptanceFailure?.input === input) {
-      ambiguousProviderAcceptanceFailure = null;
-    }
-    ambiguousProviderAcceptanceRetryAttempt = 0;
-    pendingAcceptanceCompletedCompaction = false;
-    pendingAcceptanceTimeoutAwaitingArm = null;
     lastFailureReason = null;
     headInputState = 'awaiting_provider_acceptance';
     if (queue.length > 0) scheduleRetry(0);
@@ -609,41 +542,64 @@ export function createClaudeUnifiedInputArbiter(
     if (disposed) return false;
     const terminalCustodyAcceptance = terminalCustodyAcceptances[0];
     if (terminalCustodyAcceptance) {
-      clearTerminalCustodyTimer(terminalCustodyAcceptance.input);
-      terminalizeTerminalCustodyAcceptance(
+      const result = buildProviderAcceptanceTimeoutResult(readiness);
+      const resolvedRejection = resolvePromptTerminalRejection(
         terminalCustodyAcceptance.input,
-        buildProviderAcceptanceTimeoutResult(readiness),
+        result,
         rejection,
       );
+      if (resolvedRejection?.deliveryBlockedReason
+        && resolvedRejection.deliveryBlockedReason !== 'ambiguous_terminal_delivery') {
+        terminalizeTerminalCustodyAcceptance(
+          terminalCustodyAcceptance.input,
+          result,
+          resolvedRejection,
+        );
+        return true;
+      }
+      lastFailureReason = result.reason;
+      headInputState = 'awaiting_provider_acceptance';
+      options.onInjectionFailure?.({
+        input: terminalCustodyAcceptance.input,
+        result,
+        failureState: 'failed_ambiguous',
+      });
       return true;
     }
-    const pending = pendingProviderAcceptance
-      ?? (
-        ambiguousProviderAcceptanceFailure && queue[0] === ambiguousProviderAcceptanceFailure.input
-          ? ambiguousProviderAcceptanceFailure
-          : null
-    );
+    const pending = pendingProviderAcceptance;
     if (!pending || queue[0] !== pending.input) return false;
 
     const { input } = pending;
     const result = buildProviderAcceptanceTimeoutResult(readiness);
+    const resolvedRejection = resolvePromptTerminalRejection(input, result, rejection);
+    if (!resolvedRejection?.deliveryBlockedReason
+      || resolvedRejection.deliveryBlockedReason === 'ambiguous_terminal_delivery') {
+      queue.shift();
+      if (pendingProviderAcceptance?.input === input) {
+        pendingProviderAcceptance = null;
+      }
+      terminalCustodyInputs.add(input);
+      terminalCustodyAcceptances.push(pending);
+      lastFailureReason = result.reason;
+      headInputState = queue.length > 0 ? 'queued' : 'awaiting_provider_acceptance';
+      options.onInjectionFailure?.({
+        input,
+        result,
+        failureState: 'failed_ambiguous',
+      });
+      if (queue.length > 0) scheduleRetry(0);
+      return true;
+    }
     if (pendingProviderAcceptance?.input === input) {
       pendingProviderAcceptance = null;
-      clearProviderAcceptanceTimer();
     }
-    if (ambiguousProviderAcceptanceFailure?.input === input) {
-      ambiguousProviderAcceptanceFailure = null;
-      ambiguousProviderAcceptanceRetryAttempt = 0;
-    }
-    pendingAcceptanceCompletedCompaction = false;
-    pendingAcceptanceTimeoutAwaitingArm = null;
     providerAcceptanceUnknownTerminalInputs.add(input);
     lastFailureReason = result.reason;
     headInputState = 'failed_terminal';
     notifyPromptTerminallyRejectedBeforeProvider(
       input,
       result,
-      resolvePromptTerminalRejection(input, result, rejection),
+      resolvedRejection,
     );
     options.onInjectionFailure?.({
       input,
@@ -661,7 +617,7 @@ export function createClaudeUnifiedInputArbiter(
     if (!input) return false;
     if (!hasCanonicalPendingOwner(input)) return false;
     if (pendingProviderAcceptance?.input === input || injectingProviderAcceptance?.input === input) return false;
-    if (ambiguousProviderAcceptanceFailure?.input === input) return false;
+    if (retainedHeadDeliveryBlocker?.input === input) return false;
 
     queue.shift();
     clearRetryTimer();
@@ -678,23 +634,52 @@ export function createClaudeUnifiedInputArbiter(
     return true;
   }
 
+  function blockHeadBeforeProvider(
+    rejection: Required<ClaudeUnifiedPromptTerminalRejection>,
+  ): boolean {
+    if (disposed) return false;
+    if (!isClaudeUnifiedPromptDeliveryBlockReversible(rejection.deliveryBlockedReason)) return false;
+    const input = queue[0];
+    if (!input || !hasCanonicalPendingOwner(input)) return false;
+    if (pendingProviderAcceptance?.input === input || injectingProviderAcceptance?.input === input) return false;
+    if (retainedHeadDeliveryBlocker?.input === input) return false;
+
+    clearRetryTimer();
+    retryAttempt = 0;
+    retainedHeadDeliveryBlocker = { input, reason: rejection.deliveryBlockedReason };
+    lastFailureReason = rejection.deliveryBlockedReason;
+    headInputState = 'waiting_for_readiness';
+    notifyPromptTerminallyRejectedBeforeProvider(
+      input,
+      buildTerminalRejectedBeforeProviderResult(readiness, rejection),
+      rejection,
+    );
+    return true;
+  }
+
+  function clearHeadBeforeProviderBlock(reason: ClaudeUnifiedPromptDeliveryBlockedReason): boolean {
+    if (disposed) return false;
+    const retained = retainedHeadDeliveryBlocker;
+    if (!retained || retained.reason !== reason || queue[0] !== retained.input) return false;
+
+    retainedHeadDeliveryBlocker = null;
+    lastDeferredReason = null;
+    lastFailureReason = null;
+    headInputState = 'queued';
+    if (!pendingProviderAcceptance) scheduleRetry(0);
+    return true;
+  }
+
   async function drainQueue(): Promise<void> {
     clearRetryTimer();
     while (!disposed && queue.length > 0) {
-      const knownProviderDeliveryAcceptance = resolveQueueHeadKnownProviderDeliveryAcceptance();
-      if (knownProviderDeliveryAcceptance) {
-        queue.shift();
-        await acceptPrompt(knownProviderDeliveryAcceptance);
-        continue;
-      }
       if (pendingProviderAcceptance) {
-        if (compactionActive || !pendingAcceptanceCompletedCompaction) {
-          headInputState = 'awaiting_provider_acceptance';
-          return;
-        }
-        pendingProviderAcceptance = null;
-        pendingAcceptanceCompletedCompaction = false;
-        clearProviderAcceptanceTimer();
+        headInputState = 'awaiting_provider_acceptance';
+        return;
+      }
+      if (retainedHeadDeliveryBlocker?.input === queue[0]) {
+        headInputState = 'waiting_for_readiness';
+        return;
       }
       if (compactionActive) {
         lastDeferredReason = 'compaction';
@@ -702,63 +687,7 @@ export function createClaudeUnifiedInputArbiter(
         return;
       }
       if (headInputState === 'failed_ambiguous' || headInputState === 'failed_terminal') {
-        if (
-          headInputState === 'failed_ambiguous' &&
-          ambiguousProviderAcceptanceFailure &&
-          queue[0] === ambiguousProviderAcceptanceFailure.input &&
-          options.isPromptDeliveryAccepted?.(ambiguousProviderAcceptanceFailure.input) === true
-        ) {
-          const acceptedFailure = ambiguousProviderAcceptanceFailure;
-          pendingProviderAcceptance = null;
-          pendingAcceptanceCompletedCompaction = false;
-          ambiguousProviderAcceptanceFailure = null;
-          lastFailureReason = null;
-          queue.shift();
-          await acceptPrompt(acceptedFailure);
-          continue;
-        }
-        if (
-          headInputState === 'failed_ambiguous' &&
-          ambiguousProviderAcceptanceFailure &&
-          queue[0] === ambiguousProviderAcceptanceFailure.input &&
-          !hasCanonicalPendingOwner(ambiguousProviderAcceptanceFailure.input) &&
-          !isCompactPromptInput(ambiguousProviderAcceptanceFailure.input) &&
-          ambiguousProviderAcceptanceRetryAttempt < 1
-        ) {
-          ambiguousProviderAcceptanceRetryAttempt += 1;
-          pendingProviderAcceptance = null;
-          pendingAcceptanceCompletedCompaction = false;
-          ambiguousProviderAcceptanceFailure = null;
-          lastFailureReason = null;
-          headInputState = 'waiting_for_readiness';
-        } else {
-          if (
-            headInputState === 'failed_ambiguous' &&
-            ambiguousProviderAcceptanceFailure &&
-            queue[0] === ambiguousProviderAcceptanceFailure.input
-          ) {
-            const failure = ambiguousProviderAcceptanceFailure;
-            if (hasCanonicalPendingOwner(failure.input)) return;
-            pendingProviderAcceptance = null;
-            pendingAcceptanceCompletedCompaction = false;
-            ambiguousProviderAcceptanceFailure = null;
-            lastFailureReason = 'ambiguous_provider_acceptance';
-            headInputState = 'failed_terminal';
-            providerAcceptanceUnknownTerminalInputs.add(failure.input);
-            const result = buildProviderAcceptanceTimeoutResult(readiness);
-            notifyPromptTerminallyRejectedBeforeProvider(
-              failure.input,
-              result,
-              resolvePromptTerminalRejection(failure.input, result, undefined),
-            );
-            options.onInjectionFailure?.({
-              input: failure.input,
-              result,
-              failureState: 'failed_terminal',
-            });
-          }
-          return;
-        }
+        return;
       }
 
       const currentReadiness = readiness;
@@ -804,8 +733,6 @@ export function createClaudeUnifiedInputArbiter(
         lastDeferredReason = null;
         lastFailureReason = null;
         pendingProviderAcceptance = injectionAcceptance;
-        pendingAcceptanceCompletedCompaction = false;
-        ambiguousProviderAcceptanceFailure = null;
         headInputState = 'awaiting_provider_acceptance';
         await options.onPromptInjected?.(input, acceptance, result);
         const providerAcceptedDuringInjection = takeProviderAcceptanceObservedDuringInjection(input);
@@ -815,18 +742,17 @@ export function createClaudeUnifiedInputArbiter(
           await acceptPrompt(providerAcceptedDuringInjection);
           return;
         }
-        if (acceptance.acceptedAs === 'in_flight_steer') {
-          // Claude queues steered text until the running turn ends; defer the short
-          // acceptance timeout until turn-end evidence arms it.
-          pendingAcceptanceTimeoutAwaitingArm = buildProviderAcceptanceTimeoutResult(readiness);
-        } else {
-          scheduleProviderAcceptanceTimeout(
-            input,
-            buildProviderAcceptanceTimeoutResult(readiness),
-            resolveProviderAcceptanceTimeoutMs(input, result),
-          );
-        }
         return;
+      }
+
+      if (result.status === 'failed' && result.phase === 'after_enter_unknown') {
+        const providerAcceptedDuringInjection = takeProviderAcceptanceObservedDuringInjection(input);
+        if (providerAcceptedDuringInjection) {
+          if (queue[0] !== input) return;
+          queue.shift();
+          await acceptPrompt(providerAcceptedDuringInjection);
+          return;
+        }
       }
 
       clearInjectionAcceptanceForInput(input);
@@ -841,7 +767,6 @@ export function createClaudeUnifiedInputArbiter(
         retryAttempt,
         retryLimit: injectionRetryLimit,
         retryBaseDelayMs: injectionRetryBaseDelayMs,
-        providerAcceptanceTimeoutMs,
       });
 
       if (action.kind === 'retry') {
@@ -853,11 +778,6 @@ export function createClaudeUnifiedInputArbiter(
       if (action.kind === 'await_provider_confirmation') {
         pendingProviderAcceptance = { input, acceptance };
         headInputState = 'awaiting_provider_acceptance';
-        scheduleProviderAcceptanceTimeout(
-          input,
-          result,
-          resolveProviderAcceptanceTimeoutMs(input, undefined, action.timeoutMs),
-        );
         return;
       }
 
@@ -924,43 +844,47 @@ export function createClaudeUnifiedInputArbiter(
     },
     observeReadiness(nextReadiness) {
       readiness = nextReadiness;
-      if (nextReadiness.status === 'defer_finalizing') {
-        void acceptPendingProviderProgressEvidence().catch(() => undefined);
-      }
-      if (queue.length > 0 && !pendingProviderAcceptance && !isDeferredReadiness(nextReadiness.status)) {
+      publishPendingInputInterruptAndRunLocalId();
+      if (
+        queue.length > 0
+        && !pendingProviderAcceptance
+        && !retainedHeadDeliveryBlocker
+        && !isDeferredReadiness(nextReadiness.status)
+      ) {
         void drain().catch(() => undefined);
       }
     },
     observeCompaction(event) {
       compactionActive = event.phase === 'started';
-      if (pendingProviderAcceptance) {
-        clearProviderAcceptanceTimer();
-        pendingAcceptanceCompletedCompaction = event.phase === 'completed';
-      } else if (
-        event.phase === 'completed' &&
-        ambiguousProviderAcceptanceFailure &&
-        queue[0] === ambiguousProviderAcceptanceFailure.input &&
-        !hasCanonicalPendingOwner(ambiguousProviderAcceptanceFailure.input)
-      ) {
-        pendingProviderAcceptance = ambiguousProviderAcceptanceFailure;
-        ambiguousProviderAcceptanceFailure = null;
-        ambiguousProviderAcceptanceRetryAttempt = 0;
-        pendingAcceptanceCompletedCompaction = true;
-        lastFailureReason = null;
-        headInputState = 'awaiting_provider_acceptance';
-      }
       if (event.phase === 'started') {
         lastDeferredReason = 'compaction';
       }
     },
     drain,
-    confirmProviderAcceptance: acceptHeadPrompt,
-    observeTerminalPromptCustody,
+    async confirmProviderAcceptance(evidence) {
+      try {
+        return await acceptHeadPrompt(evidence);
+      } finally {
+        publishPendingInputInterruptAndRunLocalId();
+      }
+    },
+    async observeTerminalPromptCustody(input) {
+      try {
+        return await observeTerminalPromptCustody(input);
+      } finally {
+        publishPendingInputInterruptAndRunLocalId();
+      }
+    },
+    readPendingInputInterruptAndRunLocalId,
+    claimPendingInputInterruptAndRun,
     observePendingProviderAcceptanceTerminalFailure,
+    blockHeadBeforeProvider,
+    clearHeadBeforeProviderBlock,
     rejectHeadBeforeProvider,
     notifyTerminalComposerCleared(readinessAfterClear) {
       if (disposed) return;
       readiness = readinessAfterClear;
+      clearHeadBeforeProviderBlock('terminal_composer_draft');
       if (headInputState === 'waiting_for_readiness') {
         lastDeferredReason = null;
       }
@@ -968,42 +892,27 @@ export function createClaudeUnifiedInputArbiter(
         scheduleRetry(0);
       }
     },
-    armPendingProviderAcceptanceTimeout() {
-      const result = pendingAcceptanceTimeoutAwaitingArm
-        ?? buildProviderAcceptanceTimeoutResult(readiness);
-      pendingAcceptanceTimeoutAwaitingArm = null;
-      if (disposed) return;
-      for (const pending of terminalCustodyAcceptances) {
-        if (!terminalCustodyTimers.has(pending.input)) {
-          scheduleTerminalCustodyAcceptanceTimeout(pending.input, result);
-        }
-      }
-      if (!pendingProviderAcceptance || providerAcceptanceTimer) return;
-      scheduleProviderAcceptanceTimeout(pendingProviderAcceptance.input, result);
-    },
     snapshot,
     dispose() {
       if (disposed) return;
       disposed = true;
+      publishPendingInputInterruptAndRunLocalId();
       clearRetryTimer();
-      clearProviderAcceptanceTimer();
-      clearTerminalCustodyTimers();
+      const retainedInput = retainedHeadDeliveryBlocker?.input ?? null;
       const unconsumed = queue.splice(0, queue.length);
       handBackUndeliverableInputs(
         unconsumed.filter((input) => (
           !providerAcceptanceUnknownTerminalInputs.has(input)
+          && input !== retainedInput
         )),
       );
+      retainedHeadDeliveryBlocker = null;
       pendingProviderAcceptance = null;
       injectingProviderAcceptance = null;
       providerAcceptanceObservedDuringInjection = null;
-      pendingAcceptanceCompletedCompaction = false;
-      ambiguousProviderAcceptanceFailure = null;
       providerAcceptanceUnknownTerminalInputs.clear();
       terminalCustodyInputs.clear();
       terminalCustodyAcceptances.length = 0;
-      ambiguousProviderAcceptanceRetryAttempt = 0;
-      pendingAcceptanceTimeoutAwaitingArm = null;
     },
   };
 }

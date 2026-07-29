@@ -6,10 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { RuntimeEventV1 } from '@happier-dev/protocol/runtime';
 
-import {
-    createAdapterHarness,
-    createPluginContextV1Fixture,
-} from './adapterHarness.js';
+import { createAdapterHarness } from './adapterHarness.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, '../../..');
@@ -102,24 +99,6 @@ describe('adapter harness', () => {
         } satisfies RuntimeEventV1);
 
         expect(() => harness.expectExactlyOneTerminalEvent({ turnId: 'turn-1' })).toThrow(/received 2/);
-    });
-
-    it('provides a complete production-wired PluginContextV1 fixture with recording services', async () => {
-        const fixture = createPluginContextV1Fixture();
-
-        fixture.ctx.logger.debug('debug-message', { value: 1 });
-        await fixture.ctx.sessions.writeMetadata({ value: { ok: true } });
-        await fixture.ctx.sessions.writeStateField({
-            fieldId: 'runtime.workState',
-            value: { items: [] },
-            reason: 'test',
-        });
-
-        expect(fixture.records.logs).toEqual([
-            { level: 'debug', message: 'debug-message', fields: { value: 1 } },
-        ]);
-        expect(fixture.records.sessionMetadataWrites).toHaveLength(1);
-        expect(fixture.records.sessionStateFieldWrites).toHaveLength(1);
     });
 
     it('fences production plugin sources from RuntimeEventV1 casts', () => {

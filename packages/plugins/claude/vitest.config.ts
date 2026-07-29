@@ -49,7 +49,6 @@ export default defineConfig({
       { find: 'rn-encryption', replacement: uiDev('rnEncryptionStub.ts') },
       { find: 'react-native-purchases', replacement: uiDev('reactNativePurchasesStub.ts') },
       { find: 'react-native-purchases-ui', replacement: uiDev('reactNativePurchasesUiStub.ts') },
-      { find: '@shopify/flash-list', replacement: uiDev('shopifyFlashListStub.ts') },
       { find: 'react-native-mmkv', replacement: uiDev('reactNativeMmkvStub.ts') },
       { find: 'react-native-enriched-markdown', replacement: uiDev('reactNativeEnrichedMarkdownStub.tsx') },
       { find: 'posthog-react-native', replacement: uiDev('posthogReactNativeStub.tsx') },

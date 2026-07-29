@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { RPC_METHODS } from '../../rpc.js';
+import { RPC_METHODS } from '../../rpc/index.js';
 
 import {
   WorkspaceAnchorV1Schema,

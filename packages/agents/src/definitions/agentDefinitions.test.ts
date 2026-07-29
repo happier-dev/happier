@@ -4,7 +4,6 @@ import { AGENT_IDS } from '../types.js';
 import { CANONICAL_AGENT_MODEL_CONFIG } from '../models.js';
 import { CANONICAL_AGENT_LOCAL_CLI_CONFIG } from '../localCli.js';
 import { CANONICAL_AGENT_SESSION_MODE_DESCRIPTORS, CANONICAL_AGENT_SESSION_MODES } from '../sessionModes.js';
-import { getAgentSettingsDefinition } from '../agentSettings/index.js';
 import { CANONICAL_AGENTS_CORE } from '../manifest.js';
 import {
   getAllAgentCatalogDefinitions,
@@ -29,8 +28,8 @@ describe('providerDefinitions', () => {
     expect(claude?.sessionModesKind).toBe(CANONICAL_AGENT_SESSION_MODES.claude);
     expect(claude?.modelConfig).toBe(CANONICAL_AGENT_MODEL_CONFIG.claude);
     expect(claude?.localCli).toBe(CANONICAL_AGENT_LOCAL_CLI_CONFIG.claude);
-    expect(claude?.agentCliRuntime.id).toBe('claude');
-    expect(claude?.agentSettings).toBe(getAgentSettingsDefinition('claude'));
+    expect(claude).not.toHaveProperty('agentCliRuntime');
+    expect(claude).not.toHaveProperty('agentSettings');
   });
 
   it('surfaces the canonical settings backend id for Antigravity', () => {

@@ -75,6 +75,7 @@ export type VendorResumeIdField =
     | 'claudeSessionId'
     | 'codexSessionId'
     | 'geminiSessionId'
+    | 'grokSessionId'
     | 'opencodeSessionId'
     | 'auggieSessionId'
     | 'qwenSessionId'
@@ -84,6 +85,7 @@ export type VendorResumeIdField =
     | 'cursorSessionId'
     | 'ohMyPiSessionId'
     | 'piSessionId'
+    | 'antigravitySessionId'
     | 'copilotSessionId';
 
 export type CloudVendorKey = 'openai' | 'anthropic' | 'gemini';

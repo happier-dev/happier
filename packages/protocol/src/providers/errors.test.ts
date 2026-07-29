@@ -31,6 +31,74 @@ describe('provider stable errors and compatibility envelopes', () => {
     });
   });
 
+  it('represents an invalid Provider RPC response independently from endpoint availability', () => {
+    expect(createProviderErrorV1('provider_rpc_response_invalid', {
+      machineId: 'machine-a',
+    })).toEqual({
+      v: 1,
+      code: 'provider_rpc_response_invalid',
+      machineId: 'machine-a',
+      retryable: true,
+      action: 'retry',
+    });
+  });
+
+  it('requires current-state review when a Provider RPC mutation outcome is unknown', () => {
+    expect(createProviderErrorV1('provider_rpc_mutation_outcome_unknown', {
+      connectionId: 'pc_gateway',
+      machineId: 'machine-a',
+    })).toEqual({
+      v: 1,
+      code: 'provider_rpc_mutation_outcome_unknown',
+      connectionId: 'pc_gateway',
+      machineId: 'machine-a',
+      retryable: false,
+      action: 'review_current_state',
+    });
+  });
+
+  it('represents an Agent runtime prerequisite refusal without overloading binding continuity', () => {
+    expect(createProviderErrorV1('provider_agent_runtime_unsupported', {
+      connectionId: 'pc_gateway',
+      machineId: 'machine-a',
+    })).toEqual({
+      v: 1,
+      code: 'provider_agent_runtime_unsupported',
+      connectionId: 'pc_gateway',
+      machineId: 'machine-a',
+      retryable: false,
+      action: 'review_connection',
+    });
+  });
+
+  it('represents Provider materialization failures without mislabeling them as binding continuity drift', () => {
+    expect(createProviderErrorV1('provider_materialization_failed', {
+      connectionId: 'pc_gateway',
+      machineId: 'machine-a',
+    })).toEqual({
+      v: 1,
+      code: 'provider_materialization_failed',
+      connectionId: 'pc_gateway',
+      machineId: 'machine-a',
+      retryable: false,
+      action: 'review_connection',
+    });
+  });
+
+  it('represents a connection revision conflict independently from authorization drift', () => {
+    expect(createProviderErrorV1('provider_connection_changed', {
+      connectionId: 'pc_gateway',
+      machineId: 'machine-a',
+    })).toEqual({
+      v: 1,
+      code: 'provider_connection_changed',
+      connectionId: 'pc_gateway',
+      machineId: 'machine-a',
+      retryable: true,
+      action: 'review_connection',
+    });
+  });
+
   it('represents profile-migration review failures without inventing a connection identity', () => {
     expect(createProviderErrorV1('provider_profile_migration_source_changed', {
       sourceProfileId: 'company-gateway',

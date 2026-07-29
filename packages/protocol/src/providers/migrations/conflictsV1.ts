@@ -1,6 +1,11 @@
 import { z } from 'zod';
 
 import { createProviderFingerprintV1 } from '../fingerprints.js';
+import { compareProviderCanonicalStringsV1 } from '../canonicalOrderV1.js';
+import {
+  areProviderContributionKeysEqualV1,
+  canonicalizeProviderContributionKeyV1,
+} from '../contributionIdentityV1.js';
 import { ProviderAgentTargetKeySchema, ProviderConnectionIdSchema, ProviderModelIdSchema } from '../ids.js';
 import { readOwnRecordValue } from '../ownRecordValue.js';
 import { readProviderSettingsFromAccountSettingsV1 } from '../settings/readFromAccountSettingsV1.js';
@@ -46,18 +51,19 @@ export type LegacyProfileMigrationConflictResolutionV1 = z.infer<
 
 function contributionKey(candidate: ConnectionCandidate): string | null {
   return candidate.connection.role === 'default' && candidate.connection.source.kind === 'contribution'
-    ? candidate.connection.source.contributionKey
+    ? canonicalizeProviderContributionKeyV1(candidate.connection.source.contributionKey)
     : null;
 }
 
 function accountBindings(candidate: ConnectionCandidate): readonly [string, string][] {
-  return Object.entries(candidate.secretBindings?.account ?? {}).sort(([left], [right]) => left.localeCompare(right));
+  return Object.entries(candidate.secretBindings?.account ?? {}).sort(([left], [right]) =>
+    compareProviderCanonicalStringsV1(left, right));
 }
 
 function modelFacts(candidate: ConnectionCandidate): readonly Readonly<{ id: string; name: string | null }>[] {
   return (candidate.manualModels ?? [])
     .map((model) => ({ id: model.id, name: model.name ?? null }))
-    .sort((left, right) => left.id.localeCompare(right.id));
+    .sort((left, right) => compareProviderCanonicalStringsV1(left.id, right.id));
 }
 
 function legacyModelChoice(candidate: ConnectionCandidate): ProviderSettingsMigrationModelChoiceV1 | null {
@@ -252,7 +258,7 @@ export function classifyLegacyProfileMigrationConflictsV1(
     const winner = settings.connections.find((connection) =>
       connection.role === 'default'
       && connection.source.kind === 'contribution'
-      && connection.source.contributionKey === key);
+      && areProviderContributionKeysEqualV1(connection.source.contributionKey, key));
     if (!winner) continue;
     const persisted = persistedWinnerConflict({ candidate, winnerId: winner.id, settings });
     add(candidate, persisted.kinds, winner.id, persisted.facts, persisted.modelChoices);
@@ -272,7 +278,7 @@ export function classifyLegacyProfileMigrationConflictsV1(
       existingConnectionId: existingConnectionIdBySource.get(candidate.sourceProfileId) ?? null,
       detectedAt: context.migratedAt,
       comparisonFacts: (comparisonFactsBySource.get(candidate.sourceProfileId) ?? [])
-        .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))),
+        .sort((left, right) => compareProviderCanonicalStringsV1(JSON.stringify(left), JSON.stringify(right))),
       modelChoices: modelChoicesBySource.get(candidate.sourceProfileId) ?? [],
     });
     const persisted = persistedBySource.get(candidate.sourceProfileId);
@@ -284,27 +290,14 @@ export function classifyLegacyProfileMigrationConflictsV1(
   return {
     ...context,
     candidates: context.candidates.filter((candidate) => !kindsBySource.has(candidate.sourceProfileId)),
-    pendingConflicts: [...pendingBySource.values()].sort((left, right) => left.sourceProfileId.localeCompare(right.sourceProfileId)),
+    pendingConflicts: [...pendingBySource.values()].sort((left, right) =>
+      compareProviderCanonicalStringsV1(left.sourceProfileId, right.sourceProfileId)),
   };
 }
 
 export type ResolveLegacyProfileMigrationConflictResultV1 =
   | Readonly<{ ok: true; context: ProviderAccountSettingsMigrationContextV1 }>
   | Readonly<{ ok: false; reason: 'migration_conflict_changed' | 'migration_conflict_resolution_invalid' }>;
-
-/** Applies reviewed intent only when the latest raw settings reproduce the exact conflict fingerprint. */
-export function resolveLegacyProfileMigrationConflictV1(
-  rawSettings: Readonly<Record<string, unknown>>,
-  baseContext: ProviderAccountSettingsMigrationContextV1,
-  rawResolution: LegacyProfileMigrationConflictResolutionV1,
-): ResolveLegacyProfileMigrationConflictResultV1 {
-  return applyReviewedLegacyProfileMigrationConflictV1(
-    rawSettings,
-    baseContext,
-    classifyLegacyProfileMigrationConflictsV1(rawSettings, baseContext),
-    rawResolution,
-  );
-}
 
 /**
  * Applies a conflict record already re-derived by an authoritative adapter.
@@ -343,7 +336,10 @@ export function applyReviewedLegacyProfileMigrationConflictV1(
       connection.id === existingConnectionId
       && connection.role === 'default'
       && connection.source.kind === 'contribution'
-      && connection.source.contributionKey === conflict.contributionKey);
+      && areProviderContributionKeysEqualV1(
+        connection.source.contributionKey,
+        conflict.contributionKey,
+      ));
     if (!existing) return { ok: false, reason: 'migration_conflict_changed' };
     const hasModelConflict = conflict.kinds.includes('manual_model');
     if (hasModelConflict && resolution.decision.modelSelection === undefined) {
@@ -401,7 +397,7 @@ export function applyReviewedLegacyProfileMigrationConflictV1(
     context: {
       ...authoritativeContext,
       candidates: [...authoritativeContext.candidates, resolvedCandidate]
-        .sort((left, right) => left.sourceProfileId.localeCompare(right.sourceProfileId)),
+        .sort((left, right) => compareProviderCanonicalStringsV1(left.sourceProfileId, right.sourceProfileId)),
       pendingConflicts: (authoritativeContext.pendingConflicts ?? [])
         .filter((entry) => entry.sourceProfileId !== resolution.sourceProfileId),
     },

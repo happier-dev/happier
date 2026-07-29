@@ -2,28 +2,20 @@ import { defineConfig } from 'vite';
 import {
   createReactNativeWebVitePlugins,
   defineReactNativeWebViteBuildPreset,
-} from '@happier-dev/plugin-sdk/ui/reactNativeWebBuild';
+} from '@happier-dev/plugin-sdk/ui/build';
 
 /**
  * RN-DOGFOOD: the inspector's web build target for its ONE RN-authored
  * surface (`src/ui/renderSurface.tsx`) — LEDGER DEC-6's "ship one
  * sourceEntry, get all platforms" story. Run with `vite build` (or via this
  * repo's `happier-plugin-build-ui` executor) to produce the
- * `dist/happier-plugin-ui/react-native-web/inspector-app-native/entry.mjs`
- * artifact referenced by `manifest.ts`'s `INSPECTOR_NATIVE_BUNDLE` contribution
- * (today wired for the `platform: 'web'` dev-hot-reload channel — see that
- * file's module doc for the contribution-declaration platform-multiplicity
- * caveat found during this lane).
+ * `dist/ui/react-native-web/inspector-app-native/entry.mjs` work artifact.
+ * The host-owned UI builder verifies and stages those bytes under the final
+ * `dist/happier-plugin-ui` artifact root.
  *
- * Native (ios/android) build status: `defineReactNativeRepackBuildPreset`
- * against this SAME `src/ui/renderSurface.tsx` source would produce the
- * Re.Pack artifact for native — proving the "one source, two build targets"
- * contract at the source level — but this repo has no Re.Pack/rspack build
- * pipeline wired up anywhere yet (Re.Pack is a apps/ui CLIENT-side dependency
- * only, for consuming already-built federation bundles via `ScriptManager`;
- * there is no `repack.config.mjs`/build script in this repo that produces
- * one). Standing up that pipeline is out of this lane's scope — tracked as a
- * residual, not silently assumed done.
+ * The sibling Re.Pack target is declared in `happier-plugin-ui.config.mjs`
+ * and configured by `rspack.config.mjs`; the canonical UI build runs both so
+ * regenerating the artifact manifest cannot silently discard either target.
  */
 export default defineConfig(() => {
   const preset = defineReactNativeWebViteBuildPreset({
@@ -40,7 +32,7 @@ export default defineConfig(() => {
       alias: preset.vite.resolve.alias.map((entry) => ({ find: entry.find, replacement: entry.replacement })),
     },
     build: {
-      outDir: preset.output.root,
+      outDir: 'node_modules/.cache/happier-plugin-ui/react-native-web/inspector-app-native',
       minify: false,
       sourcemap: false,
       lib: {

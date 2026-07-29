@@ -1,4 +1,9 @@
 import { ProviderConnectionIdSchema, ProviderContributionKeySchema, ProviderLocalIdSchema, ProviderMachineIdSchema, ProviderModelIdSchema } from '../ids.js';
+import { compareProviderCanonicalStringsV1 } from '../canonicalOrderV1.js';
+import {
+  areProviderContributionKeysEqualV1,
+  canonicalizeProviderContributionKeyV1,
+} from '../contributionIdentityV1.js';
 import { readOwnRecordValue } from '../ownRecordValue.js';
 import {
   ModelVisibilityRefV1Schema,
@@ -14,6 +19,7 @@ import {
   type ProviderSettingsV1,
   ProviderManualModelV1Schema,
   ProviderExperimentalBindingConfirmationV1Schema,
+  type SavedSecretSlotBindingsV1,
 } from './v1.js';
 
 function requireProviderConnection(settings: ProviderSettingsV1, connectionIdInput: string) {
@@ -155,11 +161,13 @@ export function ensureDefaultProviderConnectionV1(
   changed: boolean;
 }> {
   const parsedSettings = assertProviderSettingsV1WithinLimits(settings);
-  const contributionKey = ProviderContributionKeySchema.parse(input.contributionKey);
+  const contributionKey = canonicalizeProviderContributionKeyV1(
+    ProviderContributionKeySchema.parse(input.contributionKey),
+  );
   const existing = parsedSettings.connections.find((connection) =>
     connection.role === 'default'
     && connection.source.kind === 'contribution'
-    && connection.source.contributionKey === contributionKey);
+    && areProviderContributionKeysEqualV1(connection.source.contributionKey, contributionKey));
   if (existing) return { settings: parsedSettings, connection: existing, changed: false };
   if (parsedSettings.connections.length >= PROVIDER_SETTINGS_LIMITS_V1.connections) {
     throw new ProviderSettingsLimitError('Provider connection limit reached');
@@ -191,8 +199,9 @@ export function ensureDefaultProviderConnectionV1(
 }
 
 export type ProviderGrantResolutionV1 =
-  | Readonly<{ authorized: true; grantKind: 'account' | 'machine' }>
+  | Readonly<{ state: 'valid'; authorized: true; grantKind: 'account' | 'machine' }>
   | Readonly<{
+      state: 'absent' | 'stale';
       authorized: false;
       errorCode:
         | 'provider_connection_not_found'
@@ -214,25 +223,25 @@ export function resolveProviderGrantV1(
 ): ProviderGrantResolutionV1 {
   const connectionId = ProviderConnectionIdSchema.parse(input.connectionId);
   if (!settings.connections.some((connection) => connection.id === connectionId)) {
-    return { authorized: false, errorCode: 'provider_connection_not_found' };
+    return { state: 'absent', authorized: false, errorCode: 'provider_connection_not_found' };
   }
   if (input.scope === 'account') {
     const grant = settings.accountGrants.find((candidate) => candidate.connectionId === connectionId);
-    if (!grant) return { authorized: false, errorCode: 'provider_connection_disabled' };
+    if (!grant) return { state: 'absent', authorized: false, errorCode: 'provider_connection_disabled' };
     if (grant.connectionSecurityFingerprint !== input.connectionSecurityFingerprint) {
-      return { authorized: false, errorCode: 'provider_account_grant_stale' };
+      return { state: 'stale', authorized: false, errorCode: 'provider_account_grant_stale' };
     }
-    return { authorized: true, grantKind: 'account' };
+    return { state: 'valid', authorized: true, grantKind: 'account' };
   }
   const machineId = ProviderMachineIdSchema.parse(input.machineId);
   const grant = settings.machineGrants.find((candidate) =>
     candidate.connectionId === connectionId && candidate.machineId === machineId);
-  if (!grant) return { authorized: false, errorCode: 'provider_not_enabled_on_machine' };
+  if (!grant) return { state: 'absent', authorized: false, errorCode: 'provider_not_enabled_on_machine' };
   if (grant.connectionSecurityFingerprint !== input.connectionSecurityFingerprint
     || grant.endpointSetFingerprint !== input.endpointSetFingerprint) {
-    return { authorized: false, errorCode: 'provider_machine_grant_stale' };
+    return { state: 'stale', authorized: false, errorCode: 'provider_machine_grant_stale' };
   }
-  return { authorized: true, grantKind: 'machine' };
+  return { state: 'valid', authorized: true, grantKind: 'machine' };
 }
 
 export function resolveProviderSecretBindingIdV1(
@@ -242,9 +251,17 @@ export function resolveProviderSecretBindingIdV1(
   credentialSlotId: string,
 ): string | null {
   const connectionId = ProviderConnectionIdSchema.parse(connectionIdInput);
+  const bindings = readOwnRecordValue(settings.secretBindingsByConnectionId, connectionId);
+  return resolveSavedSecretSlotBindingIdV1(bindings, machineIdInput, credentialSlotId);
+}
+
+export function resolveSavedSecretSlotBindingIdV1(
+  bindings: SavedSecretSlotBindingsV1 | null | undefined,
+  machineIdInput: string,
+  credentialSlotId: string,
+): string | null {
   const machineId = ProviderMachineIdSchema.parse(machineIdInput);
   const credentialSlot = ProviderLocalIdSchema.parse(credentialSlotId);
-  const bindings = readOwnRecordValue(settings.secretBindingsByConnectionId, connectionId);
   const machineBindings = readOwnRecordValue(bindings?.byMachineId, machineId);
   return readOwnRecordValue(machineBindings, credentialSlot)
     ?? readOwnRecordValue(bindings?.account, credentialSlot)
@@ -280,6 +297,18 @@ export function removeProviderMachineStateV1(
   });
 }
 
+export function hasProviderMachineStateV1(
+  settings: ProviderSettingsV1,
+  machineIdInput: string,
+): boolean {
+  const machineId = ProviderMachineIdSchema.parse(machineIdInput);
+  if (settings.machineGrants.some((grant) => grant.machineId === machineId)) return true;
+  if (settings.connections.some((connection) =>
+    Boolean(readOwnRecordValue(connection.endpointOverridesByMachineId, machineId)))) return true;
+  return Object.values(settings.secretBindingsByConnectionId).some((bindings) =>
+    Boolean(readOwnRecordValue(bindings.byMachineId, machineId)));
+}
+
 export function deleteProviderConnectionV1(
   settings: ProviderSettingsV1,
   connectionIdInput: string,
@@ -308,7 +337,7 @@ export function deleteProviderConnectionV1(
       lastDisplayName: connection.displayName,
       deletedAt,
     },
-  ].sort((a, b) => a.deletedAt - b.deletedAt || a.id.localeCompare(b.id));
+  ].sort((a, b) => a.deletedAt - b.deletedAt || compareProviderCanonicalStringsV1(a.id, b.id));
   const retainedTombstones = connectionTombstones.slice(
     Math.max(0, connectionTombstones.length - PROVIDER_SETTINGS_LIMITS_V1.connectionTombstones),
   );

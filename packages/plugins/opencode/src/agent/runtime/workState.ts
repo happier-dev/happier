@@ -1,11 +1,11 @@
-import type { PluginContextV1 } from '@happier-dev/plugin-sdk';
 import type { SessionWorkStateV1 } from '@happier-dev/plugin-sdk/experimental/sessions/workState';
 
 import type { OpenCodeServerClient } from './server/openCodeServerClient.js';
 import { buildOpenCodeTodoWorkState } from './server/openCodeTodoWorkState.js';
+import type { OpenCodeRuntimeContext } from './server/runtimeContext.js';
 
 export async function publishOpenCodeWorkState(params: Readonly<{
-  ctx: PluginContextV1;
+  ctx: OpenCodeRuntimeContext;
   snapshot: SessionWorkStateV1;
   reason: string;
 }>): Promise<void> {
@@ -17,7 +17,7 @@ export async function publishOpenCodeWorkState(params: Readonly<{
 }
 
 export async function publishOpenCodeNativeTodosWorkState(params: Readonly<{
-  ctx: PluginContextV1;
+  ctx: OpenCodeRuntimeContext;
   client: OpenCodeServerClient;
   providerSessionId: string | null;
 }>): Promise<void> {

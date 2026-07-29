@@ -41,11 +41,11 @@ describe('COPILOT_UI_DESCRIPTOR', () => {
       version: 1,
       display: {
         nameKey: 'agentInput.agent.copilot',
-        connectedService: { serviceId: null, labelKey: 'agentInput.agent.copilot', connectRoute: null },
+        connectedService: { serviceId: null, labelKey: 'agentInput.connectedServiceLabel.copilot', connectRoute: null },
         icon: { assetId: 'copilot' },
       },
-      settings: { descriptorId: 'copilot.agentSettings.v1' },
     });
+    expect(COPILOT_UI_DESCRIPTOR).not.toHaveProperty('settings');
   });
 
   it('is a data-only no-execute descriptor', () => {

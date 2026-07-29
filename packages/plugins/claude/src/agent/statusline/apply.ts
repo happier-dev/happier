@@ -1,10 +1,9 @@
-import type { ClaudeSessionModelsState } from '../sessionControls/models.js';
+import type { ClaudeEffectiveModelEvidence } from '../runtime/effectiveModelEvidence.js';
 import type { ClaudeStatuslinePayload } from './payload.js';
 
 /**
  * Consumes Claude statusline payloads (pushed by the statusline forwarder wrapper) and feeds
- * them into the session-models metadata the UI already prefers for model identity and the
- * context window (`sessionModelsV1`; see `resolveContextWarningWindowTokens` UI-side).
+ * them into the native effective-model and runtime-truth semantic sinks.
  *
  * Statusline is FASTER than transcript model adoption and is the only DIRECT source of the max
  * context window (`context_window.context_window_size`). Everything here is additive
@@ -14,12 +13,6 @@ import type { ClaudeStatuslinePayload } from './payload.js';
 export type ClaudeStatuslineIdentity = Readonly<{
     providerSessionId: string | null;
     transcriptPath: string | null;
-}>;
-
-export type ClaudeStatuslineMetadataWriteRequest = Readonly<{
-    kind: 'update';
-    handler: (current: Readonly<Record<string, unknown>>) => Readonly<Record<string, unknown>>;
-    reason?: string;
 }>;
 
 export type ClaudeStatuslineApplierLogger = Readonly<{
@@ -68,58 +61,11 @@ function matchesSession(identity: ClaudeStatuslineIdentity, payload: ClaudeStatu
     return !knownSessionId && !knownTranscriptPath;
 }
 
-function readSessionModelsState(metadata: Readonly<Record<string, unknown>>): ClaudeSessionModelsState | null {
-    const state = metadata.sessionModelsV1;
-    if (!state || typeof state !== 'object' || Array.isArray(state)) return null;
-    const record = state as Record<string, unknown>;
-    // legacy `provider` state-record read-compat (pre-rename persisted metadata)
-    if (record.v !== 1 || (record.agentId ?? record.provider) !== 'claude') return null;
-    return record as unknown as ClaudeSessionModelsState;
-}
-
-function upsertSessionModelsState(params: Readonly<{
-    current: Readonly<Record<string, unknown>>;
-    modelId: string;
-    displayName: string | null;
-    contextWindowTokens: number | null;
-    nowMs: number;
-}>): Readonly<Record<string, unknown>> {
-    const existing = readSessionModelsState(params.current);
-    const availableModels = existing && Array.isArray(existing.availableModels)
-        ? [...existing.availableModels]
-        : [];
-    const index = availableModels.findIndex((model) => model?.id === params.modelId);
-    const previous = index >= 0 ? availableModels[index] : null;
-    const entry = {
-        ...(previous ?? {}),
-        id: params.modelId,
-        name: params.displayName ?? previous?.name ?? params.modelId,
-        ...(params.contextWindowTokens !== null
-            ? { contextWindowTokens: params.contextWindowTokens }
-            : {}),
-    };
-    if (index >= 0) {
-        availableModels[index] = entry;
-    } else {
-        availableModels.push(entry);
-    }
-
-    const next: ClaudeSessionModelsState = {
-        v: 1,
-        agentId: 'claude',
-        updatedAt: params.nowMs,
-        currentModelId: params.modelId,
-        availableModels,
-    };
-    return { ...params.current, sessionModelsV1: next };
-}
-
 export function createClaudeStatuslineApplier(params: Readonly<{
     logger: ClaudeStatuslineApplierLogger;
-    writeMetadata: (request: ClaudeStatuslineMetadataWriteRequest) => Promise<void>;
     readIdentity: () => ClaudeStatuslineIdentity;
-    nowMs?: () => number;
     onRuntimeTruth?: (truth: ClaudeStatuslineRuntimeTruth) => void;
+    onEffectiveModel?: (evidence: ClaudeEffectiveModelEvidence) => void;
     onModelChanged?: (change: ClaudeEffectiveModelChange) => void;
 }>): Readonly<{
     apply(payload: ClaudeStatuslinePayload): void;
@@ -132,8 +78,8 @@ export function createClaudeStatuslineApplier(params: Readonly<{
     let lastModelKey: string | null = null;
     let lastCanaryKey: string | null = null;
     let lastRuntimeTruthKey: string | null = null;
+    let lastObservedModelId: string | null = null;
     const publishedModelChangeEventIds = new Set<string>();
-    const nowMs = params.nowMs ?? (() => Date.now());
 
     const maybeAdoptModelAndWindow = (input: Readonly<{
         modelId: string | null;
@@ -151,30 +97,20 @@ export function createClaudeStatuslineApplier(params: Readonly<{
         if (modelKey === lastModelKey) return;
         lastModelKey = modelKey;
 
-        void params.writeMetadata({
-            kind: 'update',
-            handler: (current) => {
-                const previousModelId = readSessionModelsState(current)?.currentModelId ?? null;
-                const next = upsertSessionModelsState({
-                    current,
-                    modelId,
-                    displayName,
-                    contextWindowTokens,
-                    nowMs: nowMs(),
-                });
-                if (params.onModelChanged && previousModelId !== null && previousModelId !== modelId) {
-                    const eventId = `claude-model-changed:${previousModelId}:${modelId}`;
-                    if (!publishedModelChangeEventIds.has(eventId)) {
-                        publishedModelChangeEventIds.add(eventId);
-                        params.onModelChanged({ modelId, previousModelId, eventId });
-                    }
-                }
-                return next;
-            },
-            reason: 'claude_statusline_model_update',
-        }).catch((error) => {
-            params.logger.warn('[ClaudeStatusline] session-models metadata update failed', error);
+        params.onEffectiveModel?.({
+            modelId,
+            ...(displayName ? { displayName } : {}),
+            ...(contextWindowTokens !== null ? { contextWindowTokens } : {}),
         });
+        const previousModelId = lastObservedModelId;
+        lastObservedModelId = modelId;
+        if (params.onModelChanged && previousModelId !== null && previousModelId !== modelId) {
+            const eventId = `claude-model-changed:${previousModelId}:${modelId}`;
+            if (!publishedModelChangeEventIds.has(eventId)) {
+                publishedModelChangeEventIds.add(eventId);
+                params.onModelChanged({ modelId, previousModelId, eventId });
+            }
+        }
     };
 
     const maybeFeedRuntimeTruth = (payload: ClaudeStatuslinePayload): void => {

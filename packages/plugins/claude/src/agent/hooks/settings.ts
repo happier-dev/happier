@@ -1,3 +1,5 @@
+import { buildShellCommand } from '@happier-dev/agents/process/shellCommand';
+
 import { resolveClaudePermissionHookTimeoutSeconds } from './permissionHookTimeout.js';
 
 export type ClaudeSessionHookEventName =
@@ -6,7 +8,9 @@ export type ClaudeSessionHookEventName =
     | 'Stop'
     | 'StopFailure'
     | 'SessionEnd'
-    | 'PostToolUse';
+    | 'PostToolUse'
+    | 'SubagentStart'
+    | 'SubagentStop';
 
 export type ClaudePermissionHookEventName = 'PermissionRequest' | 'PreToolUse';
 
@@ -74,6 +78,8 @@ const CLAUDE_SESSION_HOOK_EVENTS: readonly ClaudeSessionHookEventName[] = [
     'StopFailure',
     'SessionEnd',
     'PostToolUse',
+    'SubagentStart',
+    'SubagentStop',
 ];
 
 export function buildClaudeHookSettingsOverlay(): ClaudeHookSettingsOverlay {
@@ -174,13 +180,13 @@ function buildForwarderCommand(params: Readonly<{
     secretFile?: string;
 }>): string {
     const parts = [
-        JSON.stringify(params.nodeExecutable),
-        JSON.stringify(params.scriptPath),
+        params.nodeExecutable,
+        params.scriptPath,
         String(params.port),
-        JSON.stringify(params.hookEventName),
+        params.hookEventName,
     ];
     if (typeof params.secretFile === 'string' && params.secretFile.length > 0) {
-        parts.push('--secret-file', JSON.stringify(params.secretFile));
+        parts.push('--secret-file', params.secretFile);
     }
-    return parts.join(' ');
+    return buildShellCommand(parts, 'posix');
 }

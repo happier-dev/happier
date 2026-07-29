@@ -1,26 +1,19 @@
 import {
-  type ExternalSessionActivityV1,
+  deriveExternalSessionActivity,
   type ExternalSessionCandidateV1,
   type ExternalSessionsSource,
-} from '@happier-dev/plugin-sdk/sessions';
+} from '@happier-dev/plugin-sdk/experimental/sessions';
 
 import { buildOpenCodeAgentRuntimeDescriptorV1 } from '../../../identity/runtimeDescriptor.js';
 import {
-  decodeOpenCodeIndexCursor,
-  encodeOpenCodeIndexCursor,
-} from '../../../runtime/server/transcript/indexedTranscript.js';
+  asRecord,
+  normalizeString,
+} from '../../../runtime/server/openCodeParsing.js';
 import { createOpenCodeExternalSessionClient } from './client.js';
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null;
-}
 
 function getString(value: unknown, key: string): string {
   const record = asRecord(value);
-  const raw = record ? record[key] : null;
-  return typeof raw === 'string' ? raw : '';
+  return normalizeString(record?.[key]);
 }
 
 function getNumber(value: unknown, key: string): number | null {
@@ -29,36 +22,9 @@ function getNumber(value: unknown, key: string): number | null {
   return typeof raw === 'number' && Number.isFinite(raw) ? Math.trunc(raw) : null;
 }
 
-function encodeIndexCursor(offset: number): string {
-  return encodeOpenCodeIndexCursor({ v: 1, kind: 'index', offset: Math.max(0, Math.trunc(offset)) });
-}
-
-function decodeIndexCursor(raw: string | undefined): number {
-  const decoded = decodeOpenCodeIndexCursor(raw, 'index');
-  return decoded?.kind === 'index' ? decoded.offset : 0;
-}
-
-function resolveRecentActivityWindowMs(env: Readonly<Record<string, string | undefined>>): number {
-  const raw = Number.parseInt(String(env.HAPPIER_EXTERNAL_SESSIONS_RECENT_ACTIVITY_WINDOW_MS ?? ''), 10);
-  const configured = Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : 15_000;
-  return Math.max(1000, Math.min(60 * 60 * 1000, configured));
-}
-
-function deriveActivityFromTimestamp(params: Readonly<{
-  updatedAtMs: number | null | undefined;
-  env?: Readonly<Record<string, string | undefined>>;
-  nowMs?: number;
-}>): ExternalSessionActivityV1 {
-  const updatedAtMs = typeof params.updatedAtMs === 'number' && Number.isFinite(params.updatedAtMs)
-    ? Math.trunc(params.updatedAtMs)
-    : null;
-  if (updatedAtMs === null || updatedAtMs < 0) return 'unknown';
-
-  const nowMs = params.nowMs ?? Date.now();
-  const ageMs = nowMs - updatedAtMs;
-  if (!Number.isFinite(ageMs) || ageMs < 0) return 'unknown';
-
-  return ageMs <= resolveRecentActivityWindowMs(params.env ?? process.env) ? 'active_recently' : 'idle';
+function getNestedNumber(value: unknown, parentKey: string, key: string): number | null {
+  const record = asRecord(value);
+  return getNumber(record?.[parentKey], key);
 }
 
 export function isOpenCodeSessionBusy(record: unknown): boolean {
@@ -70,11 +36,14 @@ export function isOpenCodeSessionBusy(record: unknown): boolean {
 export function parseOpenCodeSessionCandidate(raw: unknown): ExternalSessionCandidateV1 | null {
   const record = asRecord(raw);
   if (!record) return null;
-  const remoteSessionId = getString(record, 'id').trim();
+  const remoteSessionId = getString(record, 'id');
   if (!remoteSessionId) return null;
 
-  const title = getString(record, 'title').trim();
-  const updatedAtMs = getNumber(record, 'updatedAtMs') ?? getNumber(record, 'updatedAt') ?? null;
+  const title = getString(record, 'title');
+  const updatedAtMs = getNumber(record, 'updatedAtMs')
+    ?? getNumber(record, 'updatedAt')
+    ?? getNestedNumber(record, 'time', 'updated')
+    ?? null;
 
   return {
     kindVersion: 1,
@@ -91,20 +60,39 @@ export async function listOpenCodeSessionCandidates(params: Readonly<{
   cursor?: string;
   limit: number;
   searchTerm?: string;
+  searchMode?: 'fast' | 'full';
+  includeActivity?: boolean;
+  signal?: AbortSignal;
   env?: Readonly<Record<string, string | undefined>>;
-}>): Promise<Readonly<{ candidates: ExternalSessionCandidateV1[]; nextCursor: string | null }>> {
+}>): Promise<Readonly<{
+  candidates: ExternalSessionCandidateV1[];
+  nextCursor: null;
+  searchIncomplete?: boolean;
+}>> {
+  if (params.cursor) {
+    throw new Error('OpenCode session listing does not expose an official continuation cursor.');
+  }
   const client = await createOpenCodeExternalSessionClient({
     source: params.source,
     env: params.env,
   });
 
   try {
-    const rawSessions = await client.sessionList();
-    const rawStatuses = await client.sessionStatusList().catch(() => ({}));
+    const limit = Math.max(1, Math.trunc(params.limit));
+    const searchTerm = typeof params.searchTerm === 'string' ? params.searchTerm.trim() : '';
+    const rawSessions = await client.sessionList({
+      limit: limit + 1,
+      ...(searchTerm ? { search: searchTerm } : {}),
+      ...(params.signal ? { signal: params.signal } : {}),
+    });
+    const rawStatuses = params.includeActivity === false
+      ? {}
+      : await client.sessionStatusList(
+        params.signal ? { signal: params.signal } : undefined,
+      ).catch(() => ({}));
     const statuses = rawStatuses && typeof rawStatuses === 'object' && !Array.isArray(rawStatuses)
       ? rawStatuses as Record<string, unknown>
       : {};
-    const searchTerm = typeof params.searchTerm === 'string' ? params.searchTerm.trim().toLowerCase() : '';
     const serverBaseUrl = params.source.kind === 'opencodeServer'
       && typeof params.source.baseUrl === 'string'
       && params.source.baseUrl.trim().length > 0
@@ -115,13 +103,9 @@ export async function listOpenCodeSessionCandidates(params: Readonly<{
     for (const raw of rawSessions) {
       const parsed = parseOpenCodeSessionCandidate(raw);
       if (!parsed) continue;
-      if (searchTerm) {
-        const haystack = `${parsed.remoteSessionId} ${parsed.title ?? ''}`.toLowerCase();
-        if (!haystack.includes(searchTerm)) continue;
-      }
       const activity = isOpenCodeSessionBusy(statuses[parsed.remoteSessionId])
         ? 'running'
-        : deriveActivityFromTimestamp({ updatedAtMs: parsed.updatedAtMs, env: params.env });
+        : deriveExternalSessionActivity({ updatedAtMs: parsed.updatedAtMs, env: params.env });
       candidates.push({
         ...parsed,
         activity,
@@ -143,40 +127,14 @@ export async function listOpenCodeSessionCandidates(params: Readonly<{
         || String(a.remoteSessionId).localeCompare(String(b.remoteSessionId)),
     );
 
-    const limit = Math.max(1, Math.trunc(params.limit));
-    const offset = decodeIndexCursor(params.cursor);
-    const page = candidates.slice(offset, offset + limit);
-    const nextOffset = offset + page.length;
+    const hasOverflow = candidates.length > limit;
     return {
-      candidates: page,
-      nextCursor: nextOffset < candidates.length ? encodeIndexCursor(nextOffset) : null,
+      candidates: candidates.slice(0, limit),
+      nextCursor: null,
+      ...((hasOverflow || (searchTerm && params.searchMode === 'fast'))
+        ? { searchIncomplete: true }
+        : {}),
     };
-  } finally {
-    await client.dispose().catch(() => {});
-  }
-}
-
-export async function getOpenCodeExternalSessionActivity(params: Readonly<{
-  source: ExternalSessionsSource;
-  providerSessionId: string;
-}>): Promise<Readonly<{ isRunning: boolean; lastActivityAtMs: number | null }>> {
-  const client = await createOpenCodeExternalSessionClient({ source: params.source });
-  try {
-    const statuses = await client.sessionStatusList().catch(() => ({}));
-    const record = statuses && typeof statuses === 'object' && !Array.isArray(statuses)
-      ? (statuses as Record<string, unknown>)[params.providerSessionId]
-      : null;
-    const isRunning = isOpenCodeSessionBusy(record);
-
-    const sessions = await client.sessionList().catch(() => []);
-    let lastActivityAtMs: number | null = null;
-    for (const raw of sessions) {
-      const candidate = parseOpenCodeSessionCandidate(raw);
-      if (!candidate || candidate.remoteSessionId !== params.providerSessionId) continue;
-      lastActivityAtMs = candidate.updatedAtMs > 0 ? Math.trunc(candidate.updatedAtMs) : null;
-      break;
-    }
-    return { isRunning, lastActivityAtMs };
   } finally {
     await client.dispose().catch(() => {});
   }
@@ -185,10 +143,22 @@ export async function getOpenCodeExternalSessionActivity(params: Readonly<{
 export async function getOpenCodeExternalSessionVerifiedWorkingDirectory(params: Readonly<{
   source: ExternalSessionsSource;
   providerSessionId: string;
+  signal?: AbortSignal;
+  env?: Readonly<Record<string, string | undefined>>;
+  baseUrlAuthority?: 'configured' | 'canonical';
 }>): Promise<string | null> {
-  const client = await createOpenCodeExternalSessionClient({ source: params.source });
+  const client = await createOpenCodeExternalSessionClient({
+    source: params.source,
+    env: params.env,
+    ...(params.baseUrlAuthority
+      ? { baseUrlAuthority: params.baseUrlAuthority }
+      : {}),
+  });
   try {
-    const session = await client.sessionGet({ sessionId: params.providerSessionId });
+    const session = await client.sessionGet({
+      sessionId: params.providerSessionId,
+      ...(params.signal ? { signal: params.signal } : {}),
+    });
     const directory =
       session && typeof session === 'object' && !Array.isArray(session)
       && typeof (session as Record<string, unknown>).directory === 'string'

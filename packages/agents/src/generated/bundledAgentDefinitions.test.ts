@@ -3,92 +3,59 @@ import { describe, expect, it } from 'vitest';
 import { BUNDLED_AGENT_DEFINITIONS_BY_ID } from './bundledAgentDefinitions.js';
 
 describe('bundledAgentDefinitions', () => {
-  it('keeps Claude generated runtime facts under the agentCliRuntime vocabulary', () => {
+  it('keeps native Agent CLI metadata as the generated authority', () => {
     const claudeDefinition = BUNDLED_AGENT_DEFINITIONS_BY_ID.claude as Readonly<Record<string, unknown>>;
 
-    expect(claudeDefinition.agentCliRuntime).toEqual(expect.objectContaining({
-      id: 'claude',
-      title: 'Claude Code CLI',
-      binaryName: 'claude',
-      managedInstall: null,
-      manualInstallKind: 'vendor_recipe',
+    expect(claudeDefinition.cli).toEqual(expect.objectContaining({
+      displayName: 'Claude Code CLI',
+      executable: expect.objectContaining({
+        binaryName: 'claude',
+        sourcePreference: 'system-first',
+      }),
+      install: expect.objectContaining({
+        managed: null,
+        manual: expect.objectContaining({ kind: 'vendor_recipe' }),
+      }),
+      auth: expect.objectContaining({
+        support: 'login_terminal',
+      }),
     }));
-    expect(claudeDefinition).not.toHaveProperty('providerCliRuntime');
+    expect(claudeDefinition).not.toHaveProperty('agentCliRuntime');
   });
 
-  it('keeps Codex generated runtime facts under the agentCliRuntime vocabulary', () => {
+  it('keeps managed installation facts under native CLI metadata', () => {
     const codexDefinition = BUNDLED_AGENT_DEFINITIONS_BY_ID.codex as Readonly<Record<string, unknown>>;
 
-    expect(codexDefinition.agentCliRuntime).toEqual(expect.objectContaining({
-      id: 'codex',
-      title: 'OpenAI Codex CLI',
-      binaryName: 'codex',
-      managedInstall: expect.objectContaining({
-        kind: 'github_release_binary',
-        githubRepo: 'openai/codex',
-        binaryName: 'codex',
+    expect(codexDefinition.cli).toEqual(expect.objectContaining({
+      displayName: 'OpenAI Codex CLI',
+      executable: expect.objectContaining({ binaryName: 'codex' }),
+      install: expect.objectContaining({
+        managed: expect.objectContaining({
+          kind: 'github_release_binary',
+          githubRepo: 'openai/codex',
+          binaryName: 'codex',
+        }),
+        manual: { kind: 'command' },
       }),
-      manualInstallKind: 'command',
     }));
-    expect(codexDefinition).not.toHaveProperty('providerCliRuntime');
+    expect(codexDefinition).not.toHaveProperty('agentCliRuntime');
   });
 
-  it('keeps OpenCode generated runtime facts under the agentCliRuntime vocabulary', () => {
+  it('keeps package installation setup under native CLI metadata', () => {
     const opencodeDefinition = BUNDLED_AGENT_DEFINITIONS_BY_ID.opencode as Readonly<Record<string, unknown>>;
 
-    expect(opencodeDefinition.agentCliRuntime).toEqual(expect.objectContaining({
-      id: 'opencode',
-      title: 'OpenCode CLI',
-      binaryName: 'opencode',
-      managedInstall: expect.objectContaining({
-        kind: 'managed_package',
-        packageName: 'opencode-ai',
-        packageBinarySetup: { kind: 'opencode_platform_binary' },
+    expect(opencodeDefinition.cli).toEqual(expect.objectContaining({
+      displayName: 'OpenCode CLI',
+      executable: expect.objectContaining({ binaryName: 'opencode' }),
+      install: expect.objectContaining({
+        managed: expect.objectContaining({
+          kind: 'managed_package',
+          packageName: 'opencode-ai',
+          packageBinarySetup: { kind: 'opencode_platform_binary' },
+        }),
+        manual: { kind: 'command' },
       }),
-      manualInstallKind: 'command',
     }));
-    expect(opencodeDefinition).not.toHaveProperty('providerCliRuntime');
-  });
-
-  it('keeps Cursor and Qwen generated runtime facts under the agentCliRuntime vocabulary', () => {
-    const cursorDefinition = BUNDLED_AGENT_DEFINITIONS_BY_ID.cursor as Readonly<Record<string, unknown>>;
-    const qwenDefinition = BUNDLED_AGENT_DEFINITIONS_BY_ID.qwen as Readonly<Record<string, unknown>>;
-
-    expect(cursorDefinition.agentCliRuntime).toEqual(expect.objectContaining({
-      id: 'cursor',
-      title: 'Cursor Agent CLI',
-      binaryName: 'cursor-agent',
-      managedInstall: null,
-      manualInstallKind: 'vendor_recipe',
-    }));
-    expect(cursorDefinition).not.toHaveProperty('providerCliRuntime');
-
-    expect(qwenDefinition.agentCliRuntime).toEqual(expect.objectContaining({
-      id: 'qwen',
-      title: 'Qwen CLI',
-      binaryName: 'qwen',
-      managedInstall: expect.objectContaining({
-        kind: 'managed_package',
-        packageName: '@qwen-code/qwen-code',
-      }),
-      manualInstallKind: 'command',
-    }));
-    expect(qwenDefinition).not.toHaveProperty('providerCliRuntime');
-  });
-
-  it('keeps OhMyPi generated prep runtime facts under the agentCliRuntime vocabulary', () => {
-    const ohMyPiDefinition = BUNDLED_AGENT_DEFINITIONS_BY_ID.ohMyPi as Readonly<Record<string, unknown>>;
-
-    expect(ohMyPiDefinition.agentCliRuntime).toEqual(expect.objectContaining({
-      id: 'ohMyPi',
-      title: 'oh-my-pi CLI',
-      binaryName: 'omp',
-      managedInstall: expect.objectContaining({
-        kind: 'github_release_binary',
-        githubRepo: 'can1357/oh-my-pi',
-      }),
-      manualInstallKind: 'vendor_recipe',
-    }));
-    expect(ohMyPiDefinition).not.toHaveProperty('providerCliRuntime');
+    expect(opencodeDefinition).not.toHaveProperty('agentCliRuntime');
   });
 });

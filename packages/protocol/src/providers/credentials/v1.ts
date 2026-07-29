@@ -58,7 +58,8 @@ export const ProviderCredentialTransportV1Schema = z.object({
     ctx.addIssue({ code: 'custom', path: ['uses'], message: 'Credential transport uses must be unique' });
   }
 });
-export type ProviderCredentialTransportV1 = z.infer<typeof ProviderCredentialTransportV1Schema>;
+export type ProviderCredentialTransport = z.infer<typeof ProviderCredentialTransportV1Schema>;
+export type ProviderCredentialTransportV1 = ProviderCredentialTransport;
 
 export function addProviderCredentialTransportIssues(
   transports: readonly ProviderCredentialTransportV1[],

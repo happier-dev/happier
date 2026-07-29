@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type {
-  ExecLaunchInputV1,
-  ExecRunOptionsV1,
-  ExecRuntimeServiceV1,
-} from '@happier-dev/plugin-sdk';
+  PluginExecService,
+  PluginExecSpawnRequest,
+} from '@happier-dev/plugin-sdk/runtime';
 
 import {
   buildOpenCodePreflightModelsFromVerboseOutput,
@@ -18,7 +17,7 @@ describe('OpenCode preflight model parsing', () => {
   }>;
 
   function readProbeModelsRaw(value: unknown): ((params: Readonly<{
-    exec: ExecRuntimeServiceV1;
+    exec: PluginExecService;
     cwd: string;
     timeoutMs: number;
     env?: NodeJS.ProcessEnv;
@@ -32,14 +31,13 @@ describe('OpenCode preflight model parsing', () => {
     results?: readonly ExecRunFixtureResult[];
   }> = {}) {
     const runs: Array<Readonly<{
-      input: ExecLaunchInputV1;
-      options: ExecRunOptionsV1 | undefined;
+      input: PluginExecSpawnRequest & { timeoutMs?: number };
+      options: { signal?: AbortSignal } | undefined;
     }>> = [];
-    const exec: ExecRuntimeServiceV1 = {
+    const executable = { kind: 'systemTool' as const, id: 'opencode-cli' };
+    const exec = {
       systemTools: {
-        resolve: async () => {
-          throw new Error('system tools should not be used for OpenCode model preflight');
-        },
+        resolve: async () => ({ executable, executablePath: '/managed/opencode' }),
       },
       run: async (input, options) => {
         const runIndex = runs.length;
@@ -47,19 +45,22 @@ describe('OpenCode preflight model parsing', () => {
         const response = params.results ? params.results[runIndex] : params;
         if (!response) throw new Error(`unexpected exec run ${runIndex + 1}`);
         return {
-          exitCode: response.exitCode ?? 0,
-          signal: null,
-          stdout: response.stdout ?? '',
-          stderr: response.stderr ?? '',
+          termination: {
+            observed: { kind: 'exit' as const, exitCode: response.exitCode ?? 0 },
+            requestedBy: { kind: 'none' as const },
+          },
+          stdout: new TextEncoder().encode(response.stdout ?? ''),
+          stderr: new TextEncoder().encode(response.stderr ?? ''),
+          stdoutTruncated: false,
+          stderrTruncated: false,
         };
       },
       spawn: async () => {
         throw new Error('spawn should not be used for OpenCode model preflight');
       },
-      spawnClient: (async () => {
-        throw new Error('spawnClient should not be used for OpenCode model preflight');
-      }) as ExecRuntimeServiceV1['spawnClient'],
-    };
+      clients: { spawn: async () => { throw new Error('protocol clients should not be used'); } },
+      agentCli: { checkReadiness: async () => { throw new Error('agent CLI readiness should not be used'); } },
+    } satisfies PluginExecService;
     return { exec, runs };
   }
 
@@ -193,17 +194,17 @@ describe('OpenCode preflight model parsing', () => {
     }]);
     expect(fixture.runs).toEqual([{
       input: {
-        kind: 'agent-cli',
-        agentId: 'opencode',
+        executable: { kind: 'systemTool', id: 'opencode-cli' },
         args: ['models', '--verbose'],
-        cwd: '/workspace',
+        cwd: { root: 'workspace', relativePath: '' },
         env: {
           CI: '1',
           OPENAI_API_KEY: 'sk-test',
           OPENCODE_CONFIG_DIR: '/tmp/opencode',
         },
+        timeoutMs: 120_000,
       },
-      options: { timeoutMs: 120_000 },
+      options: undefined,
     }]);
   });
 
@@ -234,7 +235,7 @@ describe('OpenCode preflight model parsing', () => {
       name: 'Big Pickle',
       description: 'big-pickle',
     }]);
-    expect(fixture.runs[0]?.options).toEqual({ timeoutMs: 120_000 });
+    expect(fixture.runs[0]?.input.timeoutMs).toBe(120_000);
   });
 
   it('falls back to the plain model list when verbose probing is unavailable', async () => {
@@ -270,6 +271,38 @@ describe('OpenCode preflight model parsing', () => {
     expect(fixture.runs.map((run) => run.input.args)).toEqual([
       ['models', '--verbose'],
       ['models'],
+    ]);
+  });
+
+  it('keeps the plain fallback but excludes models already known to be retired', async () => {
+    const fixture = createExecRunFixture({
+      results: [
+        {
+          exitCode: 1,
+          stderr: 'verbose unavailable',
+        },
+        {
+          stdout: [
+            'anthropic/claude-2.0',
+            'anthropic/claude-haiku-4-5-20251001',
+          ].join('\n'),
+        },
+      ],
+    });
+    const probeModelsRaw = readProbeModelsRaw(OPENCODE_PREFLIGHT_SESSION_CONTROLS);
+
+    expect(probeModelsRaw).toBeTypeOf('function');
+    if (!probeModelsRaw) throw new Error('OpenCode preflight model probe is missing');
+
+    await expect(probeModelsRaw({
+      exec: fixture.exec,
+      cwd: '/workspace',
+      timeoutMs: 1_500,
+    })).resolves.toEqual([
+      {
+        id: 'anthropic/claude-haiku-4-5-20251001',
+        name: 'anthropic/claude-haiku-4-5-20251001',
+      },
     ]);
   });
 

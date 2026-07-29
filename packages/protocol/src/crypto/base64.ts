@@ -2,17 +2,8 @@ import { fromByteArray, toByteArray } from 'base64-js';
 
 export type Base64Variant = 'base64' | 'base64url';
 
-const LARGE_CANONICAL_BASE64_FAST_PATH_MIN_CHARS = 1024;
-const CANONICAL_PADDED_BASE64_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
-
-function isLargeCanonicalPaddedBase64(input: string): boolean {
-  return input.length >= LARGE_CANONICAL_BASE64_FAST_PATH_MIN_CHARS
-    && input.length % 4 === 0
-    && CANONICAL_PADDED_BASE64_PATTERN.test(input);
-}
-
-function isCanonicalPaddedBase64(input: string): boolean {
-  if (input.length % 4 !== 0) return false;
+export function readCanonicalPaddedBase64DecodedLength(input: string): number | null {
+  if (input.length % 4 !== 0) return null;
   let paddingStart = input.length;
   for (let index = 0; index < input.length; index += 1) {
     const code = input.charCodeAt(index);
@@ -23,24 +14,23 @@ function isCanonicalPaddedBase64(input: string): boolean {
       || code === 43
       || code === 47;
     if (isAlphabet) {
-      if (paddingStart !== input.length) return false;
+      if (paddingStart !== input.length) return null;
       continue;
     }
-    if (code !== 61) return false;
+    if (code !== 61) return null;
     if (paddingStart === input.length) {
       paddingStart = index;
     }
-    if (index < input.length - 2) return false;
+    if (index < input.length - 2) return null;
   }
-  return true;
+  const paddingLength = input.length - paddingStart;
+  if (paddingLength > 2) return null;
+  return (input.length / 4) * 3 - paddingLength;
 }
 
 function normalizeBase64ForDecoding(input: string, variant: Base64Variant): string {
   if (variant === 'base64') {
-    if (isLargeCanonicalPaddedBase64(input)) {
-      return input;
-    }
-    if (isCanonicalPaddedBase64(input)) {
+    if (readCanonicalPaddedBase64DecodedLength(input) !== null) {
       return input;
     }
   }

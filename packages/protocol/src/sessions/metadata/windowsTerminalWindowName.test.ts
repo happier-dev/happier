@@ -6,10 +6,13 @@ import {
 } from './windowsTerminalWindowName.js';
 
 describe('windowsTerminalWindowName', () => {
-    it('uses the default name for empty or reserved Windows Terminal window names', () => {
+    it('preserves the explicit new-window selector while defaulting empty or ambient selectors', () => {
         expect(normalizeWindowsTerminalWindowName('')).toBe('happier');
         expect(normalizeWindowsTerminalWindowName('   ')).toBe('happier');
-        expect(normalizeWindowsTerminalWindowName('new')).toBe('happier');
+        expect(normalizeWindowsTerminalWindowName(' new ')).toBe('new');
+        expect(normalizeWindowsTerminalWindowName('NEW')).toBe('new');
+        expect(normalizeWindowsTerminalWindowName('-1')).toBe('happier');
+        expect(normalizeWindowsTerminalWindowName('last')).toBe('happier');
         expect(normalizeWindowsTerminalWindowName('0')).toBe('happier');
     });
 

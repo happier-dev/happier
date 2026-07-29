@@ -80,6 +80,22 @@ describe('A.14 session protocol contracts', () => {
     });
   });
 
+  it('validates opaque spawn tool ids without rewriting their wire value', () => {
+    const subagentRef = schema('SubagentRefV1Schema');
+
+    expect(subagentRef.parse({
+      id: 'subagent-native-1',
+      parentSessionId: 'session-1',
+      origin: 'agent',
+      kind: 'native',
+      status: 'completed',
+      createdAt: 1,
+      spawnRef: { toolCallId: ' exact tool id\n ' },
+    })).toMatchObject({
+      spawnRef: { toolCallId: ' exact tool id\n ' },
+    });
+  });
+
   it('parses runtime mode and runtime-mode set payloads without a local mode', () => {
     const runtimeMode = schema('SessionRuntimeModeV1Schema');
     const runtimeModeSetInput = schema('SessionRuntimeModeSetInputV1Schema');
@@ -120,7 +136,7 @@ describe('A.14 session protocol contracts', () => {
     });
   });
 
-  it('maps legacy direct-session takeover inputs into the canonical two-axis takeover shape', () => {
+  it('maps legacy direct-session takeover modes while failing closed on legacy stop authority', () => {
     const takeoverInput = schema('ExternalSessionTakeoverInputV1Schema');
     const takeoverResult = schema('ExternalSessionTakeoverResultV1Schema');
     const mapLinked = (protocol as Record<string, unknown>).mapExternalSessionsTakeoverToExternalSessionTakeoverInputV1 as
@@ -132,12 +148,9 @@ describe('A.14 session protocol contracts', () => {
 
     expect(mapLinked).toBeTypeOf('function');
     expect(mapPersisted).toBeTypeOf('function');
-    expect(takeoverInput.parse(mapLinked!({ linkedSessionId: 'session-1', forceStop: true }))).toEqual({
-      linkedSessionId: 'session-1',
-      targetRuntimeMode: 'terminal',
-      storageMode: 'external-linked',
-      forceStop: true,
-    });
+    expect(takeoverInput.safeParse(
+      mapLinked!({ linkedSessionId: 'session-1', forceStop: true }),
+    ).success).toBe(false);
     expect(takeoverInput.parse(mapPersisted!({ linkedSessionId: 'session-1' }))).toEqual({
       linkedSessionId: 'session-1',
       targetRuntimeMode: 'terminal',

@@ -112,10 +112,10 @@ describe('resolveOpenCodeManagedServerStateFingerprintInput', () => {
     expect(fingerprintFor(noAuth)).not.toBe(fingerprintFor(withAuth));
   });
 
-  // F3: a DIRECT API key (`{type:'api'}` whose key is NOT a broker marker) is a real secret in the
+  // F3: a DIRECT API key (`{type:'api'}` whose key is NOT a request-auth marker) is a real secret in the
   // env. A direct-key rotation under the SAME account keeps the stable selection identity unchanged,
   // so without folding the direct-key bytes the stale server would keep using the OLD key. Fold a HASH
-  // of the non-broker direct-key auth content back into the fingerprint so rotation re-keys the server.
+  // of the non-request-auth direct-key content back into the fingerprint so rotation re-keys the server.
   it('changes the fingerprint when a direct API key rotates under the same selection identity (F3)', () => {
     const base: NodeJS.ProcessEnv = {
       HOME: '/Users/example',
@@ -130,18 +130,18 @@ describe('resolveOpenCodeManagedServerStateFingerprintInput', () => {
     expect(fingerprintFor(base)).not.toBe(fingerprintFor(rotated));
   });
 
-  it('keeps the fingerprint stable when a brokered OAuth marker is present and tokens rotate (F3 excludes the broker marker)', () => {
+  it('keeps the fingerprint stable when a request-auth marker is present and tokens rotate', () => {
     const base: NodeJS.ProcessEnv = {
       HOME: '/Users/example',
       [OPENCODE_CONNECTED_SERVICE_SELECTION_IDENTITY_ENV]: 'opencode|connected|openai-codex:profile:acct-1',
-      // The broker marker is a stable, non-secret `{type:'api'}` entry; it must be EXCLUDED from the
+      // The request-auth marker is a stable, non-secret `{type:'api'}` entry; it must be EXCLUDED from the
       // direct-key fold so OAuth rotation (which never changes the marker) does not churn the server.
-      OPENCODE_AUTH_CONTENT: JSON.stringify({ openai: { type: 'api', key: 'happier-broker:openai:1' } }),
+      OPENCODE_AUTH_CONTENT: JSON.stringify({ openai: { type: 'api', key: 'happier-request-auth:openai:1' } }),
     };
     const rotated: NodeJS.ProcessEnv = {
       ...base,
-      // Same marker (OAuth rotates behind the broker, marker is constant) => identical fingerprint.
-      OPENCODE_AUTH_CONTENT: JSON.stringify({ openai: { type: 'api', key: 'happier-broker:openai:1' } }),
+      // Same marker (OAuth rotates behind request auth, marker is constant) => identical fingerprint.
+      OPENCODE_AUTH_CONTENT: JSON.stringify({ openai: { type: 'api', key: 'happier-request-auth:openai:1' } }),
     };
 
     expect(fingerprintFor(base)).toBe(fingerprintFor(rotated));
@@ -150,7 +150,7 @@ describe('resolveOpenCodeManagedServerStateFingerprintInput', () => {
   it('does not react to a non-api (legacy oauth) entry under a stable selection identity (F3 only folds direct api keys)', () => {
     // A legacy `{type:'oauth'}` entry's rotating bytes are governed by the selection identity, NOT the
     // direct-key fold — so rotating its access token must NOT change the fingerprint (preserves the
-    // brokered-OAuth no-churn invariant).
+    // request-auth OAuth no-churn invariant).
     const base: NodeJS.ProcessEnv = {
       HOME: '/Users/example',
       [OPENCODE_CONNECTED_SERVICE_SELECTION_IDENTITY_ENV]: 'opencode|connected|openai-codex:profile:acct-1',

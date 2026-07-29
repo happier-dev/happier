@@ -30,42 +30,6 @@ export const AGENT_DEFINITION = Object.freeze({
     defaultMode: 'default',
     allowedModes: ['default'],
   },
-  authProbeConfig: {
-    agentId: KILO_AGENT_ID,
-    binaryNames: ['kilo'],
-    statusCommand: null,
-    parser: 'unknown',
-    backgroundChecks: 'safe',
-  },
-  localCli: {
-    agentId: KILO_AGENT_ID,
-    detectKey: 'kilo',
-    machineLoginKey: 'kilo',
-    supportKind: 'login_terminal',
-    loginLaunch: {
-      command: 'kilo',
-      args: [],
-      initialInput: '/connect\r',
-    },
-  },
-  agentCliRuntime: {
-    id: KILO_AGENT_ID,
-    title: 'Kilo CLI',
-    binaryName: 'kilo',
-    knownUserBinDirSuffixes: null,
-    sourcePreferenceDefault: 'system-first',
-    managedInstall: {
-      kind: 'managed_package',
-      packageName: '@kilocode/cli',
-      binaryName: 'kilo',
-    },
-    manualInstallKind: 'command',
-    manualInstallRecipes: null,
-    acceptsJavaScriptFileOverride: false,
-    installGuideUrl: null,
-    docsUrl: 'https://kilo.ai/docs/cli',
-  },
-  agentSettings: null,
   runtimeContributions: {
     agentCatalogEntry: {
       importName: 'KILO_AGENT_RUNTIME_CONTRIBUTION',

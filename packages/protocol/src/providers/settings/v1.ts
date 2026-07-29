@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { ProviderConnectionV1Schema, type ProviderConnectionV1 } from '../connections/v1.js';
 import { ProviderConnectionTombstoneV1Schema } from '../connections/tombstoneV1.js';
+import { canonicalizeProviderContributionKeyV1 } from '../contributionIdentityV1.js';
 import { ProviderAccountGrantV1Schema, ProviderMachineGrantV1Schema } from '../grants/v1.js';
 import { ProviderAgentTargetKeySchema, ProviderConnectionIdSchema, ProviderContributionKeySchema, ProviderLocalIdSchema, ProviderMachineIdSchema, ProviderModelIdSchema } from '../ids.js';
 import { deserializeModelVisibilityRefV1, ProviderBoundModelRefSchema, SessionModelSelectionV1Schema } from '../selection/v1.js';
@@ -28,10 +29,15 @@ export const ProviderSettingsMigrationSourceOutcomeV1Schema = z.discriminatedUni
     sourceProfileId: ProviderMigrationSourceProfileIdSchema,
     kind: z.literal('connection'),
     connectionId: ProviderConnectionIdSchema,
+    sourceRevision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
+    modelSelectionOrigin: z.enum(['implicit_default', 'explicit_process_environment']).optional(),
     modelSelection: ProviderBoundModelRefSchema.optional(),
   }).strict().superRefine((value, ctx) => {
     if (value.modelSelection && value.modelSelection.providerConnectionId !== value.connectionId) {
       ctx.addIssue({ code: 'custom', path: ['modelSelection', 'providerConnectionId'], message: 'Migrated model selection must reference the winning connection' });
+    }
+    if (value.modelSelectionOrigin && !value.modelSelection) {
+      ctx.addIssue({ code: 'custom', path: ['modelSelectionOrigin'], message: 'Model selection provenance requires a migrated model selection' });
     }
   }),
   z.object({
@@ -130,7 +136,7 @@ export function isCanonicalProviderSavedSecretIdV1(value: unknown): value is str
     && !/[\u0000-\u001f\u007f]/u.test(value);
 }
 
-const SecretSlotBindingsSchema = z.record(
+const SavedSecretSlotRecordV1Schema = z.record(
   ProviderLocalIdSchema,
   z.string().refine(isCanonicalProviderSavedSecretIdV1, 'Saved-secret id must be canonical'),
 ).superRefine((value, ctx) => {
@@ -139,14 +145,15 @@ const SecretSlotBindingsSchema = z.record(
   }
 });
 
-const ConnectionSecretBindingsSchema = z.object({
-  account: SecretSlotBindingsSchema.optional(),
-  byMachineId: z.record(ProviderMachineIdSchema, SecretSlotBindingsSchema).optional(),
+export const SavedSecretSlotBindingsV1Schema = z.object({
+  account: SavedSecretSlotRecordV1Schema.optional(),
+  byMachineId: z.record(ProviderMachineIdSchema, SavedSecretSlotRecordV1Schema).optional(),
 }).strict().superRefine((value, ctx) => {
   if (Object.keys(value.byMachineId ?? {}).length > PROVIDER_SETTINGS_LIMITS_V1.machinesPerConnection) {
     ctx.addIssue({ code: 'custom', path: ['byMachineId'], message: 'Too many machine secret-binding branches' });
   }
 });
+export type SavedSecretSlotBindingsV1 = Readonly<z.infer<typeof SavedSecretSlotBindingsV1Schema>>;
 
 const ProviderSettingsV1BaseSchema = z.object({
   v: z.literal(1),
@@ -154,7 +161,7 @@ const ProviderSettingsV1BaseSchema = z.object({
   connectionTombstones: z.array(ProviderConnectionTombstoneV1Schema).max(PROVIDER_SETTINGS_LIMITS_V1.connectionTombstones),
   accountGrants: z.array(ProviderAccountGrantV1Schema).max(PROVIDER_SETTINGS_LIMITS_V1.accountGrants),
   machineGrants: z.array(ProviderMachineGrantV1Schema).max(PROVIDER_SETTINGS_LIMITS_V1.machineGrants),
-  secretBindingsByConnectionId: z.record(ProviderConnectionIdSchema, ConnectionSecretBindingsSchema),
+  secretBindingsByConnectionId: z.record(ProviderConnectionIdSchema, SavedSecretSlotBindingsV1Schema),
   manualModelsByConnectionId: z.record(
     ProviderConnectionIdSchema,
     z.array(ProviderManualModelV1Schema).max(PROVIDER_SETTINGS_LIMITS_V1.manualModelsPerConnection),
@@ -173,10 +180,11 @@ export const ProviderSettingsV1Schema = ProviderSettingsV1BaseSchema.superRefine
     if (connectionIds.has(connection.id)) ctx.addIssue({ code: 'custom', path: ['connections', index, 'id'], message: 'Duplicate connection id' });
     connectionIds.add(connection.id);
     if (connection.role === 'default' && connection.source.kind === 'contribution') {
-      if (defaultContributionKeys.has(connection.source.contributionKey)) {
+      const contributionKey = canonicalizeProviderContributionKeyV1(connection.source.contributionKey);
+      if (defaultContributionKeys.has(contributionKey)) {
         ctx.addIssue({ code: 'custom', path: ['connections', index, 'role'], message: 'Only one default connection is allowed per contribution' });
       }
-      defaultContributionKeys.add(connection.source.contributionKey);
+      defaultContributionKeys.add(contributionKey);
     }
   });
 
@@ -375,14 +383,25 @@ export function parseProviderSettingsV1Narrow(value: unknown): Readonly<{
   const connectionIds = new Set<string>();
   const defaultContributionKeys = new Set<string>();
   for (const parsed of parseArray('connections', ProviderConnectionV1Schema, PROVIDER_SETTINGS_LIMITS_V1.connections)) {
-    const defaultKey = parsed.role === 'default' && parsed.source.kind === 'contribution' ? parsed.source.contributionKey : null;
-    if (connectionIds.has(parsed.id) || (defaultKey && defaultContributionKeys.has(defaultKey))) {
+    const connection: ProviderConnectionV1 = parsed.source.kind === 'contribution'
+      ? {
+          ...parsed,
+          source: {
+            ...parsed.source,
+            contributionKey: canonicalizeProviderContributionKeyV1(parsed.source.contributionKey),
+          },
+        }
+      : parsed;
+    const defaultKey = connection.role === 'default' && connection.source.kind === 'contribution'
+      ? connection.source.contributionKey
+      : null;
+    if (connectionIds.has(connection.id) || (defaultKey && defaultContributionKeys.has(defaultKey))) {
       diagnostics.push({ path: 'connections', reason: 'duplicate_identity' });
       continue;
     }
-    connectionIds.add(parsed.id);
+    connectionIds.add(connection.id);
     if (defaultKey) defaultContributionKeys.add(defaultKey);
-    connections.push(parsed);
+    connections.push(connection);
   }
   const keepRef = <T extends { connectionId: string }>(entries: T[], key: string): T[] => entries.filter((entry, index) => {
     if (connectionIds.has(entry.connectionId)) return true;
@@ -403,6 +422,12 @@ export function parseProviderSettingsV1Narrow(value: unknown): Readonly<{
 
   const connectionTombstones = uniqueFirst(
     parseArray('connectionTombstones', ProviderConnectionTombstoneV1Schema, PROVIDER_SETTINGS_LIMITS_V1.connectionTombstones)
+      .map((entry) => entry.contributionKey === null
+        ? entry
+        : {
+            ...entry,
+            contributionKey: canonicalizeProviderContributionKeyV1(entry.contributionKey),
+          })
       .filter((entry, index) => {
         if (!connectionIds.has(entry.id)) return true;
         diagnostics.push({ path: `connectionTombstones[${index}]`, reason: 'duplicate_identity' });
@@ -414,7 +439,7 @@ export function parseProviderSettingsV1Narrow(value: unknown): Readonly<{
 
   const secretBindingsByConnectionId: ProviderSettingsV1['secretBindingsByConnectionId'] = {};
   for (const [connectionId, bindings] of Object.entries(rawRecord(raw.secretBindingsByConnectionId))) {
-    const parsed = ConnectionSecretBindingsSchema.safeParse(bindings);
+    const parsed = SavedSecretSlotBindingsV1Schema.safeParse(bindings);
     const parsedConnectionId = ProviderConnectionIdSchema.safeParse(connectionId);
     if (connectionIds.has(connectionId) && parsed.success && parsedConnectionId.success) secretBindingsByConnectionId[parsedConnectionId.data] = parsed.data;
     else diagnostics.push({ path: `secretBindingsByConnectionId.${connectionId}`, reason: parsed.success ? 'unknown_connection' : 'invalid_record' });
@@ -546,7 +571,10 @@ export function parseProviderSettingsV1Narrow(value: unknown): Readonly<{
           continue;
         }
         conflictIds.add(parsed.data.sourceProfileId);
-        pendingConflicts.push(parsed.data);
+        pendingConflicts.push({
+          ...parsed.data,
+          contributionKey: canonicalizeProviderContributionKeyV1(parsed.data.contributionKey),
+        });
       }
 
       const migratedAt = z.number().finite().nonnegative().safeParse(rawMigration.migratedAt);

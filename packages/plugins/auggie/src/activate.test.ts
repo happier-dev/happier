@@ -1,114 +1,86 @@
-import type { AcpBackendSpecV1 } from '@happier-dev/plugin-sdk/experimental/acp';
-import type { AgentRuntimeV1 } from '@happier-dev/plugin-sdk';
-import { createAcpBackendEngine, readAcpBackendSpec } from '@happier-dev/plugin-sdk/experimental/acp';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import {
+  type AgentAcpRuntimeOptions,
+  type AgentSessionOpenRequest,
+  type AgentSessionRuntime,
+  type AgentSessionRuntimeContext,
+} from '@happier-dev/plugin-sdk/agent-runtime';
 import { describe, expect, it, vi } from 'vitest';
 
 import { activate } from './activate.js';
+import { PLUGIN_MANIFEST } from './manifest.js';
 
-type AuggieBackendRegistration = Readonly<{
-  agentId: string;
-  create: (ctx: Readonly<{
-    agentRuntime: Readonly<{
-      acp: Readonly<{
-        defineAcpBackend: (spec: AcpBackendSpecV1) => AgentRuntimeV1;
-      }>;
-    }>;
-  }>) => AgentRuntimeV1 | Promise<AgentRuntimeV1>;
-}>;
-
-function readRegisteredBackend(registerAgentRuntime: ReturnType<typeof vi.fn>): AuggieBackendRegistration {
-  const registration = registerAgentRuntime.mock.calls[0]?.[0];
-  if (!registration || typeof registration !== 'object') {
-    throw new Error('Expected Auggie activation to register a backend engine');
-  }
-  return registration as AuggieBackendRegistration;
-}
-
-describe('activate', () => {
-  it('registers the Auggie ACP backend through the plugin API', async () => {
-    const registerAgentRuntime = vi.fn();
-
-    activate({ registerAgentRuntime });
-
-    const registration = readRegisteredBackend(registerAgentRuntime);
-    expect(registration.agentId).toBe('auggie');
-
-    const engine = await registration.create({
-      agentRuntime: {
-        acp: {
-          defineAcpBackend: createAcpBackendEngine,
-        },
-      },
-    });
-    const spec = readAcpBackendSpec(engine);
-
-    expect(spec).toMatchObject({
-      backendId: 'auggie',
-      transport: {
-        kind: 'stdio',
-        launch: {
-          kind: 'agent-cli',
-          agentId: 'auggie',
-          args: ['--acp'],
-        },
-      },
-      sessionIdHeaderName: 'auggieSessionId',
-      mcp: { policy: 'pass_through' },
-      stderrRules: {
-        statusErrors: expect.arrayContaining([
-          expect.objectContaining({
-            detail: 'Authentication error. Run `auggie login` or set AUGMENT_SESSION_AUTH in your environment.',
-          }),
-        ]),
-      },
-    });
-    expect(spec.transport.timeouts).toMatchObject({
-      initMs: 60_000,
-      toolCallMs: 120_000,
-      investigationToolCallMs: 600_000,
-      toolKindTimeouts: {
-        think: 30_000,
-      },
-    });
-    expect(spec.toolNameInference).toMatchObject({
-      investigationToolIdPatterns: ['investigat', 'index', 'search'],
-      investigationToolKinds: ['investigation'],
-    });
-    expect(spec.callbacks?.argvBuilder).toBeTypeOf('function');
+describe('Auggie activation', () => {
+  it('registers its runtime through the public Agent activation API', async () => {
+    const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    expect(activation.registrations()).toContainEqual({ family: 'agents', localId: 'auggie' });
+    const registration = activation.registration('agents', 'auggie');
+    expect(registration?.factory).toEqual(expect.any(Function));
+    expect(registration).not.toHaveProperty('externalSessions');
+    expect(registration).not.toHaveProperty('externalSessionObservation');
+    await activation.dispose();
   });
 
-  it('preserves Auggie allow-indexing and permission argv behavior in the ACP callback', async () => {
-    const registerAgentRuntime = vi.fn();
-    activate({ registerAgentRuntime });
-    const registration = readRegisteredBackend(registerAgentRuntime);
-    const engine = await registration.create({
-      agentRuntime: {
-        acp: {
-          defineAcpBackend: createAcpBackendEngine,
-        },
-      },
+  it('opens Auggie through the native ACP composer with VB4 inputs and no V1 fallback', async () => {
+    const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    const factory = activation.registration('agents', 'auggie')?.factory;
+    if (!factory) throw new Error('Expected Auggie Agent factory');
+    const runtime = await factory({
+      plugin: { id: 'happier.agent.auggie', version: '0.0.0' },
+      agent: { id: 'auggie' },
+      signal: new AbortController().signal,
     });
-    const spec = readAcpBackendSpec(engine);
-    const buildArgv = spec.callbacks?.argvBuilder;
-
-    expect(buildArgv).toBeTypeOf('function');
-    const argv = await Promise.resolve(buildArgv?.({
-      baseArgs: ['--acp'],
+    const session: AgentSessionRuntime = {
+      send: vi.fn(async () => ({ status: 'admitted' as const })),
+      watch: () => ({ dispose: () => undefined }),
+      dispose: vi.fn(),
+    };
+    const open = vi.fn(async (
+      _request: AgentSessionOpenRequest,
+      _options: AgentAcpRuntimeOptions,
+    ) => session);
+    const request: AgentSessionOpenRequest = {
+      kind: 'create',
+      sessionId: 'session-auggie',
       cwd: '/workspace',
-      env: { HAPPIER_AUGGIE_ALLOW_INDEXING: '1' },
-      permissionMode: 'read-only',
-    }));
+      launchEnvironment: {
+        values: { AUGMENT_SESSION_AUTH: 'host-authorized-auth' },
+        unset: ['AUGGIE_LEGACY_SETTING'],
+      },
+      configuration: {
+        mode: { value: null, updatedAtMs: 10 },
+        model: { value: 'model-auggie', updatedAtMs: 11 },
+        permissionIntent: { value: 'safe-yolo', updatedAtMs: 12 },
+        options: { allowIndexing: { value: true, updatedAtMs: 13 } },
+      },
+    };
+    const context = {
+      protocols: { acp: { open } },
+    } as AgentSessionRuntimeContext;
 
-    expect(argv).toEqual(expect.arrayContaining([
-      '--acp',
-      '--allow-indexing',
-      '--ask',
-      '--permission',
-      'launch-process:deny',
-      '--permission',
-      'write-process:deny',
-      '--permission',
-      'save-file:deny',
-    ]));
+    await expect(runtime.sessions.open(request, context)).resolves.toBe(session);
+    expect(open).toHaveBeenCalledWith(request, {
+      transport: {
+        kind: 'stdio',
+        executable: { kind: 'systemTool', id: 'auggie-cli' },
+        args: expect.arrayContaining([
+          '--acp',
+          '--allow-indexing',
+          '--permission',
+          'save-file:allow',
+        ]),
+      },
+      definition: expect.objectContaining({
+        modelConfigOptionId: 'model',
+        mcp: { policy: 'pass_through' },
+        timeouts: expect.objectContaining({
+          initMs: 60_000,
+          investigationToolCallMs: 600_000,
+        }),
+        stderrRules: expect.any(Object),
+        toolNameInference: expect.any(Object),
+      }),
+    });
+    await activation.dispose();
   });
 });

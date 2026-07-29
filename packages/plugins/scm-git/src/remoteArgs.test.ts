@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/experimental/scm';
 
 import {
     buildGitPullArgs,

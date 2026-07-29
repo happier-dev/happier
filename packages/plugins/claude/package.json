@@ -10,6 +10,10 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./manifest": {
+      "types": "./dist/manifest.d.ts",
+      "default": "./dist/manifest.js"
+    },
     "./agent": {
       "types": "./dist/agent/index.d.ts",
       "default": "./dist/agent/index.js"
@@ -74,14 +78,10 @@
       "types": "./dist/agent/surfaces/sessions/handoff/providerOps.d.ts",
       "default": "./dist/agent/surfaces/sessions/handoff/providerOps.js"
     },
-    "./agent/surfaces/sessions/external/providerOps": {
-      "types": "./dist/agent/surfaces/sessions/external/providerOps.d.ts",
-      "default": "./dist/agent/surfaces/sessions/external/providerOps.js"
-    },
-    "./ui": {
-      "types": "./dist/ui/index.d.ts",
-      "react-native": "./dist/ui/index.js",
-      "default": "./dist/ui/index.js"
+    "./ui/behavior": {
+      "types": "./dist/ui/uiBehavior.d.ts",
+      "react-native": "./dist/ui/uiBehavior.js",
+      "default": "./dist/ui/uiBehavior.js"
     }
   },
   "files": [
@@ -90,15 +90,17 @@
   ],
   "scripts": {
     "tsc": "node ../../../scripts/workspaces/runTypeScriptCli.mjs",
-    "build": "node ../../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.json",
+    "build": "node ../../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
     "test": "vitest run",
     "typecheck": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@happier-dev/agents": "0.0.0",
     "@happier-dev/plugin-sdk": "0.0.0",
     "zod": "4.3.6"
   },
   "devDependencies": {
+    "@happier-dev/protocol": "0.0.0",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4",
     "@types/react-test-renderer": "^19.1.0",

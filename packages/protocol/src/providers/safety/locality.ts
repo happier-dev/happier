@@ -1,3 +1,5 @@
+import { PROVIDER_METADATA_IP_DESTINATIONS } from './metadataDestinations.js';
+
 export type ProviderIpLocality = 'public' | 'private' | 'loopback' | 'unsafe';
 
 export type ParsedProviderIpAddress = Readonly<{
@@ -61,12 +63,11 @@ const IPV4_POLICY_RANGES: readonly Ipv4PolicyRange[] = Object.freeze([
   createIpv4PolicyRange('0.0.0.0/8', 'unsafe'),
   createIpv4PolicyRange('10.0.0.0/8', 'private'),
   createIpv4PolicyRange('100.64.0.0/10', 'private'),
-  createIpv4PolicyRange('100.100.100.200/32', 'unsafe'), // Alibaba ECS/ENS metadata
+  ...PROVIDER_METADATA_IP_DESTINATIONS
+    .filter((entry) => entry.version === 4)
+    .map((entry) => createIpv4PolicyRange(`${entry.address}/32`, 'unsafe')),
   createIpv4PolicyRange('127.0.0.0/8', 'loopback'),
   createIpv4PolicyRange('169.254.0.0/16', 'private'),
-  createIpv4PolicyRange('169.254.169.254/32', 'unsafe'), // EC2 and common cloud IMDS
-  createIpv4PolicyRange('169.254.170.2/32', 'unsafe'), // ECS task credentials
-  createIpv4PolicyRange('169.254.170.23/32', 'unsafe'), // EKS Pod Identity credentials
   createIpv4PolicyRange('172.16.0.0/12', 'private'),
   createIpv4PolicyRange('192.0.0.0/24', 'unsafe'),
   createIpv4PolicyRange('192.0.0.0/29', 'private'),
@@ -226,7 +227,9 @@ const IPV6_POLICY_RANGES: readonly Ipv6PolicyRange[] = Object.freeze([
   createIpv6PolicyRange('3fff::/20', 'unsafe'),
   createIpv6PolicyRange('5f00::/16', 'private'),
   createIpv6PolicyRange('fc00::/7', 'private'),
-  createIpv6PolicyRange('fd00:ec2::254/128', 'unsafe'),
+  ...PROVIDER_METADATA_IP_DESTINATIONS
+    .filter((entry) => entry.version === 6)
+    .map((entry) => createIpv6PolicyRange(`${entry.address}/128`, 'unsafe')),
   createIpv6PolicyRange('fe80::/10', 'private'),
   createIpv6PolicyRange('fec0::/10', 'private'), // RFC 3879 existing-deployment compatibility
   createIpv6PolicyRange('ff00::/8', 'unsafe'),
@@ -247,6 +250,39 @@ function classifyEmbeddedIpv4(value: bigint): ProviderIpLocality {
   ]);
 }
 
+type Rfc6052PrefixLength = 32 | 40 | 48 | 56 | 64 | 96;
+
+function extractRfc6052EmbeddedIpv4(value: bigint, prefixLength: Rfc6052PrefixLength): bigint {
+  switch (prefixLength) {
+    case 32:
+      return (value >> 64n) & 0xffff_ffffn;
+    case 40:
+      return (((value >> 64n) & 0xff_ffffn) << 8n) | ((value >> 48n) & 0xffn);
+    case 48:
+      return (((value >> 64n) & 0xffffn) << 16n) | ((value >> 40n) & 0xffffn);
+    case 56:
+      return (((value >> 64n) & 0xffn) << 24n) | ((value >> 32n) & 0xff_ffffn);
+    case 64:
+      return (value >> 24n) & 0xffff_ffffn;
+    case 96:
+      return value & 0xffff_ffffn;
+  }
+}
+
+function classifyRfc8215LocalUseTranslation(value: bigint): ProviderIpLocality | null {
+  // RFC 8215 reserves 64:ff9b:1::/48 for technology-agnostic local-use
+  // translation, so an address alone cannot identify a more-specific NSP.
+  // Fail closed when any RFC 6052 layout reachable beneath that /48 embeds an
+  // unsafe IPv4 destination. Otherwise the containing prefix remains local.
+  if ((value >> 80n) !== 0x64_ff9b_0001n) return null;
+  if (((value >> 56n) & 0xffn) !== 0n) return 'unsafe';
+  const reachablePrefixLengths = [48, 56, 64, 96] as const satisfies readonly Rfc6052PrefixLength[];
+  return reachablePrefixLengths.some((prefixLength) =>
+    classifyEmbeddedIpv4(extractRfc6052EmbeddedIpv4(value, prefixLength)) === 'unsafe')
+    ? 'unsafe'
+    : 'private';
+}
+
 function classifyIpv6(words: readonly number[]): ProviderIpLocality {
   const value = wordsToBigInt(words);
   if (value === 1n) return 'loopback';
@@ -260,10 +296,13 @@ function classifyIpv6(words: readonly number[]): ProviderIpLocality {
   // interpreted as IPv4 by transition machinery. Only :: and ::1 have already been handled.
   if ((value >> 32n) === 0n) return 'unsafe';
 
+  const localUseTranslation = classifyRfc8215LocalUseTranslation(value);
+  if (localUseTranslation !== null) return localUseTranslation;
+
   // RFC 6052 Well-Known Prefix (/96): the low 32 bits are the translated IPv4.
   const wellKnownNat64Prefix = 0x0064_ff9b_0000_0000_0000_0000n;
   if ((value >> 32n) === wellKnownNat64Prefix) {
-    return classifyEmbeddedIpv4(value);
+    return classifyEmbeddedIpv4(extractRfc6052EmbeddedIpv4(value, 96));
   }
 
   // RFC 3056 6to4: bits 16..47 are the source-real IPv4 address.

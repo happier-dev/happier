@@ -2,10 +2,9 @@ import type { AgentCore, AgentId } from '../types.js';
 import type { AgentSessionModeDescriptor, AgentSessionModesKind } from '../sessionModes.js';
 import type { AgentModelConfig } from '../models.js';
 import type { AgentLocalCliConfig } from '../localCli.js';
-import type { AgentCliRuntimeSpec } from '../cli/runtime.js';
 import type { AnyAgentRuntimeKindsManifest } from '../runtimeKinds.js';
-import type { AgentSettingsDefinition } from '../agentSettings/index.js';
 import type { EngineSpec } from '../runtime/engine/contracts.js';
+import type { AgentProviderRequirementsV1 } from '@happier-dev/protocol';
 
 export type AgentCatalogDefinition = Readonly<{
   id: AgentId;
@@ -15,13 +14,11 @@ export type AgentCatalogDefinition = Readonly<{
   sessionModesKind: AgentSessionModesKind;
   modelConfig: AgentModelConfig;
   localCli: AgentLocalCliConfig;
-  agentCliRuntime: AgentCliRuntimeSpec;
-  agentSettings: AgentSettingsDefinition | null;
 }>;
 
 /**
  * Important naming split:
- * - `BackendDefinitionV1` (protocol) remains the extension wire contract.
+ * - `PluginBackendDefinitionV1` (protocol) remains the plugin wire contract.
  * - `BackendCatalogDefinition` (agents) is the normalized host catalog record.
  */
 export type BackendCatalogDefinition = Readonly<{
@@ -44,6 +41,7 @@ export type AgentDefinitionContractV1 = Readonly<{
   id: string;
   ownedBackendIds: readonly string[];
   enablementCompatibilityBackendIds?: readonly string[];
+  providerRequirements?: AgentProviderRequirementsV1;
 }>;
 
 export type BackendDefinitionContractV1 = Readonly<{

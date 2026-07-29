@@ -1,0 +1,12 @@
+{"type":"session","version":3,"id":"pi-session-fixture","timestamp":"2026-07-20T10:00:00.000Z","cwd":"/workspace/pi-fixture"}
+{"type":"message","id":"user-root","parentId":null,"timestamp":"2026-07-20T10:00:01.000Z","message":{"role":"user","content":"Inspect the fixture."}}
+{"type":"message","id":"assistant-root","parentId":"user-root","timestamp":"2026-07-20T10:00:02.000Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"subagent-call","name":"subagent","arguments":{"agent":"scout","task":"Check the branch."}}],"stopReason":"toolUse"}}
+{"type":"message","id":"subagent-result","parentId":"assistant-root","timestamp":"2026-07-20T10:00:03.000Z","message":{"role":"toolResult","toolCallId":"subagent-call","toolName":"subagent","content":[{"type":"text","text":"The alternate path is not active."}],"isError":false}}
+{"type":"message","id":"abandoned-user","parentId":"subagent-result","timestamp":"2026-07-20T10:00:04.000Z","message":{"role":"user","content":"This branch must not be flattened into the active transcript."}}
+{"type":"message","id":"abandoned-assistant","parentId":"abandoned-user","timestamp":"2026-07-20T10:00:05.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Abandoned response."}],"stopReason":"stop"}}
+{"type":"branch_summary","id":"branch-summary","parentId":"subagent-result","timestamp":"2026-07-20T10:00:06.000Z","fromId":"abandoned-assistant","summary":"The abandoned branch inspected an alternate approach."}
+{"type":"message","id":"active-user","parentId":"branch-summary","timestamp":"2026-07-20T10:00:07.000Z","message":{"role":"user","content":"Continue on the active branch."}}
+{"type":"compaction","id":"compaction","parentId":"active-user","timestamp":"2026-07-20T10:00:08.000Z","summary":"The active branch inspected the fixture and selected the current approach.","firstKeptEntryId":"active-user","tokensBefore":42000}
+{"type":"message","id":"active-assistant","parentId":"compaction","timestamp":"2026-07-20T10:00:09.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Active response."}],"stopReason":"stop"}}
+{"type":"future_entry","id":"future-entry","parentId":"active-assistant","timestamp":"2026-07-20T10:00:10.000Z","payload":{"fixture":"unknown records remain traversable"}}
+{"type":"session_info","id":"session-name","parentId":"future-entry","timestamp":"2026-07-20T10:00:11.000Z","name":"Sanitized Pi tree fixture"}

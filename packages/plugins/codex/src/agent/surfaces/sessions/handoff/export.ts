@@ -3,10 +3,10 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import {
-  ExternalSessionsSourceSchema,
   readRuntimeDescriptorV1FromMetadata,
   type ExternalSessionsSource,
-} from '@happier-dev/plugin-sdk/sessions';
+} from '@happier-dev/plugin-sdk/experimental/sessions';
+import { readLinkedExternalSessionV1FromMetadata } from '@happier-dev/protocol';
 import { expandHomePath } from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
 
 import {
@@ -17,7 +17,10 @@ import {
 import { buildCodexAgentRuntimeDescriptor } from '../../../../protocol/runtimeDescriptorV1.js';
 import { collectCodexSessionRolloutFiles } from '../../../rollout/discovery/sessionsForHome.js';
 import { homes } from '../../../rollout/discovery/sessionsForHomes.js';
-import type { CodexSessionHandoffBundle } from './bundle.js';
+import {
+  normalizeCodexHandoffBundleRelativePath,
+  type CodexSessionHandoffBundle,
+} from './bundle.js';
 
 function resolveCodexHome(env: NodeJS.ProcessEnv): string {
   const raw = typeof env.CODEX_HOME === 'string' ? env.CODEX_HOME.trim() : '';
@@ -29,21 +32,11 @@ function resolveCodexHome(env: NodeJS.ProcessEnv): string {
   return raw ? expandHomePath(raw, homeDir) : join(homeDir, '.codex');
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  return value as Record<string, unknown>;
-}
-
 function sanitizeExternalCodexSourceForHandoff(source: ExternalSessionsSource | undefined): ExternalSessionsSource | undefined {
   if (!source || source.kind !== 'codexHome') return source;
   // Absolute home paths are machine-specific and must not be transported via handoff bundles.
   const { homePath: _homePath, ...rest } = source as ExternalSessionsSource & { homePath?: string };
   return rest as ExternalSessionsSource;
-}
-
-function parseExternalSessionsSource(value: unknown): ExternalSessionsSource | null {
-  const parsed = ExternalSessionsSourceSchema.safeParse(value);
-  return parsed.success ? parsed.data : null;
 }
 
 async function resolvePreferredCodexHomes(params: Readonly<{
@@ -69,12 +62,9 @@ function resolveCodexSource(metadata: Record<string, unknown>): ExternalSessions
   const runtimeDescriptor = readCanonicalCodexRuntimeDescriptorV1(
     readRuntimeDescriptorV1FromMetadata(metadata),
   );
-  const externalSession = asRecord(metadata.externalSessionV1);
-  const externalSessionSource = externalSession?.agentId === 'codex'
-    ? parseExternalSessionsSource(externalSession.source)
-    : null;
-  if (externalSessionSource?.kind === 'codexHome') {
-    return externalSessionSource;
+  const linkedSession = readLinkedExternalSessionV1FromMetadata(metadata);
+  if (linkedSession?.agentId === 'codex' && linkedSession.source.kind === 'codexHome') {
+    return linkedSession.source;
   }
 
   if (!runtimeDescriptor?.home) {
@@ -83,6 +73,7 @@ function resolveCodexSource(metadata: Record<string, unknown>): ExternalSessions
 
   const connectedServiceId = typeof runtimeDescriptor.connectedServiceId === 'string' ? runtimeDescriptor.connectedServiceId : undefined;
   const connectedServiceProfileId = typeof runtimeDescriptor.connectedServiceProfileId === 'string' ? runtimeDescriptor.connectedServiceProfileId : undefined;
+  const connectedServiceGroupId = typeof runtimeDescriptor.connectedServiceGroupId === 'string' ? runtimeDescriptor.connectedServiceGroupId : undefined;
 
   return runtimeDescriptor.home === 'connectedService'
     ? {
@@ -90,6 +81,7 @@ function resolveCodexSource(metadata: Record<string, unknown>): ExternalSessions
       home: 'connectedService' as const,
       ...(connectedServiceId ? { connectedServiceId } : {}),
       ...(connectedServiceProfileId ? { connectedServiceProfileId } : {}),
+      ...(connectedServiceGroupId ? { connectedServiceGroupId } : {}),
     } satisfies ExternalSessionsSource
     : {
       kind: 'codexHome' as const,
@@ -136,7 +128,7 @@ export async function exportCodexSessionBundle(params: Readonly<{
 
   const files = await Promise.all(
     rollouts.map(async (rollout) => ({
-      relativePath: rollout.fileRelPath,
+      relativePath: normalizeCodexHandoffBundleRelativePath(rollout.fileRelPath),
       contentBase64: (await readFile(rollout.filePath)).toString('base64'),
     })),
   );

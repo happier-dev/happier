@@ -70,6 +70,8 @@ export const SessionStateCapabilitiesV1Schema = z
       .object({
         workState: SessionStateFieldCapabilitySchema.optional(),
         activity: SessionStateFieldCapabilitySchema.optional(),
+        externalAgent: SessionStateFieldCapabilitySchema.optional(),
+        externalSessionOperation: SessionStateFieldCapabilitySchema.optional(),
         usageLimitRecovery: SessionStateFieldCapabilitySchema.optional(),
         sessionRunner: SessionStateFieldCapabilitySchema.optional(),
       })

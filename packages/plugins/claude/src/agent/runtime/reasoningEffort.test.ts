@@ -13,18 +13,70 @@ describe('buildClaudeEffortCliArgs', () => {
     expect(buildClaudeEffortCliArgs({ modelId: 'claude-fable-5', effort: 'xhigh' })).toEqual(['--effort', 'xhigh']);
   });
 
+  it('treats Opus 5 high as the default effort', () => {
+    expect(buildClaudeEffortCliArgs({ modelId: 'claude-opus-5', effort: 'high' })).toEqual([]);
+    expect(buildClaudeEffortCliArgs({ modelId: 'claude-opus-5', effort: 'xhigh' })).toEqual(['--effort', 'xhigh']);
+  });
+
   it('treats Opus 4.8 high as the default effort', () => {
     expect(buildClaudeEffortCliArgs({ modelId: 'claude-opus-4-8', effort: 'high' })).toEqual([]);
     expect(buildClaudeEffortCliArgs({ modelId: 'claude-opus-4-8', effort: 'xhigh' })).toEqual(['--effort', 'xhigh']);
   });
 
-  it('treats the generic opus alias as Opus 4.8 for default effort resolution', () => {
+  it('treats the generic opus alias as the current flagship Claude model for default effort resolution', () => {
     expect(buildClaudeEffortCliArgs({ modelId: 'opus', effort: 'high' })).toEqual([]);
     expect(buildClaudeEffortCliArgs({ modelId: 'opus', effort: 'xhigh' })).toEqual(['--effort', 'xhigh']);
   });
 
   it('keeps Opus 4.7 behavior where high still requires an explicit override', () => {
     expect(buildClaudeEffortCliArgs({ modelId: 'claude-opus-4-7', effort: 'high' })).toEqual(['--effort', 'high']);
+  });
+
+  it('uses exact Provider options without native-id inference or silent downgrade', () => {
+    const providerModel = {
+      id: 'deepseek-ai/DeepSeek-V3.1',
+      name: 'DeepSeek V3.1',
+      capabilities: { reasoningControls: 'supported' as const },
+      modelOptions: [{
+        id: 'reasoning_effort',
+        name: 'Reasoning',
+        type: 'select',
+        currentValue: 'medium',
+        options: [
+          { value: 'low', name: 'Low' },
+          { value: 'medium', name: 'Medium' },
+          { value: 'high', name: 'High' },
+        ],
+      }],
+    };
+
+    expect(buildClaudeEffortCliArgs({
+      modelId: providerModel.id,
+      effort: 'medium',
+      providerModel,
+    })).toEqual([]);
+    expect(buildClaudeEffortCliArgs({
+      modelId: providerModel.id,
+      effort: 'high',
+      providerModel,
+    })).toEqual(['--effort', 'high']);
+    expect(buildClaudeEffortCliArgs({
+      modelId: providerModel.id,
+      effort: 'xhigh',
+      providerModel,
+    })).toEqual([]);
+  });
+
+  it('does not infer reasoning support from a Claude-looking Provider model id', () => {
+    expect(buildClaudeEffortCliArgs({
+      modelId: 'claude-sonnet-4-6',
+      effort: 'low',
+      providerModel: {
+        id: 'claude-sonnet-4-6',
+        name: 'Gateway model',
+        capabilities: { reasoningControls: 'unknown' },
+      },
+    })).toEqual([]);
   });
 });
 
@@ -51,6 +103,7 @@ describe('isClaudeUltracodeSupportedModelId', () => {
   it('allows ultracode only on xhigh-capable models, [1m]-tolerant', () => {
     expect(isClaudeUltracodeSupportedModelId('claude-fable-5')).toBe(true);
     expect(isClaudeUltracodeSupportedModelId('claude-fable-5[1m]')).toBe(true);
+    expect(isClaudeUltracodeSupportedModelId('claude-opus-5')).toBe(true);
     expect(isClaudeUltracodeSupportedModelId('claude-opus-4-8')).toBe(true);
     expect(isClaudeUltracodeSupportedModelId('claude-opus-4-7')).toBe(true);
     expect(isClaudeUltracodeSupportedModelId('opus')).toBe(true);
@@ -62,5 +115,20 @@ describe('isClaudeUltracodeSupportedModelId', () => {
     expect(isClaudeUltracodeSupportedModelId('claude-haiku-4-5')).toBe(false);
     expect(isClaudeUltracodeSupportedModelId('')).toBe(false);
     expect(isClaudeUltracodeSupportedModelId(null)).toBe(false);
+  });
+
+  it('does not infer ultracode from Provider model ids', () => {
+    expect(isClaudeUltracodeSupportedModelId('claude-opus-4-8', {
+      id: 'claude-opus-4-8',
+      name: 'Gateway Opus',
+      capabilities: { reasoningControls: 'supported' },
+      modelOptions: [{
+        id: 'reasoning_effort',
+        name: 'Reasoning',
+        type: 'select',
+        currentValue: 'xhigh',
+        options: [{ value: 'xhigh', name: 'XHigh' }],
+      }],
+    })).toBe(false);
   });
 });

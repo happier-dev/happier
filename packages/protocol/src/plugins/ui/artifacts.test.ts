@@ -33,6 +33,36 @@ describe('plugin UI executable artifact manifests', () => {
     expect(derivePluginUiArtifactCacheKeyV1(parsed)).toContain(VALID_DIGEST);
   });
 
+  it('rejects removed per-artifact signing and install-source trust metadata', () => {
+    const baseArtifact = {
+      id: 'native-preview-ios',
+      pluginId: 'acme.preview',
+      contributionId: 'native-preview',
+      contributionFamily: 'reactNativeBundles',
+      artifactKind: 'reactNativeBundle',
+      platform: 'ios',
+      channel: 'internal',
+      integrity: { digest: VALID_DIGEST },
+      compatibility,
+      byteSize: 1024,
+      contentType: 'application/javascript',
+      assetPath: 'ui/native/ios.bundle',
+    } as const;
+
+    expect(PluginUiExecutableArtifactManifestV1Schema.safeParse({
+      ...baseArtifact,
+      integrity: {
+        ...baseArtifact.integrity,
+        signature: 'legacy-ui-signature',
+        signingKeyId: 'legacy-ui-key',
+      },
+    }).success).toBe(false);
+    expect(PluginUiExecutableArtifactManifestV1Schema.safeParse({
+      ...baseArtifact,
+      installSourceId: 'legacy-ui-install-source',
+    }).success).toBe(false);
+  });
+
   it('binds native capability compatibility into executable artifact cache keys', () => {
     const baseArtifact = PluginUiExecutableArtifactManifestV1Schema.parse({
       id: 'native-preview-ios',
@@ -42,7 +72,7 @@ describe('plugin UI executable artifact manifests', () => {
       artifactKind: 'reactNativeBundle',
       platform: 'ios',
       channel: 'internal',
-        integrity: { digest: VALID_DIGEST },
+      integrity: { digest: VALID_DIGEST },
       compatibility,
       byteSize: 1024,
       contentType: 'application/javascript',
@@ -143,66 +173,20 @@ describe('plugin UI executable artifact manifests', () => {
     expect(parsed.devUrl).toBe('http://127.0.0.1:8082/index.bundle?platform=ios&dev=true');
   });
 
-  it('binds embedded-web artifacts to installed embeddedWebBundles entries only', () => {
-    const parsed = PluginUiExecutableArtifactManifestV1Schema.parse({
-      id: 'embedded-preview-entry',
+  it('rejects removed embedded-web artifact family and kind values', () => {
+    expect(PluginUiExecutableArtifactManifestV1Schema.safeParse({
+      id: 'removed-web-entry',
       pluginId: 'acme.preview',
-      contributionId: 'embedded-preview',
+      contributionId: 'removed-web',
       contributionFamily: 'embeddedWebBundles',
       artifactKind: 'embeddedWebBundle',
       platform: 'web',
       channel: 'internal',
       integrity: { digest: VALID_DIGEST },
-      compatibility: {
-        hostAppVersion: '2.0.0',
-        hostUiApiVersion: '1.0.0',
-        reactVersion: '19.2.0',
-      },
+      compatibility,
       byteSize: 1024,
       contentType: 'text/javascript',
-      assetPath: 'embedded-web/embedded-preview/entry.mjs',
-    });
-
-    expect(derivePluginUiArtifactCacheKeyV1(parsed)).toContain('embeddedWebBundle');
-
-    expect(PluginUiExecutableArtifactManifestV1Schema.safeParse({
-      ...parsed,
-      contributionFamily: 'hostedWeb',
-    }).success).toBe(false);
-    expect(PluginUiExecutableArtifactManifestV1Schema.safeParse({
-      ...parsed,
-      url: 'https://cdn.example.test/entry.mjs',
-    }).success).toBe(false);
-  });
-
-  it('allows a development-channel embedded-web artifact to declare a dev URL instead of an installed asset', () => {
-    const parsed = PluginUiExecutableArtifactManifestV1Schema.parse({
-      id: 'embedded-dev-server',
-      pluginId: 'acme.preview',
-      contributionId: 'embedded-preview',
-      contributionFamily: 'embeddedWebBundles',
-      artifactKind: 'embeddedWebBundle',
-      platform: 'web',
-      channel: 'development',
-      compatibility: {
-        hostAppVersion: '2.0.0',
-        hostUiApiVersion: '1.0.0',
-        reactVersion: '19.2.0',
-      },
-      byteSize: 1,
-      contentType: 'text/javascript',
-      devUrl: 'http://127.0.0.1:5173/entry.mjs',
-    });
-
-    expect(parsed.devUrl).toBe('http://127.0.0.1:5173/entry.mjs');
-
-    expect(PluginUiExecutableArtifactManifestV1Schema.safeParse({
-      ...parsed,
-      channel: 'internal',
-    }).success).toBe(false);
-    expect(PluginUiExecutableArtifactManifestV1Schema.safeParse({
-      ...parsed,
-      url: 'https://cdn.example.test/entry.mjs',
+      assetPath: 'removed-web/entry.mjs',
     }).success).toBe(false);
   });
 

@@ -62,8 +62,10 @@ describe('special command payload steerability', () => {
 
     expect(source).toContain('isNonSteerablePromptPayload');
     expect(source).toContain('parseSpecialCommand');
-    expect(source).not.toContain("startsWith('/')");
-    expect(source).not.toContain('startsWith("/")');
+    expect(source).not.toContain('parseClaudeSpecialCommand');
+    expect(source).not.toContain('isClaudeNonSteerablePromptPayload');
+    expect(source).not.toContain("trimmed === '/clear'");
+    expect(source).not.toContain('/^\\/compact(?:\\s|$)/u');
   });
 
   it('keeps the CLI parser as a protocol re-export instead of a second command parser', () => {
@@ -74,11 +76,4 @@ describe('special command payload steerability', () => {
     expect(source).not.toContain('function parse');
   });
 
-  it('keeps the plugin SDK runtime session surface on the protocol classifier', () => {
-    const source = readFileSync(resolve(REPO_ROOT, 'packages/plugin-sdk/src/runtime/session.ts'), 'utf8');
-
-    expect(source).toContain("from '@happier-dev/protocol'");
-    expect(source).toContain('isNonSteerablePromptPayload');
-    expect(source).not.toContain('function parse');
-  });
 });

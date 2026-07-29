@@ -1,4 +1,4 @@
-import type { PluginContextV1 } from '@happier-dev/plugin-sdk';
+import type { PluginExecService } from '@happier-dev/plugin-sdk/runtime';
 
 export const GEMINI_ACP_AUTH_METHOD_ENV = 'HAPPIER_GEMINI_ACP_AUTH_METHOD';
 export const GEMINI_ACP_AUTH_META_ENV = 'HAPPIER_GEMINI_ACP_AUTH_META';
@@ -111,8 +111,7 @@ function createAbortError(): Error {
   return error;
 }
 
-export async function resolveGeminiAcpFlag(ctx: PluginContextV1, params: {
-  args?: readonly string[];
+export async function resolveGeminiAcpFlag(exec: Pick<PluginExecService, 'run'>, params: {
   env?: Readonly<Record<string, string>>;
   signal?: AbortSignal;
 }): Promise<GeminiAcpFlag> {
@@ -120,13 +119,12 @@ export async function resolveGeminiAcpFlag(ctx: PluginContextV1, params: {
     throw createAbortError();
   }
   try {
-    const result = await ctx.agentRuntime.exec.run({
-      kind: 'agent-cli',
-      agentId: 'gemini',
-      args: [...(params.args ?? []), '--help'],
+    const result = await exec.run({
+      executable: { kind: 'systemTool', id: 'gemini-cli' },
+      args: ['--help'],
       env: params.env,
-    }, {
       timeoutMs: 2000,
+    }, {
       signal: params.signal,
     });
 
@@ -134,7 +132,8 @@ export async function resolveGeminiAcpFlag(ctx: PluginContextV1, params: {
       throw createAbortError();
     }
 
-    const output = `${result.stdout}\n${result.stderr}`;
+    const decoder = new TextDecoder();
+    const output = `${decoder.decode(result.stdout)}\n${decoder.decode(result.stderr)}`;
     if (output.includes('--acp')) return '--acp';
     if (output.includes('--experimental-acp')) return '--experimental-acp';
   } catch (error) {

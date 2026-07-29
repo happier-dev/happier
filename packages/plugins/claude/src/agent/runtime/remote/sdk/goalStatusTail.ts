@@ -1,7 +1,8 @@
 import type {
-  PluginContextV1,
-  TranscriptFileFollowHandleV1,
-} from '@happier-dev/plugin-sdk';
+  AgentTranscriptFileFollowHandle,
+  AgentTranscriptFileFollowService,
+} from '@happier-dev/plugin-sdk/agent-runtime';
+import type { ClaudeRuntimeLogger } from '../../dependencies.js';
 
 /**
  * Narrow `goal_status` transcript observer for the Claude agent-SDK runner.
@@ -20,10 +21,10 @@ import type {
 type GoalStatusTailContext = Readonly<{
   agentRuntime: Readonly<{
     transcripts: Readonly<{
-      fileFollow: Pick<PluginContextV1['agentRuntime']['transcripts']['fileFollow'], 'follow'>;
+      fileFollow: Pick<AgentTranscriptFileFollowService, 'follow'>;
     }>;
   }>;
-  logger: Pick<PluginContextV1['logger'], 'debug'>;
+  logger: Pick<ClaudeRuntimeLogger, 'debug'>;
 }>;
 
 export type ClaudeAgentSdkGoalStatusTail = Readonly<{
@@ -46,7 +47,7 @@ export function createClaudeAgentSdkGoalStatusTail(params: Readonly<{
   observeGoalStatusRow: (row: unknown) => void;
 }>): ClaudeAgentSdkGoalStatusTail {
   let disposed = false;
-  let handle: TranscriptFileFollowHandleV1 | null = null;
+  let handle: AgentTranscriptFileFollowHandle | null = null;
 
   const started = (async () => {
     try {

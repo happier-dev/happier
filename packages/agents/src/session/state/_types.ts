@@ -72,6 +72,10 @@ export type SessionStateFieldWriteValue<F extends SessionStateFieldId> =
       ? SessionStateFieldValue<F> | null
     : F extends 'runtime.usageLimitRecovery'
       ? SessionStateFieldValue<F> | null
+    : F extends 'runtime.externalAgent'
+      ? SessionStateFieldValue<F> | null
+    : F extends 'runtime.externalSessionOperation'
+      ? SessionStateFieldValue<F> | null
     : F extends 'identity.providerSessionId'
       ? SessionStateFieldValue<F> | Readonly<{
         value: SessionStateFieldValue<F>;

@@ -12,7 +12,7 @@ import type {
   ScmHostingProviderRepositoryGetInput,
   ScmHostingProviderRuntimeAdapter,
   ScmHostingProviderRuntimeServices,
-} from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/experimental/scm';
 import type {
   ScmHostingProviderRef,
   ScmHostingRepositoryAuthSummary,
@@ -20,7 +20,7 @@ import type {
   ScmHostingRepositorySummary,
   ScmPullRequestState,
   ScmPullRequestSummary,
-} from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm';
 
 import { bitbucketHostingProviderAdapter } from '../adapter.js';
 import {
@@ -194,6 +194,7 @@ export function createBitbucketApiAdapter(params?: Readonly<{
       auth,
       url: pullRequestsUrl(input),
       init: { method: 'GET' },
+      signal: input.signal,
     });
     return decodeBitbucketPullRequestList(input.provider, raw).pullRequests;
   }
@@ -208,6 +209,7 @@ export function createBitbucketApiAdapter(params?: Readonly<{
         auth,
         url: pullRequestUrl({ provider: input.provider, number }),
         init: { method: 'GET' },
+        signal: input.signal,
       });
       return mapBitbucketPullRequest(input.provider, raw);
     }
@@ -218,6 +220,7 @@ export function createBitbucketApiAdapter(params?: Readonly<{
         head: reference.headBranch,
         state: 'open',
         ...(input.runtimeServices ? { runtimeServices: input.runtimeServices } : {}),
+        ...(input.signal ? { signal: input.signal } : {}),
       });
       return matches[0] ?? null;
     }
@@ -246,6 +249,7 @@ export function createBitbucketApiAdapter(params?: Readonly<{
           close_source_branch: false,
         }),
       },
+      signal: input.signal,
     });
     const pullRequest = mapBitbucketPullRequest(input.provider, raw);
     if (!pullRequest) throw createBitbucketCommandFailedError('Bitbucket returned an invalid pull request payload');
@@ -268,6 +272,7 @@ export function createBitbucketApiAdapter(params?: Readonly<{
           head: input.head,
           state: 'open',
           ...(input.runtimeServices ? { runtimeServices: input.runtimeServices } : {}),
+          ...(input.signal ? { signal: input.signal } : {}),
         }),
         provider: input.provider,
         baseBranch: input.base,
@@ -297,6 +302,7 @@ export function createBitbucketApiAdapter(params?: Readonly<{
             head: input.head,
             state: 'open',
             ...(input.runtimeServices ? { runtimeServices: input.runtimeServices } : {}),
+            ...(input.signal ? { signal: input.signal } : {}),
           }),
           provider: input.provider,
           baseBranch: input.base,
@@ -315,6 +321,7 @@ export function createBitbucketApiAdapter(params?: Readonly<{
         auth,
         url: bitbucketRepositoryApiUrl({ coordinates }),
         init: { method: 'GET' },
+        signal: input.signal,
       });
       const mapped = mapBitbucketRepositorySummary({
         provider: input.provider,
@@ -358,6 +365,7 @@ export function createBitbucketApiAdapter(params?: Readonly<{
             ...(input.description !== undefined ? { description: input.description } : {}),
           }),
         },
+        signal: input.signal,
       });
       const mapped = mapBitbucketRepositorySummary({
         provider: input.provider,
@@ -384,6 +392,7 @@ export function createBitbucketApiAdapter(params?: Readonly<{
           repository: repositoryName,
         }),
         init: { method: 'GET' },
+        signal: input.signal,
       }).catch((error) => {
         if (isBitbucketNotFoundError(error)) return null;
         throw error;

@@ -1,10 +1,7 @@
 import {
-  CANONICAL_AGENT_AUTH_PROBE_CONFIG,
-  CANONICAL_AGENT_LOCAL_CLI_CONFIG,
   CANONICAL_AGENT_SESSION_MODE_DESCRIPTORS,
   CANONICAL_AGENT_SESSION_MODES,
   CANONICAL_AGENTS_CORE,
-  CANONICAL_AGENT_CLI_RUNTIME_SPECS,
 } from '@happier-dev/plugin-sdk/experimental/agents';
 
 import { CLAUDE_AGENT_MODEL_CONFIG } from './models.js';
@@ -16,20 +13,10 @@ export const AGENT_DEFINITION = Object.freeze({
   sessionModeDescriptor: CANONICAL_AGENT_SESSION_MODE_DESCRIPTORS.claude,
   sessionModesKind: CANONICAL_AGENT_SESSION_MODES.claude,
   modelConfig: CLAUDE_AGENT_MODEL_CONFIG,
-  authProbeConfig: CANONICAL_AGENT_AUTH_PROBE_CONFIG.claude,
-  localCli: CANONICAL_AGENT_LOCAL_CLI_CONFIG.claude,
-  agentCliRuntime: CANONICAL_AGENT_CLI_RUNTIME_SPECS.claude,
-  agentSettings: null,
   runtimeContributions: {
     agentCatalogEntry: {
       importName: 'CLAUDE_AGENT_RUNTIME_CONTRIBUTION',
       source: './agent/contributions/runtime',
-    },
-    protocolBuiltInBackendProfiles: {
-      kind: 'providerBuiltInBackendProfilesV1',
-      providerId: 'claude',
-      source: './protocol/profiles',
-      exportName: 'CLAUDE_BUILT_IN_BACKEND_PROFILES',
     },
     protocolMemoryDefaults: {
       kind: 'providerMemoryDefaultsV1',

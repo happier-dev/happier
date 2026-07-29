@@ -71,6 +71,29 @@ describe('createClaudeUnifiedGoalRuntime setGoal (G-1/G-2 unsupported options)',
 });
 
 describe('createClaudeUnifiedGoalRuntime clearGoal', () => {
+  it('publishes source snapshots through the native work-state publisher without metadata', () => {
+    const snapshots: SessionWorkStateV1[] = [];
+    const runtime = createClaudeUnifiedGoalRuntime({
+      backendId: 'claude',
+      agentId: 'claude',
+      getCurrentClaudeSessionId: () => 'claude-1',
+      publishWorkStateSnapshot: (snapshot) => { snapshots.push(snapshot); },
+      injectGoalCommand: async () => undefined,
+    });
+
+    runtime.source.observeTranscriptMessage({
+      type: 'attachment',
+      uuid: 'native-goal-1',
+      sessionId: 'claude-1',
+      attachment: { type: 'goal_status', met: false, condition: 'Ship native Claude' },
+    });
+
+    expect(snapshots.at(-1)).toMatchObject({
+      primaryItemId: 'goal:claude',
+      items: [{ kind: 'goal', status: 'active', title: 'Ship native Claude' }],
+    });
+  });
+
   it('removes the published goal work-state item after a successful /goal clear inject', async () => {
     const harness = createHarness();
     // Source observes an active goal (as the transcript follow loop would).

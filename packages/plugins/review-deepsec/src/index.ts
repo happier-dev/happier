@@ -8,5 +8,4 @@ export * from './agent/reviews/command.js';
 export * from './agent/reviews/costWarning.js';
 export * from './agent/reviews/commentOut.js';
 export * from './agent/reviews/findings.js';
-export * from './agent/reviews/comments.js';
 export * from './agent/reviews/run.js';

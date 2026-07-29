@@ -46,12 +46,14 @@ export {
   getActionSpec,
   actionAcceptsContextualSessionId,
   isVoicePromptHotPathSpec,
+  isVoiceSdkSafeActionSpec,
   isActionSpecSurfacedOn,
   listActionSpecs,
   listActionSpecsForSurface,
   listVoiceActionBlockSpecs,
   listVoiceClientToolNames,
   listVoicePromptHotPathSpecs,
+  listVoiceSdkSafeToolActionSpecs,
   listVoiceToolActionSpecs,
   resolveActionApprovalFlow,
   type ActionApproval,
@@ -107,6 +109,11 @@ export {
   type ApprovalQueueQueryPlanV1,
 } from './actionExecutor.js';
 export {
+  resolveActionBackendTargetSelection,
+  type ActionBackendTargetSelection,
+  type ActionBackendTargetSelectionResult,
+} from './resolveActionBackendTargetSelection.js';
+export {
   createRuntimeActionDisabledResult,
   createUnavailableRuntimeActionExecutor,
   dispatchRuntimeAction,
@@ -136,6 +143,12 @@ export {
   type SpawnConfigOptionValue,
   type SpawnConfigOptionsAliasConflict,
 } from './sessionSpawnConfigOptions.js';
+
+export {
+  resolveExplicitSessionSpawnMachineTarget,
+  type ExplicitSessionSpawnMachineTargetResolution,
+  type SessionSpawnMachineTargetCandidate,
+} from './sessionSpawnMachineTarget.js';
 
 export {
   normalizeActionInputByFieldHints,

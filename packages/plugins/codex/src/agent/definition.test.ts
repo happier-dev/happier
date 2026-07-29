@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { AGENT_DEFINITION } from './definition.js';
+import { PLUGIN_MANIFEST } from '../manifest.js';
 
 describe('AGENT_DEFINITION', () => {
   it('declares the Codex app-server control surface at the plugin catalog boundary', () => {
@@ -32,10 +33,12 @@ describe('AGENT_DEFINITION', () => {
     });
   });
 
-  it('uses final agent CLI runtime vocabulary instead of legacy provider runtime vocabulary', () => {
-    expect(AGENT_DEFINITION.agentCliRuntime).toEqual(expect.objectContaining({
-      id: 'codex',
-    }));
+  it('keeps strict CLI/auth authority in the native manifest', () => {
+    expect(PLUGIN_MANIFEST.contributes.agents[0]?.cli).toMatchObject({
+      executable: { binaryName: 'codex' },
+      install: { recommendationOrder: 20 },
+    });
+    expect(AGENT_DEFINITION).not.toHaveProperty('agentCliRuntime');
     const legacyRuntimeKey = 'provider' + 'CliRuntime';
     expect(legacyRuntimeKey in AGENT_DEFINITION).toBe(false);
   });
@@ -79,6 +82,23 @@ describe('AGENT_DEFINITION', () => {
         source: './protocol/profiles',
         exportName: 'CODEX_BUILT_IN_BACKEND_PROFILES',
       },
+    });
+  });
+
+  it('keeps runtime-kind metadata selectors on current external and released direct identities', () => {
+    const metadataPaths = AGENT_DEFINITION.runtimeContributions.sessionControlAdapter
+      .generatedAdapter.controlRuntimeKind.metadataPaths;
+
+    expect(metadataPaths).toContainEqual({
+      providerId: 'codex',
+      path: ['directSessionV1', 'codexBackendMode'],
+    });
+    expect(metadataPaths).toContainEqual({
+      path: ['externalSessionV1', 'codexBackendMode'],
+    });
+    expect(metadataPaths).not.toContainEqual({
+      providerId: 'codex',
+      path: ['externalSessionV1', 'codexBackendMode'],
     });
   });
 

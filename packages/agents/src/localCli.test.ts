@@ -15,11 +15,23 @@ describe('AGENT_LOCAL_CLI_CONFIG', () => {
     expect(Object.keys(AGENT_LOCAL_CLI_CONFIG).sort()).toEqual([...AGENT_IDS].sort());
   });
 
-  it('sources canonical provider local CLI facts from bundled provider definitions', () => {
-    for (const providerId of AGENT_IDS) {
-      expect(CANONICAL_AGENT_LOCAL_CLI_CONFIG[providerId]).toBe(
-        BUNDLED_AGENT_DEFINITIONS_BY_ID[providerId].localCli,
-      );
+  it('derives canonical Agent local CLI facts from native bundled CLI metadata', () => {
+    for (const agentId of AGENT_IDS) {
+      const definition = BUNDLED_AGENT_DEFINITIONS_BY_ID[agentId];
+      const launches = definition.cli.auth.loginLaunches.map((launch) => ({
+        ...launch,
+        command: definition.cli.executable.binaryName,
+      }));
+
+      expect(definition).not.toHaveProperty('localCli');
+      expect(CANONICAL_AGENT_LOCAL_CLI_CONFIG[agentId]).toMatchObject({
+        agentId,
+        detectKey: definition.cli.executable.binaryName,
+        machineLoginKey: definition.cli.auth.machineLoginKey ?? definition.cli.executable.binaryName,
+        supportKind: definition.cli.auth.support,
+        loginLaunch: launches.find((launch) => launch.kind === 'primary') ?? null,
+        authLaunches: launches,
+      });
     }
   });
 

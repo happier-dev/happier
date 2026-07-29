@@ -1,13 +1,16 @@
 import { z } from 'zod';
 
 import { TransferSessionIdSchema } from '../transfers/sessions/index.js';
-import { DaemonVoiceCredentialKindSchema } from './voiceCredentials.js';
+import { ProviderLocalIdSchema } from '../providers/ids.js';
 
 export const DAEMON_VOICE_OPENAI_COMPAT_AUDIO_MAX_BYTES = 8 * 1024 * 1024;
 export const DAEMON_VOICE_OPENAI_COMPAT_RESPONSE_MAX_BYTES = 16 * 1024 * 1024;
 export const DAEMON_VOICE_OPENAI_COMPAT_REQUEST_ID_MAX_LENGTH = 128;
 const TRANSFER_CHUNK_ENCODED_MAX_LENGTH = 4 * 1024 * 1024;
 const TRANSFER_KEY_ENVELOPE_MAX_LENGTH = 64 * 1024;
+const TRANSFER_ENCRYPTED_CHUNK_OVERHEAD_BYTES = 1 + 12 + 16;
+export const DAEMON_VOICE_OPENAI_COMPAT_TRANSFER_CHUNK_MAX_BYTES =
+  Math.floor(TRANSFER_CHUNK_ENCODED_MAX_LENGTH / 4) * 3 - TRANSFER_ENCRYPTED_CHUNK_OVERHEAD_BYTES;
 
 const RequestIdSchema = z.string().min(1).max(DAEMON_VOICE_OPENAI_COMPAT_REQUEST_ID_MAX_LENGTH);
 const AudioInputMimeTypeSchema = z.enum(['audio/wav', 'audio/mpeg', 'audio/mp4', 'audio/webm', 'audio/ogg']);
@@ -48,7 +51,7 @@ export type DaemonVoiceOpenAiCompatError = z.infer<typeof DaemonVoiceOpenAiCompa
 export const DaemonVoiceOpenAiCompatConnectionSchema = z.object({
   baseUrl: z.string().trim().min(1).max(2_048),
   insecureLocalOriginConsent: z.string().trim().url().max(512).nullable(),
-  credentialKind: DaemonVoiceCredentialKindSchema,
+  credentialKind: ProviderLocalIdSchema,
 }).strict();
 export type DaemonVoiceOpenAiCompatConnection = z.infer<typeof DaemonVoiceOpenAiCompatConnectionSchema>;
 
@@ -109,7 +112,7 @@ export const DaemonVoiceOpenAiCompatTranscribeUploadInitResponseSchema = z.union
   z.object({
     success: z.literal(true),
     uploadId: TransferSessionIdSchema,
-    chunkSizeBytes: z.number().int().positive().max(DAEMON_VOICE_OPENAI_COMPAT_AUDIO_MAX_BYTES),
+    chunkSizeBytes: z.number().int().positive().max(DAEMON_VOICE_OPENAI_COMPAT_TRANSFER_CHUNK_MAX_BYTES),
     recipientPublicKeyBase64: z.string().min(1).max(TRANSFER_KEY_ENVELOPE_MAX_LENGTH),
   }).strict(),
   TransferFailureSchema,
@@ -172,7 +175,7 @@ export const DaemonVoiceOpenAiCompatSynthesizeResponseSchema = z.union([
   z.object({
     ok: z.literal(true),
     downloadId: TransferSessionIdSchema,
-    chunkSizeBytes: z.number().int().positive().max(DAEMON_VOICE_OPENAI_COMPAT_RESPONSE_MAX_BYTES),
+    chunkSizeBytes: z.number().int().positive().max(DAEMON_VOICE_OPENAI_COMPAT_TRANSFER_CHUNK_MAX_BYTES),
     sizeBytes: z.number().int().positive().max(DAEMON_VOICE_OPENAI_COMPAT_RESPONSE_MAX_BYTES),
     mimeType: AudioOutputMimeTypeSchema,
   }).strict(),

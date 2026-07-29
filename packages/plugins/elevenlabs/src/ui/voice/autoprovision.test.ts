@@ -1,4 +1,7 @@
-import { listVoiceToolActionSpecs } from '@happier-dev/protocol';
+import {
+  getActionSpec,
+  listVoiceSdkSafeToolActionSpecs,
+} from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createElevenLabsAutoprovision } from './autoprovision.js';
@@ -13,18 +16,28 @@ describe('ElevenLabs bundled autoprovision', () => {
         return {
           disabledActionIds: [],
           extraSystemAppendBlocks: [],
-          actionSpecs: listVoiceToolActionSpecs().slice(0, 2),
+          actionSpecs: [
+            ...listVoiceSdkSafeToolActionSpecs(),
+            getActionSpec('session.message.send'),
+          ],
         };
       },
     });
+    const signal = new AbortController().signal;
 
-    await expect(autoprovision.createAgent({ tts: { voiceId: 'voice_1' } })).resolves.toEqual({ agentId: 'agent_1' });
+    await expect(autoprovision.createAgent(
+      { tts: { voiceId: 'voice_1' } },
+      signal,
+    )).resolves.toEqual({ agentId: 'agent_1' });
     expect(provision).toHaveBeenCalledWith(expect.objectContaining({
       kind: 'create',
       prompt: expect.any(String),
       tools: expect.any(Array),
       tts: expect.objectContaining({ voiceId: 'voice_1' }),
-    }));
-    expect(JSON.stringify(provision.mock.calls)).not.toContain('apiKey');
+    }), signal);
+    const serialized = JSON.stringify(provision.mock.calls);
+    expect(serialized).toContain('listMachines');
+    expect(serialized).not.toContain('sendSessionMessage');
+    expect(serialized).not.toContain('apiKey');
   });
 });

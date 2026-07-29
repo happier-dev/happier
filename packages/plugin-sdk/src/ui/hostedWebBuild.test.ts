@@ -120,7 +120,7 @@ describe('hosted web build helpers', () => {
             input: {
                 contributionId: string;
                 entry: string;
-                files: readonly string[];
+                files: readonly Readonly<{ relativePath: string; digest: string; byteSize: number }>[];
                 digest: string;
                 viteVersion: string;
                 hostUiApiVersion: string;
@@ -131,7 +131,10 @@ describe('hosted web build helpers', () => {
         expect(defineHostedWebViteBuildArtifact({
             contributionId: 'preview-web',
             entry: 'hosted-web/preview-web/index.html',
-            files: ['hosted-web/preview-web/index.html', 'hosted-web/preview-web/assets/app.js'],
+            files: [
+                { relativePath: 'hosted-web/preview-web/index.html', digest: `sha256:${'a'.repeat(64)}`, byteSize: 1 },
+                { relativePath: 'hosted-web/preview-web/assets/app.js', digest: `sha256:${'b'.repeat(64)}`, byteSize: 2 },
+            ],
             digest: 'sha256:1111111111111111111111111111111111111111111111111111111111111111',
             viteVersion: '7.0.0',
             hostUiApiVersion: '1.0.0',
@@ -141,7 +144,10 @@ describe('hosted web build helpers', () => {
             tier: 'hostedWeb',
             platform: 'web',
             entry: 'hosted-web/preview-web/index.html',
-            files: ['hosted-web/preview-web/index.html', 'hosted-web/preview-web/assets/app.js'],
+            files: [
+                { relativePath: 'hosted-web/preview-web/index.html', digest: `sha256:${'a'.repeat(64)}`, byteSize: 1 },
+                { relativePath: 'hosted-web/preview-web/assets/app.js', digest: `sha256:${'b'.repeat(64)}`, byteSize: 2 },
+            ],
             digest: 'sha256:1111111111111111111111111111111111111111111111111111111111111111',
             builtWith: { bundler: 'vite', version: '7.0.0' },
             hostUiApiVersion: '1.0.0',
@@ -154,7 +160,7 @@ describe('hosted web build helpers', () => {
             input: {
                 contributionId: string;
                 entry: string;
-                files: readonly string[];
+                files: readonly Readonly<{ relativePath: string; digest: string; byteSize: number }>[];
                 digest: string;
                 viteVersion: string;
                 hostUiApiVersion: string;
@@ -165,7 +171,7 @@ describe('hosted web build helpers', () => {
         const baseInput = {
             contributionId: 'preview-web',
             entry: 'hosted-web/preview-web/index.html',
-            files: ['hosted-web/preview-web/index.html'],
+            files: [{ relativePath: 'hosted-web/preview-web/index.html', digest: `sha256:${'a'.repeat(64)}`, byteSize: 1 }],
             digest: 'sha256:1111111111111111111111111111111111111111111111111111111111111111',
             viteVersion: '7.0.0',
             hostUiApiVersion: '1.0.0',
@@ -179,7 +185,10 @@ describe('hosted web build helpers', () => {
 
         expect(() => defineHostedWebViteBuildArtifact({
             ...baseInput,
-            files: ['hosted-web/preview-web/index.html', 'hosted-web\\preview-web\\assets\\app.js'],
+            files: [
+                { relativePath: 'hosted-web/preview-web/index.html', digest: `sha256:${'a'.repeat(64)}`, byteSize: 1 },
+                { relativePath: 'hosted-web\\preview-web\\assets\\app.js', digest: `sha256:${'b'.repeat(64)}`, byteSize: 2 },
+            ],
         })).toThrow(/relative path/u);
     });
 
@@ -201,7 +210,7 @@ describe('hosted web build helpers', () => {
         }
     });
 
-    it('rejects unsafe generated output path segments', () => {
+    it('rejects non-portable generated output path segments before build I/O', () => {
         const defineHostedWebViteBuildPreset = readHostedWebBuildExport<(
             input: {
                 contributionId: string;
@@ -212,13 +221,15 @@ describe('hosted web build helpers', () => {
             },
         ) => unknown>('defineHostedWebViteBuildPreset');
 
-        expect(() => defineHostedWebViteBuildPreset({
-            contributionId: '../preview-web',
-            sourceEntry: 'ui/surface.tsx',
-            viteVersion: '7.0.0',
-            hostUiApiVersion: '1.0.0',
-            reactVersion: '19.2.0',
-        })).toThrow(/path segment/u);
+        for (const contributionId of ['../preview-web', 'con', 'NUL.txt', 'preview-web.']) {
+            expect(() => defineHostedWebViteBuildPreset({
+                contributionId,
+                sourceEntry: 'ui/surface.tsx',
+                viteVersion: '7.0.0',
+                hostUiApiVersion: '1.0.0',
+                reactVersion: '19.2.0',
+            })).toThrow(/path segment/u);
+        }
     });
 
     it('normalizes dot-prefixed relative source entries without allowing traversal', () => {

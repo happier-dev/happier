@@ -4,7 +4,7 @@ import type {
   TerminalControlSendResult,
   TerminalSpecialKey,
   TerminalHostKind,
-} from '@happier-dev/plugin-sdk/experimental/runtime/session';
+} from '@happier-dev/agents';
 
 /**
  * TEST-ONLY scripted {@link TerminalControlPort}. Not exported from index.ts and never imported by
@@ -37,6 +37,8 @@ export function createFakeControlPort(params: Readonly<{
   failCaptureAtIndexes?: readonly number[] | undefined;
   /** Side-effect hook before a special key resolves (e.g. simulate Claude mutating settings on Enter). */
   onSendSpecialKey?: ((key: TerminalSpecialKey) => Promise<void> | void) | undefined;
+  /** Side-effect hook before a literal write resolves. */
+  onSendLiteralText?: ((text: string) => Promise<void> | void) | undefined;
 }>): FakeControlPort {
   const hostKind: TerminalHostKind = params.hostKind ?? 'tmux';
   const log: FakeControlPortLogEntry[] = [];
@@ -57,6 +59,7 @@ export function createFakeControlPort(params: Readonly<{
     async sendLiteralText(text) {
       sentLiteral.push(text);
       log.push({ type: 'literal', text });
+      await params.onSendLiteralText?.(text);
       return ok();
     },
     async sendRawSequence(sequence) {

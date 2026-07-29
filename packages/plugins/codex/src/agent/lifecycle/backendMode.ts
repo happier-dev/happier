@@ -1,7 +1,4 @@
 import {
-  readRuntimeDescriptorV1FromMetadata,
-} from '@happier-dev/plugin-sdk/experimental/runtime/session';
-import {
   type CodexBackendMode,
   normalizeCodexBackendMode,
 } from '../../protocol/runtimeDescriptorV1.js';
@@ -17,9 +14,7 @@ export function resolveCanonicalCodexBackendMode(params: Readonly<{
   runtimeDescriptorV1?: unknown;
 }>): CodexBackendMode | undefined {
   const runtimeDescriptor = readCanonicalCodexRuntimeDescriptorV1(
-    readRuntimeDescriptorV1FromMetadata({
-      runtimeDescriptorV1: params.runtimeDescriptorV1,
-    }),
+    params.runtimeDescriptorV1,
   );
   const runtimeBackendMode = normalizeCodexBackendMode(runtimeDescriptor?.backendMode);
   if (runtimeBackendMode) {

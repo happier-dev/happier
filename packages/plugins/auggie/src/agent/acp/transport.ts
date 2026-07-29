@@ -1,4 +1,6 @@
-import type { AcpStderrRulesV1, AcpToolNameInferenceV1 } from '@happier-dev/plugin-sdk/experimental/acp';
+import type { AgentAcpRuntimeOptions } from '@happier-dev/plugin-sdk/agent-runtime';
+
+type AuggieAcpRuntimeDefinition = NonNullable<AgentAcpRuntimeOptions['definition']>;
 
 export const AUGGIE_ACP_TIMEOUTS = Object.freeze({
   initMs: 60_000,
@@ -8,7 +10,7 @@ export const AUGGIE_ACP_TIMEOUTS = Object.freeze({
     think: 30_000,
   },
   idleMs: 500,
-});
+} satisfies NonNullable<AuggieAcpRuntimeDefinition['timeouts']>);
 
 export const AUGGIE_TOOL_NAME_INFERENCE = Object.freeze({
   patterns: [
@@ -52,7 +54,7 @@ export const AUGGIE_TOOL_NAME_INFERENCE = Object.freeze({
   unknownToolNames: ['other', 'unknown tool'],
   investigationToolIdPatterns: ['investigat', 'index', 'search'],
   investigationToolKinds: ['investigation'],
-} satisfies AcpToolNameInferenceV1);
+} satisfies NonNullable<AuggieAcpRuntimeDefinition['toolNameInference']>);
 
 export const AUGGIE_STDERR_RULES = Object.freeze({
   statusErrors: [
@@ -73,4 +75,4 @@ export const AUGGIE_STDERR_RULES = Object.freeze({
       detail: 'Authentication error. Run `auggie login` or set AUGMENT_SESSION_AUTH in your environment.',
     },
   ],
-} satisfies AcpStderrRulesV1);
+} satisfies NonNullable<AuggieAcpRuntimeDefinition['stderrRules']>);

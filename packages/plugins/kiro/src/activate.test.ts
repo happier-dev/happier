@@ -1,64 +1,62 @@
-import type { AgentRuntimeV1 } from '@happier-dev/plugin-sdk';
-import type { AcpBackendSpecV1 } from '@happier-dev/plugin-sdk/experimental/acp';
-import { createAcpBackendEngine, readAcpBackendSpec } from '@happier-dev/plugin-sdk/experimental/acp';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import type {
+  AgentAcpRuntimeOptions,
+  AgentSessionOpenRequest,
+  AgentSessionRuntime,
+  AgentSessionRuntimeContext,
+} from '@happier-dev/plugin-sdk/agent-runtime';
 import { describe, expect, it, vi } from 'vitest';
 
 import { activate } from './activate.js';
+import { PLUGIN_MANIFEST } from './manifest.js';
 
-type KiroBackendRegistration = Readonly<{
-  agentId: string;
-  create: (ctx: Readonly<{
-    agentRuntime: Readonly<{
-      acp: Readonly<{
-        defineAcpBackend: (spec: AcpBackendSpecV1) => AgentRuntimeV1;
-      }>;
-    }>;
-  }>) => AgentRuntimeV1 | Promise<AgentRuntimeV1>;
-}>;
+describe('Kiro activation', () => {
+  it('registers its runtime through the public Agent activation API', async () => {
+    const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    expect(activation.registrations()).toContainEqual({ family: 'agents', localId: 'kiro' });
+    expect(activation.registration('agents', 'kiro')?.factory).toEqual(expect.any(Function));
+    await activation.dispose();
+  });
 
-describe('activate', () => {
-  it('registers the Kiro ACP backend through the plugin API', async () => {
-    const registerAgentRuntime = vi.fn();
-
-    activate({ registerAgentRuntime });
-
-    expect(registerAgentRuntime).toHaveBeenCalledTimes(1);
-    const registration = registerAgentRuntime.mock.calls[0]?.[0] as KiroBackendRegistration | undefined;
-    expect(registration?.agentId).toBe('kiro');
-
-    const engine = await registration?.create({
-      agentRuntime: {
-        acp: {
-          defineAcpBackend: createAcpBackendEngine,
-        },
-      },
+  it('opens Kiro through the native ACP composer without a V1 fallback', async () => {
+    const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    const factory = activation.registration('agents', 'kiro')?.factory;
+    if (!factory) throw new Error('Expected Kiro Agent factory');
+    const runtime = await factory({
+      plugin: { id: 'happier.agent.kiro', version: '0.0.0' },
+      agent: { id: 'kiro' },
+      signal: new AbortController().signal,
     });
+    const session = {
+      send: vi.fn(async () => ({ status: 'admitted' as const })),
+      watch: () => ({ dispose: () => undefined }),
+      dispose: vi.fn(),
+    } satisfies AgentSessionRuntime;
+    const open = vi.fn(async (
+      _request: AgentSessionOpenRequest,
+      _options: AgentAcpRuntimeOptions,
+    ) => session);
+    const request: AgentSessionOpenRequest = {
+      kind: 'resume',
+      sessionId: 'session-kiro',
+      providerSessionId: 'kiro-provider-session',
+      cwd: '/workspace',
+    };
 
-    expect(readAcpBackendSpec(engine as AgentRuntimeV1)).toMatchObject({
-      backendId: 'kiro',
+    await expect(runtime.sessions.open(request, {
+      protocols: { acp: { open } },
+    } as AgentSessionRuntimeContext)).resolves.toBe(session);
+    expect(open).toHaveBeenCalledWith(request, {
       transport: {
         kind: 'stdio',
-        launch: {
-          kind: 'agent-cli',
-          agentId: 'kiro',
-          args: ['acp'],
-        },
+        executable: { kind: 'systemTool', id: 'kiro-cli' },
+        args: ['acp'],
       },
-      auth: {
-        config: {
-          statusCommand: ['whoami', '--format', 'json'],
-          parser: 'kiroWhoamiJson',
-        },
-      },
-      sessionIdHeaderName: 'kiroSessionId',
-      stderrRules: {
-        suppress: [
-          {
-            includes: ['error handling notification', '_kiro.dev/', 'method not found'],
-          },
-        ],
-      },
-      mcp: { policy: 'pass_through' },
+      definition: expect.objectContaining({
+        mcp: { policy: 'pass_through' },
+        stderrRules: expect.any(Object),
+      }),
     });
+    await activation.dispose();
   });
 });

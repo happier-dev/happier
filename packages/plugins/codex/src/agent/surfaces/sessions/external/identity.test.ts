@@ -1,9 +1,10 @@
 import { join, resolve } from 'node:path';
 
-import type { SessionMetadata } from '@happier-dev/plugin-sdk/sessions';
+import type { SessionMetadata } from '@happier-dev/plugin-sdk/experimental/sessions';
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildCodexExternalSessionMetadata,
   maybeUpdateCodexSessionIdMetadata,
   publishCodexSessionIdMetadata,
   resolveCodexExternalSessionLinkIdentity,
@@ -37,6 +38,38 @@ async function flushCodexSessionIdPublication(): Promise<void> {
 }
 
 describe('Codex plugin session identity metadata', () => {
+  it('writes a canonical external-session link forward without losing link data', () => {
+    const result = buildCodexExternalSessionMetadata({
+      path: '/tmp',
+      host: 'test',
+      machineId: 'machine-1',
+      externalSessionV1: {
+        v: 1,
+        agentId: 'codex',
+        machineId: 'machine-1',
+        remoteSessionId: 'thread-legacy',
+        source: { kind: 'codexHome', home: 'user' },
+        linkData: { sourceGeneration: 'generation-1' },
+        codexBackendMode: 'appServer',
+      },
+    }, 'thread-current', {
+      transcriptStorage: 'direct',
+      backendMode: null,
+      nowMs: 42,
+    });
+
+    expect(result.externalSessionV1).toMatchObject({
+      agentId: 'codex',
+      remoteSessionId: 'thread-current',
+      linkData: { sourceGeneration: 'generation-1' },
+      codexBackendMode: 'appServer',
+    });
+    expect(Reflect.get(result, 'directSessionV1')).toMatchObject({
+      providerId: 'codex',
+      remoteSessionId: 'thread-current',
+    });
+  });
+
   it('no-ops when provider thread id is missing', () => {
     const lastPublished: CodexSessionIdentityPublicationState = { value: null };
     let called = 0;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { ProviderCompatibilityEvidenceV1Schema } from '../capabilities/v1.js';
-import { AgentProviderRequirementsV1Schema } from './v1.js';
+import { AgentProviderRequirementsV1Schema, ProviderBindingCompatibilityV1Schema } from './v1.js';
 
 const requirements = {
   acceptsProtocols: ['openai-responses'], required: {},
@@ -11,6 +11,15 @@ const requirements = {
 } as const;
 
 describe('provider compatibility contracts', () => {
+  it('accepts only the closed compatibility reason vocabulary', () => {
+    expect(ProviderBindingCompatibilityV1Schema.safeParse({
+      status: 'incompatible', reasons: ['no_compatible_protocol'],
+    }).success).toBe(true);
+    expect(ProviderBindingCompatibilityV1Schema.safeParse({
+      status: 'incompatible', reasons: ['caller_defined_reason'],
+    }).success).toBe(false);
+  });
+
   it('allows only HTTPS evidence links', () => {
     expect(ProviderCompatibilityEvidenceV1Schema.safeParse({
       sourceUrls: ['javascript:alert(1)'], verifiedAt: '2026-07-10',

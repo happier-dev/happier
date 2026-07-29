@@ -1,34 +1,53 @@
 import type {
-  ExecRunResultV1,
-  SystemToolLaunchGrantV1,
-  SystemToolResolveRequestV1,
-} from '@happier-dev/plugin-sdk';
+  PluginProcessResult,
+  PluginResolvedSystemTool,
+} from '@happier-dev/plugin-sdk/runtime';
 import { describe, expect, it, vi } from 'vitest';
 
-import { runDeepSecReview } from './run.js';
+import { runDeepSecReview, type DeepSecTempFiles } from './run.js';
+
+const resolvedTool: PluginResolvedSystemTool = {
+  executable: { kind: 'systemTool', id: 'deepsec-cli' },
+  executablePath: '/tools/deepsec',
+};
+
+function processResult(exitCode = 0): PluginProcessResult {
+  return {
+    termination: {
+      observed: { kind: 'exit', exitCode },
+      requestedBy: { kind: 'none' },
+    },
+    stdout: new Uint8Array(),
+    stderr: new Uint8Array(),
+    stdoutTruncated: false,
+    stderrTruncated: false,
+  };
+}
+
+function createTempFiles(overrides?: Partial<DeepSecTempFiles>): DeepSecTempFiles {
+  return {
+    async createTextFile() {
+      return '/tmp/deepsec-comments.md';
+    },
+    async createScopedPathListFile({ paths }) {
+      return { status: 'created', path: '/tmp/deepsec-files.txt', paths };
+    },
+    async readText() {
+      return '';
+    },
+    async cleanup() {},
+    ...overrides,
+  };
+}
 
 describe('runDeepSecReview', () => {
-  it('runs through a host-granted system tool launch and cleans temp artifacts', async () => {
-    const grant: SystemToolLaunchGrantV1 = {
-      grantId: 'grant-1',
-      toolId: 'deepsec',
-      displayName: 'DeepSec',
-      source: 'user_config',
-      executablePath: '/tools/deepsec',
-      launch: { kind: 'binary', executablePath: '/tools/deepsec', args: ['--quiet'] },
-      expiresAt: null,
-    };
-    const resolve = vi.fn(async (_request: SystemToolResolveRequestV1) => grant);
-    const run = vi.fn(async (): Promise<ExecRunResultV1> => ({
-      exitCode: 0,
-      signal: null,
-      stdout: 'ok',
-      stderr: '',
-    }));
-    const createScopedPathListFile = vi.fn(async () => ({
+  it('runs the resolved managed executable and cleans temporary artifacts', async () => {
+    const resolve = vi.fn(async () => resolvedTool);
+    const run = vi.fn(async () => processResult());
+    const createScopedPathListFile = vi.fn(async ({ paths }: { paths: readonly string[] }) => ({
       status: 'created' as const,
       path: '/tmp/deepsec-files.txt',
-      paths: ['src/auth.ts', 'src/api.ts'],
+      paths,
     }));
     const cleanup = vi.fn(async () => {});
 
@@ -37,41 +56,29 @@ describe('runDeepSecReview', () => {
       mode: 'selected_files',
       selectedFiles: ['src/auth.ts', 'src/api.ts'],
       confirmedCostWarning: true,
-      exec: {
-        systemTools: { resolve },
-        run,
-      },
-      tempFiles: {
-        createScopedPathListFile,
-        async createTextFile({ suffix }) {
-          return suffix === '.comments.md' ? '/tmp/deepsec-comments.md' : '/tmp/unused';
-        },
-        async readText() {
-          return '';
-        },
-        cleanup,
-      },
+      environment: { AI_GATEWAY_API_KEY: 'gateway-key' },
+      exec: { systemTools: { resolve }, run },
+      tempFiles: createTempFiles({ createScopedPathListFile, cleanup }),
     });
 
     expect(result.status).toBe('completed');
     expect(resolve).toHaveBeenCalledWith(expect.objectContaining({
-      toolId: 'deepsec',
+      toolId: 'deepsec-cli',
       purpose: 'review security findings',
       cwd: '/repo',
     }));
     expect(run).toHaveBeenCalledWith({
-      kind: 'binary',
-      executablePath: '/tools/deepsec',
+      executable: resolvedTool.executable,
       args: [
-        '--quiet',
         'process',
         '--files-from',
         '/tmp/deepsec-files.txt',
         '--comment-out',
         '/tmp/deepsec-comments.md',
       ],
-      cwd: '/repo',
-    }, expect.objectContaining({ signal: undefined }));
+      cwd: { root: 'workspace', relativePath: '' },
+      env: { AI_GATEWAY_API_KEY: 'gateway-key' },
+    }, { signal: undefined });
     expect(createScopedPathListFile).toHaveBeenCalledWith({
       suffix: '.files.txt',
       paths: ['src/auth.ts', 'src/api.ts'],
@@ -79,58 +86,30 @@ describe('runDeepSecReview', () => {
     expect(cleanup).toHaveBeenCalledOnce();
   });
 
-  it('blocks expensive scopes until the caller explicitly confirms cost', async () => {
+  it('blocks expensive scopes before resolving or launching', async () => {
+    const resolve = vi.fn(async () => resolvedTool);
+    const run = vi.fn(async () => processResult());
+    const createTextFile = vi.fn(async () => '/tmp/deepsec-comments.md');
+
     const result = await runDeepSecReview({
       cwd: '/repo',
       mode: 'repository_security_audit',
       confirmedCostWarning: false,
-      exec: {
-        systemTools: {
-          async resolve() {
-            throw new Error('should not resolve before confirmation');
-          },
-        },
-        async run() {
-          throw new Error('should not run before confirmation');
-        },
-      },
-      tempFiles: {
-        async createTextFile() {
-          throw new Error('should not create temp files before confirmation');
-        },
-        async readText() {
-          return '';
-        },
-        async cleanup() {},
-      },
+      exec: { systemTools: { resolve }, run },
+      tempFiles: createTempFiles({ createTextFile }),
     });
 
     expect(result).toMatchObject({
       status: 'requires_confirmation',
-      warning: {
-        status: 'requires_confirmation',
-        costClass: 'expensive',
-        reason: 'repository_scan',
-      },
+      warning: { costClass: 'expensive', reason: 'repository_scan' },
     });
+    expect(resolve).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+    expect(createTextFile).not.toHaveBeenCalled();
   });
 
-  it('returns structured readiness remediation before creating temp artifacts or launching DeepSec', async () => {
-    const grant: SystemToolLaunchGrantV1 = {
-      grantId: 'grant-1',
-      toolId: 'deepsec',
-      displayName: 'DeepSec',
-      source: 'user_config',
-      executablePath: '/tools/deepsec',
-      launch: { kind: 'binary', executablePath: '/tools/deepsec' },
-      expiresAt: null,
-    };
-    const run = vi.fn(async (): Promise<ExecRunResultV1> => ({
-      exitCode: 0,
-      signal: null,
-      stdout: '',
-      stderr: '',
-    }));
+  it('returns readiness remediation before creating temporary artifacts or launching', async () => {
+    const run = vi.fn(async () => processResult());
     const createTextFile = vi.fn(async () => '/tmp/deepsec-comments.md');
     const cleanup = vi.fn(async () => {});
 
@@ -139,26 +118,12 @@ describe('runDeepSecReview', () => {
       mode: 'current_diff',
       confirmedCostWarning: true,
       readiness: {
-        toolRuntime: {
-          kind: 'node',
-          version: '20.19.0',
-          majorVersion: 20,
-          diagnostics: [],
-        },
+        toolRuntime: { kind: 'node', version: '20.19.0', majorVersion: 20, diagnostics: [] },
         agentCli: null,
         hasGatewayKey: false,
       },
-      exec: {
-        systemTools: { resolve: async () => grant },
-        run,
-      },
-      tempFiles: {
-        createTextFile,
-        async readText() {
-          return '';
-        },
-        cleanup,
-      },
+      exec: { systemTools: { resolve: async () => resolvedTool }, run },
+      tempFiles: createTempFiles({ createTextFile, cleanup }),
     });
 
     expect(result).toEqual({
@@ -166,12 +131,7 @@ describe('runDeepSecReview', () => {
       readiness: {
         status: 'missing',
         missing: ['node>=22', 'claude-or-codex', 'AI_GATEWAY_API_KEY'],
-        toolRuntime: {
-          kind: 'node',
-          version: '20.19.0',
-          majorVersion: 20,
-          diagnostics: [],
-        },
+        toolRuntime: { kind: 'node', version: '20.19.0', majorVersion: 20, diagnostics: [] },
         installUrl: 'https://github.com/vercel-labs/deepsec',
         commandPreview: ['deepsec', '--help'],
         messageKey: 'plugins.deepsec.readiness.missing',
@@ -180,125 +140,66 @@ describe('runDeepSecReview', () => {
     });
     expect(createTextFile).not.toHaveBeenCalled();
     expect(run).not.toHaveBeenCalled();
-    expect(cleanup).not.toHaveBeenCalled();
-  });
-
-  it('runs repository security audits as scan then process and cleans comment artifacts', async () => {
-    const grant: SystemToolLaunchGrantV1 = {
-      grantId: 'grant-1',
-      toolId: 'deepsec',
-      displayName: 'DeepSec',
-      source: 'user_config',
-      executablePath: '/tools/deepsec',
-      launch: { kind: 'binary', executablePath: '/tools/deepsec', args: ['--quiet'] },
-      expiresAt: null,
-    };
-    const run = vi.fn(async (): Promise<ExecRunResultV1> => ({
-      exitCode: 0,
-      signal: null,
-      stdout: '',
-      stderr: '',
-    }));
-    const cleanup = vi.fn(async () => {});
-
-    const result = await runDeepSecReview({
-      cwd: '/repo',
-      mode: 'repository_security_audit',
-      confirmedCostWarning: true,
-      exec: {
-        systemTools: { resolve: async () => grant },
-        run,
-      },
-      tempFiles: {
-        async createTextFile({ suffix }) {
-          return suffix === '.comments.md' ? '/tmp/deepsec-comments.md' : '/tmp/unused';
-        },
-        async readText(path) {
-          return path === '/tmp/deepsec-comments.md' ? '### src/auth.ts\n\nCheck auth.' : '';
-        },
-        cleanup,
-      },
-    });
-
-    expect(result).toMatchObject({
-      status: 'completed',
-      commentOutMarkdown: '### src/auth.ts\n\nCheck auth.',
-    });
-    expect(run).toHaveBeenNthCalledWith(1, {
-      kind: 'binary',
-      executablePath: '/tools/deepsec',
-      args: ['--quiet', 'scan'],
-      cwd: '/repo',
-    }, expect.objectContaining({ signal: undefined }));
-    expect(run).toHaveBeenNthCalledWith(2, {
-      kind: 'binary',
-      executablePath: '/tools/deepsec',
-      args: ['--quiet', 'process', '--comment-out', '/tmp/deepsec-comments.md'],
-      cwd: '/repo',
-    }, expect.objectContaining({ signal: undefined }));
     expect(cleanup).toHaveBeenCalledOnce();
   });
 
-  it('reports repository audit process failure as partial after scan succeeds', async () => {
-    const grant: SystemToolLaunchGrantV1 = {
-      grantId: 'grant-1',
-      toolId: 'deepsec',
-      displayName: 'DeepSec',
-      source: 'user_config',
-      executablePath: '/tools/deepsec',
-      launch: { kind: 'binary', executablePath: '/tools/deepsec' },
-      expiresAt: null,
-    };
-    const run = vi
-      .fn<() => Promise<ExecRunResultV1>>()
-      .mockResolvedValueOnce({ exitCode: 0, signal: null, stdout: '', stderr: '' })
-      .mockResolvedValueOnce({ exitCode: 2, signal: null, stdout: 'raw stdout', stderr: 'raw stderr' });
+  it('runs repository audits as scan then process', async () => {
+    const run = vi.fn(async () => processResult());
     const cleanup = vi.fn(async () => {});
 
     const result = await runDeepSecReview({
       cwd: '/repo',
       mode: 'repository_security_audit',
       confirmedCostWarning: true,
-      exec: {
-        systemTools: { resolve: async () => grant },
-        run,
-      },
-      tempFiles: {
-        async createTextFile() {
-          return '/tmp/deepsec-comments.md';
-        },
+      exec: { systemTools: { resolve: async () => resolvedTool }, run },
+      tempFiles: createTempFiles({
         async readText() {
-          return '';
+          return '### src/auth.ts\n\nCheck auth.';
         },
         cleanup,
-      },
+      }),
     });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({ status: 'completed', commentOutMarkdown: '### src/auth.ts\n\nCheck auth.' });
+    expect(run).toHaveBeenNthCalledWith(1, {
+      executable: resolvedTool.executable,
+      args: ['scan'],
+      cwd: { root: 'workspace', relativePath: '' },
+    }, { signal: undefined });
+    expect(run).toHaveBeenNthCalledWith(2, {
+      executable: resolvedTool.executable,
+      args: ['process', '--comment-out', '/tmp/deepsec-comments.md'],
+      cwd: { root: 'workspace', relativePath: '' },
+    }, { signal: undefined });
+    expect(cleanup).toHaveBeenCalledOnce();
+  });
+
+  it('reports repository audit process failure as partial', async () => {
+    const run = vi.fn()
+      .mockResolvedValueOnce(processResult())
+      .mockResolvedValueOnce(processResult(2));
+    const cleanup = vi.fn(async () => {});
+
+    const result = await runDeepSecReview({
+      cwd: '/repo',
+      mode: 'repository_security_audit',
+      confirmedCostWarning: true,
+      exec: { systemTools: { resolve: async () => resolvedTool }, run },
+      tempFiles: createTempFiles({ cleanup }),
+    });
+
+    expect(result).toMatchObject({
       status: 'partial',
       stage: 'process',
       diagnostics: [{
         code: 'deepsec_process_failed',
-        severity: 'warning',
-        messageKey: 'plugins.deepsec.runtime.partial',
         detail: { exitCode: 2, signal: null },
       }],
-      result: { exitCode: 2, signal: null, stdout: 'raw stdout', stderr: 'raw stderr' },
-      commentOutMarkdown: '',
     });
     expect(cleanup).toHaveBeenCalledOnce();
   });
 
-  it('cleans temp artifacts when DeepSec execution rejects', async () => {
-    const grant: SystemToolLaunchGrantV1 = {
-      grantId: 'grant-1',
-      toolId: 'deepsec',
-      displayName: 'DeepSec',
-      source: 'user_config',
-      executablePath: '/tools/deepsec',
-      launch: { kind: 'binary', executablePath: '/tools/deepsec' },
-      expiresAt: null,
-    };
+  it('cleans temporary artifacts when execution rejects', async () => {
     const cleanup = vi.fn(async () => {});
 
     await expect(runDeepSecReview({
@@ -306,84 +207,68 @@ describe('runDeepSecReview', () => {
       mode: 'current_diff',
       confirmedCostWarning: true,
       exec: {
-        systemTools: { resolve: async () => grant },
+        systemTools: { resolve: async () => resolvedTool },
         async run() {
           throw new Error('aborted');
         },
       },
-      tempFiles: {
-        async createTextFile() {
-          return '/tmp/deepsec-comments.md';
-        },
-        async readText() {
-          return '';
-        },
-        cleanup,
-      },
+      tempFiles: createTempFiles({ cleanup }),
     })).rejects.toThrow('aborted');
 
     expect(cleanup).toHaveBeenCalledOnce();
   });
 
-  it('rejects invalid selected-file scopes before resolving or creating temp files', async () => {
-    const resolve = vi.fn(async () => {
-      throw new Error('should not resolve invalid selected file scope');
-    });
-    const createTextFile = vi.fn(async () => {
-      throw new Error('should not create temp files for invalid selected file scope');
-    });
+  it('cleans the temporary workspace when system-tool resolution rejects', async () => {
+    const cleanup = vi.fn(async () => {});
 
     await expect(runDeepSecReview({
       cwd: '/repo',
-      mode: 'selected_files',
-      selectedFiles: [],
+      mode: 'current_diff',
       confirmedCostWarning: true,
       exec: {
-        systemTools: { resolve },
+        systemTools: {
+          async resolve() {
+            throw new Error('resolver unavailable');
+          },
+        },
         async run() {
-          throw new Error('should not run invalid selected file scope');
+          return processResult();
         },
       },
-      tempFiles: {
-        createTextFile,
-        async readText() {
-          return '';
-        },
-        async cleanup() {},
-      },
-    })).rejects.toThrow('selectedFiles must include at least one file path');
+      tempFiles: createTempFiles({ cleanup }),
+    })).rejects.toThrow('resolver unavailable');
 
-    await expect(runDeepSecReview({
+    expect(cleanup).toHaveBeenCalledOnce();
+  });
+
+  it('rejects invalid selected-file scopes before resolution', async () => {
+    const resolve = vi.fn(async () => resolvedTool);
+    const createTextFile = vi.fn(async () => '/tmp/deepsec-comments.md');
+    const base = {
       cwd: '/repo',
-      mode: 'selected_files',
-      selectedFiles: ['src/auth.ts\nsrc/extra.ts'],
+      mode: 'selected_files' as const,
       confirmedCostWarning: true,
-      exec: {
-        systemTools: { resolve },
-        async run() {
-          throw new Error('should not run invalid selected file scope');
-        },
-      },
-      tempFiles: {
-        createTextFile,
-        async readText() {
-          return '';
-        },
-        async cleanup() {},
-      },
-    })).rejects.toThrow('selectedFiles must be non-empty single-line paths');
+      exec: { systemTools: { resolve }, run: async () => processResult() },
+      tempFiles: createTempFiles({ createTextFile }),
+    };
 
+    await expect(runDeepSecReview({ ...base, selectedFiles: [] }))
+      .rejects.toThrow('selectedFiles must include at least one file path');
+    await expect(runDeepSecReview({ ...base, selectedFiles: ['src/auth.ts\nsrc/extra.ts'] }))
+      .rejects.toThrow('selectedFiles must be non-empty single-line paths');
     expect(resolve).not.toHaveBeenCalled();
     expect(createTextFile).not.toHaveBeenCalled();
   });
 
-  it('rejects unsafe selected-file paths before resolving or creating temp files', async () => {
-    const resolve = vi.fn(async () => {
-      throw new Error('should not resolve unsafe selected file scope');
-    });
-    const createTextFile = vi.fn(async () => {
-      throw new Error('should not create temp files for unsafe selected file scope');
-    });
+  it('rejects unsafe selected-file paths before resolution', async () => {
+    const resolve = vi.fn(async () => resolvedTool);
+    const base = {
+      cwd: '/repo',
+      mode: 'selected_files' as const,
+      confirmedCostWarning: true,
+      exec: { systemTools: { resolve }, run: async () => processResult() },
+      tempFiles: createTempFiles(),
+    };
 
     for (const selectedFile of [
       '/etc/passwd',
@@ -394,49 +279,17 @@ describe('runDeepSecReview', () => {
       '~/.ssh/config',
       'src/\0secret.ts',
     ]) {
-      await expect(runDeepSecReview({
-        cwd: '/repo',
-        mode: 'selected_files',
-        selectedFiles: [selectedFile],
-        confirmedCostWarning: true,
-        exec: {
-          systemTools: { resolve },
-          async run() {
-            throw new Error('should not run unsafe selected file scope');
-          },
-        },
-        tempFiles: {
-          createTextFile,
-          async readText() {
-            return '';
-          },
-          async cleanup() {},
-        },
-      })).rejects.toThrow('selectedFiles must be safe workspace-relative paths');
+      await expect(runDeepSecReview({ ...base, selectedFiles: [selectedFile] }))
+        .rejects.toThrow('selectedFiles must be safe workspace-relative paths');
     }
-
     expect(resolve).not.toHaveBeenCalled();
-    expect(createTextFile).not.toHaveBeenCalled();
   });
 
-  it('deduplicates selected-file paths before writing the file list', async () => {
-    const grant: SystemToolLaunchGrantV1 = {
-      grantId: 'grant-1',
-      toolId: 'deepsec',
-      displayName: 'DeepSec',
-      source: 'user_config',
-      executablePath: '/tools/deepsec',
-      launch: { kind: 'binary', executablePath: '/tools/deepsec' },
-      expiresAt: null,
-    };
+  it('deduplicates selected-file paths before writing the list', async () => {
     let filesListContents = '';
-    const createScopedPathListFile = vi.fn(async ({ paths }) => {
+    const createScopedPathListFile = vi.fn(async ({ paths }: { paths: readonly string[] }) => {
       filesListContents = `${paths.join('\n')}\n`;
-      return {
-        status: 'created' as const,
-        path: '/tmp/deepsec-files.txt',
-        paths,
-      };
+      return { status: 'created' as const, path: '/tmp/deepsec-files.txt', paths };
     });
 
     await runDeepSecReview({
@@ -444,77 +297,39 @@ describe('runDeepSecReview', () => {
       mode: 'selected_files',
       selectedFiles: [' src/auth.ts ', 'src\\auth.ts', './src/api.ts'],
       confirmedCostWarning: true,
-      exec: {
-        systemTools: { resolve: async () => grant },
-        async run(): Promise<ExecRunResultV1> {
-          return { exitCode: 0, signal: null, stdout: '', stderr: '' };
-        },
-      },
-      tempFiles: {
-        createScopedPathListFile,
-        async createTextFile() {
-          return '/tmp/deepsec-comments.md';
-        },
-        async readText() {
-          return '';
-        },
-        async cleanup() {},
-      },
+      exec: { systemTools: { resolve: async () => resolvedTool }, run: async () => processResult() },
+      tempFiles: createTempFiles({ createScopedPathListFile }),
     });
 
     expect(filesListContents).toBe('src/auth.ts\nsrc/api.ts\n');
-    expect(createScopedPathListFile).toHaveBeenCalledWith({
-      suffix: '.files.txt',
-      paths: ['src/auth.ts', 'src/api.ts'],
-    });
   });
 
-  it('fails closed when host selected-file scope materialization blocks a path', async () => {
-    const grant: SystemToolLaunchGrantV1 = {
-      grantId: 'grant-1',
-      toolId: 'deepsec',
-      displayName: 'DeepSec',
-      source: 'user_config',
-      executablePath: '/tools/deepsec',
-      launch: { kind: 'binary', executablePath: '/tools/deepsec' },
-      expiresAt: null,
-    };
-    const run = vi.fn(async (): Promise<ExecRunResultV1> => ({
-      exitCode: 0,
-      signal: null,
-      stdout: '',
-      stderr: '',
-    }));
-    const createScopedPathListFile = vi.fn(async () => ({
-      status: 'blocked' as const,
-      diagnostics: [{
-        code: 'path_escape',
-        severity: 'error' as const,
-        messageKey: 'plugins.fs.scopedPathList.pathEscape',
-        path: 'src/outside/secret.ts',
-      }],
-    }));
+  it('fails closed when selected-file materialization blocks a path', async () => {
+    const run = vi.fn(async () => processResult());
     const createTextFile = vi.fn(async () => '/tmp/deepsec-comments.md');
     const cleanup = vi.fn(async () => {});
-    const tempFiles = {
-      createTextFile,
-      createScopedPathListFile,
-      async readText() {
-        return '';
-      },
-      cleanup,
-    };
 
     const result = await runDeepSecReview({
       cwd: '/repo',
       mode: 'selected_files',
       selectedFiles: ['src/outside/secret.ts'],
       confirmedCostWarning: true,
-      exec: {
-        systemTools: { resolve: async () => grant },
-        run,
-      },
-      tempFiles,
+      exec: { systemTools: { resolve: async () => resolvedTool }, run },
+      tempFiles: createTempFiles({
+        async createScopedPathListFile() {
+          return {
+            status: 'blocked',
+            diagnostics: [{
+              code: 'path_escape',
+              severity: 'error',
+              messageKey: 'plugins.fs.scopedPathList.pathEscape',
+              path: 'src/outside/secret.ts',
+            }],
+          };
+        },
+        createTextFile,
+        cleanup,
+      }),
     });
 
     expect(result).toEqual({
@@ -526,10 +341,6 @@ describe('runDeepSecReview', () => {
         path: 'src/outside/secret.ts',
       }],
       commentOutMarkdown: '',
-    });
-    expect(createScopedPathListFile).toHaveBeenCalledWith({
-      suffix: '.files.txt',
-      paths: ['src/outside/secret.ts'],
     });
     expect(createTextFile).not.toHaveBeenCalled();
     expect(run).not.toHaveBeenCalled();

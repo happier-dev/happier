@@ -1,4 +1,7 @@
-import type { SessionRollbackTarget, SessionTurnV1 } from '@happier-dev/plugin-sdk/experimental/runtime/session';
+import type {
+    CodexAppServerRollbackTarget,
+    CodexAppServerSessionTurn,
+} from '../core.js';
 
 export type CodexAppServerRollbackPlan = Readonly<{
     numTurns: number;
@@ -11,8 +14,8 @@ export type CodexAppServerRollbackPlan = Readonly<{
 }>;
 
 export function resolveCodexAppServerRollbackPlanFromSessionTurns(params: Readonly<{
-    target: SessionRollbackTarget;
-    turns: readonly SessionTurnV1[];
+    target: CodexAppServerRollbackTarget;
+    turns: readonly CodexAppServerSessionTurn[];
 }>): CodexAppServerRollbackPlan | null {
     const completedTurns = listRollbackEligibleTurns(params.turns);
     if (completedTurns.length === 0) return null;
@@ -54,7 +57,7 @@ export function resolveCodexAppServerRollbackPlanFromSessionTurns(params: Readon
 }
 
 type RollbackEligibleTurn = Readonly<{
-    turn: SessionTurnV1;
+    turn: CodexAppServerSessionTurn;
     startUserMessageSeq: number;
     startSeqInclusive: number;
     endSeqInclusive: number;
@@ -64,7 +67,7 @@ function readNonNegativeInteger(value: unknown): number | null {
     return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null;
 }
 
-function readRollbackEligibleTurn(turn: SessionTurnV1): RollbackEligibleTurn | null {
+function readRollbackEligibleTurn(turn: CodexAppServerSessionTurn): RollbackEligibleTurn | null {
     if (turn.status !== 'completed' || turn.rollback?.state !== 'eligible') return null;
     const anchors = turn.transcriptAnchors;
     const startUserMessageSeq = readNonNegativeInteger(anchors?.startUserMessageSeq);
@@ -78,7 +81,7 @@ function readRollbackEligibleTurn(turn: SessionTurnV1): RollbackEligibleTurn | n
     };
 }
 
-function listRollbackEligibleTurns(turns: readonly SessionTurnV1[]): RollbackEligibleTurn[] {
+function listRollbackEligibleTurns(turns: readonly CodexAppServerSessionTurn[]): RollbackEligibleTurn[] {
     return turns.flatMap((turn) => {
         const eligible = readRollbackEligibleTurn(turn);
         return eligible ? [eligible] : [];

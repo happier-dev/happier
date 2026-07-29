@@ -6,11 +6,13 @@ import type { RuntimeDescriptorV1 } from '../metadata/runtimeDescriptorV1.js';
 import type { SessionPermissionMode } from '../metadata/sessionPermissionModes.js';
 import type { SessionWorkStateV1 } from '../work/state/sessionWorkStateV1.js';
 import type { ExternalSessionAttentionV1 } from '../external/linkedSessionMetadata.js';
+import type { ExternalAgentObservationSnapshotV1 } from '../external/externalAgentObservationV1.js';
+import type { ExternalSessionOperationStateV1 } from '../external/operationV1.js';
 import type { SESSION_STATE_FIELD_CLASSES, SESSION_STATE_FIELD_IDS } from './_constants.js';
 import type { SessionStateCapabilitiesV1Schema } from './capabilitySchema.js';
 import type { SessionUsageLimitRecoveryV1 } from './valueSchemas/usageLimitRecovery.js';
 import type { SessionRunnerRuntimeStateV1 } from '../control/sessionRunnerRuntimeV1.js';
-import type { SessionRuntimeActivityProjectionV1 } from '../runtime/activity/sessionRuntimeActivityV1.js';
+import type { SessionRuntimeActivitySnapshot } from '../runtime/activity/sessionRuntimeActivity.js';
 
 export type SessionStateFieldId = (typeof SESSION_STATE_FIELD_IDS)[number];
 export type SessionStateFieldClass = (typeof SESSION_STATE_FIELD_CLASSES)[number];
@@ -58,7 +60,9 @@ export interface SessionStateFieldRegistry {
   'intent.acpConfigOption': { value: AcpConfigOptionIntentV1 };
   'display.title': { value: string };
   'runtime.workState': { value: SessionWorkStateV1 };
-  'runtime.activity': { value: SessionRuntimeActivityProjectionV1 };
+  'runtime.activity': { value: SessionRuntimeActivitySnapshot };
+  'runtime.externalAgent': { value: ExternalAgentObservationSnapshotV1 };
+  'runtime.externalSessionOperation': { value: ExternalSessionOperationStateV1 };
   'runtime.usageLimitRecovery': { value: SessionUsageLimitRecoveryV1 };
   'runtime.sessionRunner': { value: SessionRunnerRuntimeStateV1 };
   'view.readState': { value: ReadStateV1 };

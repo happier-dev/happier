@@ -1,33 +1,48 @@
+import { ingestPluginManifestV2 } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
 
 import { PLUGIN_MANIFEST } from './manifest.js';
 
-describe('PLUGIN_MANIFEST', () => {
-  it('contributes a session-capable Cursor backend with execution-run opt-out', () => {
-    const backend = PLUGIN_MANIFEST.contributes.agents.find((entry) => entry.id === 'cursor');
-
-    expect(PLUGIN_MANIFEST.id).toBe('happier.agent.cursor');
-    expect(PLUGIN_MANIFEST.uses).toContain('agents');
-    expect(PLUGIN_MANIFEST.permissions.required).toEqual([
+describe('Cursor plugin manifest', () => {
+  it('declares the custom session runtime and finite Cursor access', () => {
+    expect(ingestPluginManifestV2(PLUGIN_MANIFEST)).toMatchObject({ ok: true });
+    expect(PLUGIN_MANIFEST.contributes.agents[0]).toMatchObject({
+      id: 'cursor', runtime: { kind: 'custom' }, primary: 'sessions',
+      capabilities: { sessions: { open: ['create', 'resume'], cancel: true } },
+    });
+    expect(PLUGIN_MANIFEST.hostAccess.required).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'cursor-api-key', capability: 'environment', scope: { keys: ['CURSOR_API_KEY'] } }),
       expect.objectContaining({
-        capability: 'env',
-        scope: 'CURSOR_API_KEY',
-      }),
-    ]);
-    expect(backend).toEqual(expect.objectContaining({
-      kindVersion: 1,
-      id: 'cursor',
-      runtime: { kind: 'custom' },
-      capabilities: expect.objectContaining({
-        executionRun: { supported: false },
-        session: expect.objectContaining({
-          media: {
-            acceptsImageInput: { supported: false },
-            emitsSessionMedia: { supported: false },
-            nativeImageGeneration: { supported: false },
-          },
+        id: 'cursor-process',
+        capability: 'process',
+        scope: expect.objectContaining({
+          executables: [
+            { kind: 'systemTool', id: 'cursor-agent' },
+            { kind: 'systemTool', id: 'cursor-agent-no-fallback' },
+          ],
         }),
       }),
-    }));
+    ]));
+    expect(PLUGIN_MANIFEST.contributes.systemTools).toEqual([
+      expect.objectContaining({
+        id: 'cursor-agent',
+        executableNames: ['cursor-agent', 'agent'],
+      }),
+      expect.objectContaining({
+        id: 'cursor-agent-no-fallback',
+        executableNames: ['cursor-agent'],
+      }),
+    ]);
+    expect(PLUGIN_MANIFEST.contributes.settings).toEqual([
+      expect.objectContaining({
+        target: { kind: 'agent', agent: 'cursor' },
+        scope: 'local',
+        fields: expect.arrayContaining([
+          expect.objectContaining({ id: 'cursorBinaryPath' }),
+          expect.objectContaining({ id: 'cursorAgentFallbackEnabled' }),
+          expect.objectContaining({ id: 'cursorApiEndpoint' }),
+        ]),
+      }),
+    ]);
   });
 });

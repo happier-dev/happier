@@ -31,8 +31,8 @@ describe('RPC_METHODS (daemon direct sessions)', () => {
     expect((RPC_METHODS as Record<string, string>).DAEMON_EXTERNAL_SESSION_DETACH).toBe(
       'daemon.externalSessions.detach',
     );
-    expect((RPC_METHODS as Record<string, string>).DAEMON_EXTERNAL_SESSION_FOLLOW_POLICY_SET).toBe(
-      'daemon.externalSessions.followPolicy.set',
+    expect((RPC_METHODS as Record<string, string>).DAEMON_EXTERNAL_SESSION_BACKGROUND_FOLLOW_SET).toBe(
+      'daemon.externalSessions.backgroundFollow.set',
     );
     expect((RPC_METHODS as Record<string, string>).DAEMON_EXTERNAL_SESSION_STATUS_GET).toBe(
       'daemon.externalSessions.status.get',
@@ -46,6 +46,44 @@ describe('RPC_METHODS (daemon direct sessions)', () => {
     expect((RPC_METHODS as Record<string, string>).DAEMON_EXTERNAL_SESSION_TAKEOVER).toBe(
       'daemon.externalSessions.takeover',
     );
+    expect((RPC_METHODS as Record<string, string>).DAEMON_EXTERNAL_SESSION_MATERIALIZE_START).toBe(
+      'daemon.externalSessions.materialize.start',
+    );
+    expect((RPC_METHODS as Record<string, string>).DAEMON_EXTERNAL_SESSION_TAKEOVER_START).toBe(
+      'daemon.externalSessions.takeover.start',
+    );
+    expect((RPC_METHODS as Record<string, string>).DAEMON_EXTERNAL_SESSION_OPERATION_STATUS_GET).toBe(
+      'daemon.externalSessions.operation.status.get',
+    );
+    expect((RPC_METHODS as Record<string, string>).DAEMON_EXTERNAL_SESSION_OPERATION_CANCEL).toBe(
+      'daemon.externalSessions.operation.cancel',
+    );
+    expect((RPC_METHODS as Record<string, string>).DAEMON_EXTERNAL_SESSION_OPERATION_RESUME).toBe(
+      'daemon.externalSessions.operation.resume',
+    );
+    expect((RPC_METHODS as Record<string, string>).DAEMON_EXTERNAL_SESSION_OPERATION_RETRY).toBe(
+      'daemon.externalSessions.operation.retry',
+    );
+    expect((RPC_METHODS as Record<string, string>).DAEMON_EXTERNAL_SESSION_OPERATION_DISCARD).toBe(
+      'daemon.externalSessions.operation.discard',
+    );
+  });
+
+  it('does not give new operation methods legacy direct-session aliases', async () => {
+    const { DIRECT_SESSION_LEGACY_RPC_ALIASES } = await import('./aliases.js');
+    const operationMethods = new Set([
+      RPC_METHODS.DAEMON_EXTERNAL_SESSION_MATERIALIZE_START,
+      RPC_METHODS.DAEMON_EXTERNAL_SESSION_TAKEOVER_START,
+      RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_STATUS_GET,
+      RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_CANCEL,
+      RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_RESUME,
+      RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_RETRY,
+      RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_DISCARD,
+    ]);
+
+    expect(DIRECT_SESSION_LEGACY_RPC_ALIASES.some(
+      ({ canonicalMethod }) => operationMethods.has(canonicalMethod),
+    )).toBe(false);
   });
 
   it('includes legacy daemon.directSessions.* methods', () => {
@@ -93,6 +131,11 @@ describe('RPC_METHODS (daemon direct sessions)', () => {
     expect(aliasesModule?.DIRECT_SESSION_LEGACY_RPC_ALIASES).toContainEqual({
       legacyMethod: 'daemon.directSessions.takeoverPersist',
       canonicalMethod: 'daemon.externalSessions.takeover',
+      classification: 'legacy_direct_session_rpc_alias',
+    });
+    expect(aliasesModule?.DIRECT_SESSION_LEGACY_RPC_ALIASES).toContainEqual({
+      legacyMethod: 'daemon.directSessions.followPolicy.set',
+      canonicalMethod: 'daemon.externalSessions.backgroundFollow.set',
       classification: 'legacy_direct_session_rpc_alias',
     });
   });

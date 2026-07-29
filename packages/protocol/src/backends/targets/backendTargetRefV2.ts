@@ -7,6 +7,12 @@ import {
   type BackendTargetRefV1,
 } from './backendTargetRef.js';
 import { hasLegacyCustomAcpConcreteBackendId } from './compat/customAcp.js';
+import {
+  PluginContributionIdentityV1Schema,
+  buildQualifiedPluginContributionKey,
+  resolveAgentIdFromPersistedContributionIdentityV1,
+  resolvePersistedContributionIdentityV1FromAgentId,
+} from '../../plugins/contributionIdentity.js';
 
 export const BackendTargetSourceKindV2Schema = z.enum(['built_in', 'configured']);
 export type BackendTargetSourceKindV2 = z.infer<typeof BackendTargetSourceKindV2Schema>;
@@ -38,19 +44,70 @@ export const BackendTargetRefV2Schema = z.object({
 });
 export type BackendTargetRefV2 = z.infer<typeof BackendTargetRefV2Schema>;
 
+export const PersistedAgentTargetRefV1Schema = z.object({
+  kind: z.literal('agent'),
+  identity: PluginContributionIdentityV1Schema,
+}).strict();
+export type PersistedAgentTargetRefV1 = z.infer<typeof PersistedAgentTargetRefV1Schema>;
+
+export const PersistedBackendTargetRefV2Schema = z.union([
+  BackendTargetRefV2Schema,
+  PersistedAgentTargetRefV1Schema,
+]);
+export type PersistedBackendTargetRefV2 = z.infer<typeof PersistedBackendTargetRefV2Schema>;
+
+function isBackendTargetKeyV2(value: string): boolean {
+  if (/^backend:[^:]+(?::configured:[^:]+)?$/.test(value)) return true;
+  if (!value.startsWith('agent:')) return false;
+  const qualifiedIdentity = value.slice('agent:'.length);
+  const separatorIndex = qualifiedIdentity.indexOf('/');
+  if (separatorIndex <= 0) return false;
+  const parsedIdentity = PluginContributionIdentityV1Schema.safeParse({
+    pluginId: qualifiedIdentity.slice(0, separatorIndex),
+    localId: qualifiedIdentity.slice(separatorIndex + 1),
+  });
+  return parsedIdentity.success
+    && buildQualifiedPluginContributionKey(parsedIdentity.data) === qualifiedIdentity;
+}
+
 export const BackendTargetKeyV2Schema = z
   .string()
-  .regex(/^backend:[^:]+(?::configured:[^:]+)?$/, 'Invalid V2 backend target key');
+  .refine(isBackendTargetKeyV2, 'Invalid V2 backend target key');
 export type BackendTargetKeyV2 = z.infer<typeof BackendTargetKeyV2Schema>;
 
 export function buildBackendTargetKeyV2(target: BackendTargetRefV2): BackendTargetKeyV2 {
   const parsedTarget = BackendTargetRefV2Schema.parse(target);
+  if (!parsedTarget.configuredBackendId && parsedTarget.sourceKind !== 'configured') {
+    const identity = resolvePersistedContributionIdentityV1FromAgentId(parsedTarget.backendId);
+    if (identity) {
+      return BackendTargetKeyV2Schema.parse(
+        `agent:${buildQualifiedPluginContributionKey(identity)}`,
+      );
+    }
+  }
   const suffix = parsedTarget.configuredBackendId ? `:configured:${parsedTarget.configuredBackendId}` : '';
   return BackendTargetKeyV2Schema.parse(`backend:${parsedTarget.backendId}${suffix}`);
 }
 
 export function parseBackendTargetKeyV2(key: string): BackendTargetRefV2 {
   const parsed = BackendTargetKeyV2Schema.parse(key);
+  if (parsed.startsWith('agent:')) {
+    const qualifiedIdentity = parsed.slice('agent:'.length);
+    const separatorIndex = qualifiedIdentity.indexOf('/');
+    const identity = PluginContributionIdentityV1Schema.parse({
+      pluginId: qualifiedIdentity.slice(0, separatorIndex),
+      localId: qualifiedIdentity.slice(separatorIndex + 1),
+    });
+    const agentId = resolveAgentIdFromPersistedContributionIdentityV1(identity);
+    if (!agentId) {
+      throw new Error('Unknown persisted Agent contribution identity');
+    }
+    return BackendTargetRefV2Schema.parse({
+      kind: 'backend',
+      backendId: agentId,
+      sourceKind: 'built_in',
+    });
+  }
   const configuredMarker = ':configured:';
   const withoutPrefix = parsed.slice('backend:'.length);
   const configuredIndex = withoutPrefix.indexOf(configuredMarker);
@@ -71,8 +128,23 @@ export function parseBackendTargetKeyV2(key: string): BackendTargetRefV2 {
   });
 }
 
+export function normalizeBackendTargetKeyV2Input(input: unknown): unknown {
+  if (typeof input !== 'string') return input;
+  try {
+    return buildBackendTargetKeyV2(readBackendTargetRefV2(input as BackendTargetRefV2Input));
+  } catch {
+    return input;
+  }
+}
+
+export const BackendTargetKeyV2InputSchema = z.preprocess(
+  normalizeBackendTargetKeyV2Input,
+  BackendTargetKeyV2Schema,
+);
+
 export const BackendTargetRefV2InputSchema = z.union([
   BackendTargetRefV2Schema,
+  PersistedAgentTargetRefV1Schema,
   BackendTargetKeyV2Schema,
   BackendTargetRefSchema,
   BackendTargetKeySchema,
@@ -81,8 +153,9 @@ export type BackendTargetRefV2Input = z.infer<typeof BackendTargetRefV2InputSche
 
 export function readBackendTargetRefV2(input: BackendTargetRefV2Input): BackendTargetRefV2 {
   if (typeof input === 'string') {
-    if (input.startsWith('backend:')) {
-      return parseBackendTargetKeyV2(input);
+    const parsedV2Key = BackendTargetKeyV2Schema.safeParse(input);
+    if (parsedV2Key.success) {
+      return parseBackendTargetKeyV2(parsedV2Key.data);
     }
     return convertBackendTargetRefV1ToV2(parseBackendTargetKey(input));
   }
@@ -91,7 +164,36 @@ export function readBackendTargetRefV2(input: BackendTargetRefV2Input): BackendT
     return BackendTargetRefV2Schema.parse(input);
   }
 
+  if (input.kind === 'agent' && 'identity' in input) {
+    const persisted = PersistedAgentTargetRefV1Schema.parse(input);
+    const agentId = resolveAgentIdFromPersistedContributionIdentityV1(persisted.identity);
+    if (!agentId) {
+      throw new Error('Unknown persisted Agent contribution identity');
+    }
+    return BackendTargetRefV2Schema.parse({
+      kind: 'backend',
+      backendId: agentId,
+      sourceKind: 'built_in',
+    });
+  }
+
   return convertBackendTargetRefV1ToV2(BackendTargetRefSchema.parse(input));
+}
+
+export function writePersistedBackendTargetRefV2(
+  target: BackendTargetRefV2,
+): PersistedBackendTargetRefV2 {
+  const parsedTarget = BackendTargetRefV2Schema.parse(target);
+  if (!parsedTarget.configuredBackendId && parsedTarget.sourceKind !== 'configured') {
+    const identity = resolvePersistedContributionIdentityV1FromAgentId(parsedTarget.backendId);
+    if (identity) {
+      return PersistedAgentTargetRefV1Schema.parse({
+        kind: 'agent',
+        identity,
+      });
+    }
+  }
+  return parsedTarget;
 }
 
 export function convertBackendTargetRefV2ToV1(target: BackendTargetRefV2): BackendTargetRefV1 {

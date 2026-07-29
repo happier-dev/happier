@@ -10,13 +10,9 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
-    "./agent/surfaces/sessions/external/provider": {
-      "types": "./dist/agent/surfaces/sessions/external/provider.d.ts",
-      "default": "./dist/agent/surfaces/sessions/external/provider.js"
-    },
-    "./agent/terminalRuntime/breadcrumb": {
-      "types": "./dist/agent/terminalRuntime/breadcrumb.d.ts",
-      "default": "./dist/agent/terminalRuntime/breadcrumb.js"
+    "./manifest": {
+      "types": "./dist/manifest.d.ts",
+      "default": "./dist/manifest.js"
     },
     "./agent/contributions/runtime": {
       "types": "./dist/agent/contributions/runtime.d.ts",
@@ -25,6 +21,10 @@
     "./agent/transcripts/snapshot": {
       "types": "./dist/agent/transcripts/snapshot.d.ts",
       "default": "./dist/agent/transcripts/snapshot.js"
+    },
+    "./agent/surfaces/sessions/external/semantics": {
+      "types": "./dist/agent/surfaces/sessions/external/semantics.d.ts",
+      "default": "./dist/agent/surfaces/sessions/external/semantics.js"
     }
   },
   "files": [
@@ -33,7 +33,7 @@
   ],
   "scripts": {
     "tsc": "node ../../../scripts/workspaces/runTypeScriptCli.mjs",
-    "build": "node ../../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.json",
+    "build": "node ../../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
     "test": "vitest run",
     "typecheck": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },

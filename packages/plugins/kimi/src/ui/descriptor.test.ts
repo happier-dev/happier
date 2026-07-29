@@ -44,8 +44,8 @@ describe('KIMI_UI_DESCRIPTOR', () => {
         connectedService: { serviceId: null, labelKey: 'agentInput.agent.kimi', connectRoute: null },
         icon: { assetId: 'kimi' },
       },
-      settings: { descriptorId: 'kimi.agentSettings.v1' },
     });
+    expect(KIMI_UI_DESCRIPTOR).not.toHaveProperty('settings');
   });
 
   it('is a data-only no-execute descriptor', () => {

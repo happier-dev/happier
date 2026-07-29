@@ -8,5 +8,9 @@ describe('SESSION_RPC_METHODS (execution runs)', () => {
     expect(SESSION_RPC_METHODS.EXECUTION_RUN_LIST).toBe('execution.run.list');
     expect(SESSION_RPC_METHODS.EXECUTION_RUN_GET).toBe('execution.run.get');
     expect(SESSION_RPC_METHODS.EXECUTION_RUN_ACTION).toBe('execution.run.action');
+    expect(SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START_V2).toBe('execution.run.stream.start.v2');
+    expect(SESSION_RPC_METHODS.EXECUTION_RUN_USER_TRANSCRIPT_COMMIT_V1).toBe(
+      'execution.run.userTranscript.commit.v1',
+    );
   });
 });

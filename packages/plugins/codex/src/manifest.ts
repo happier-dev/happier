@@ -1,302 +1,275 @@
-import {
-  BackendSurfaceOperationCatalogV1,
-  definePluginManifest,
-  type PluginAgentContributionV2,
-  type PluginHookContributionV2,
-  type PluginManagedDependencyContributionV2,
-  type PluginManifestV2,
-  type PluginMcpContributesV1,
-  type PluginAgentSettingsContributionV1,
-  type PluginSystemToolContributionV1,
-} from '@happier-dev/plugin-sdk/manifest';
+import type { PluginManifest } from '@happier-dev/plugin-sdk/manifest';
 
-import { CODEX_ACP_INSTALLABLE_DESCRIPTOR } from './agent/installables/codexAcp.js';
+import { CODEX_UI_TRANSLATIONS } from './ui/translations.js';
 import { CODEX_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
 
-type CodexPluginManifestV2 = Omit<PluginManifestV2, 'contributes'> & Readonly<{
-  contributes: Readonly<{
-    agents: ReadonlyArray<PluginAgentContributionV2>;
-    hooks: ReadonlyArray<PluginHookContributionV2>;
-    managedDependencies: ReadonlyArray<PluginManagedDependencyContributionV2>;
-    mcp: PluginMcpContributesV1;
-    agentSettings: ReadonlyArray<PluginAgentSettingsContributionV1>;
-    systemTools: ReadonlyArray<PluginSystemToolContributionV1>;
-  }>;
-}>;
+const CODEX_REALTIME_VOICE_PRIVACY_DISCLOSURE = Object.freeze({
+  key: 'settingsVoice.realtimeProviders.codex.privacyDisclosure',
+  fallback: 'Audio and the Codex Live conversation are sent from this device to OpenAI using WebRTC. The selected Codex session runs on the selected machine. OpenAI may receive bounded startup and session context and delegated Codex results so the conversation can continue and responses can be spoken. Happier’s server and relay do not carry Codex Live audio; the Happier daemon/app-server still carries signaling, session lifecycle, delegation, tools, and permission control. Provider-operated network relays may participate.',
+});
 
-// Thin composition file that declares this plugin’s canonical manifest.
-// Keep this mostly declarative; executable behavior lives in domain folders.
-export const PLUGIN_MANIFEST = definePluginManifest({
+const CODEX_AGENT_CONTRIBUTION_IDENTITY = 'codex';
+
+export const PLUGIN_MANIFEST = {
   schemaVersion: 2,
   id: 'happier.agent.codex',
   version: '0.0.0',
-  displayName: 'codex',
-  description: undefined,
-  engines: { happier: '^0.0.0' },
-  activationEvents: ['onAgent:codex'],
-  uses: ['agents', 'mcp', 'hooks'],
-  entrypoints: { main: './dist/index.js' },
-  permissions: { required: [], optional: [] },
+  displayName: 'Codex',
+  description: 'OpenAI Codex coding agent.',
+  engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
+  entrypoints: { daemon: './dist/index.js' },
+  hostAccess: {
+    required: [{
+      id: 'codex-workspace',
+      capability: 'filesystem',
+      reason: 'Use the admitted Agent workspace as the Codex process working directory.',
+      scope: {
+        locations: [{ root: 'workspace' }],
+        access: ['read'],
+      },
+    }, {
+      id: 'codex-process', capability: 'process', reason: 'Run the declared Codex executable.',
+      scope: {
+        executables: [
+          { kind: 'systemTool', id: 'codex-cli' },
+          { kind: 'managedDependency', id: 'codex-acp' },
+        ],
+        envKeys: ['CODEX_HOME'],
+      },
+    }, {
+      id: 'openai-codex-oauth',
+      capability: 'network',
+      reason: 'Exchange and refresh OpenAI Codex OAuth credentials for the exact Connected Account.',
+      scope: {
+        targets: [
+          { kind: 'fixedOrigin', origin: 'https://auth.openai.com' },
+          { kind: 'connectedAccountOrigin', service: 'openai-codex' },
+        ],
+        methods: ['POST'],
+      },
+    }, {
+      id: 'openai-codex-quota',
+      capability: 'network',
+      reason: 'Read quota for the exact OpenAI Codex Connected Account.',
+      scope: {
+        targets: [
+          { kind: 'fixedOrigin', origin: 'https://chatgpt.com' },
+          { kind: 'connectedAccountOrigin', service: 'openai-codex' },
+        ],
+        methods: ['GET'],
+      },
+    }],
+    optional: [],
+  },
   contributes: {
-    agents: [
-      {
-        kindVersion: 1,
-        id: 'codex',
-        runtime: { kind: 'custom' },
-        providerSupport: {
-          acceptsProtocols: ['openai-responses'],
-          required: { streaming: true, toolRoundTrips: true },
-          credentialSupport: {
-            supportsNoAuth: true,
-            apiKeyTransports: [{
-              protocol: 'openai-responses',
-              destination: {
-                kind: 'httpHeader',
-                names: 'anyValidated',
-                formats: ['raw', 'bearer'],
-              },
-            }],
-          },
-          authIsolation: {
-            suppressConnectedServiceIds: ['openai-codex', 'openai'],
-            ownedEnvKeys: [
-              'HAPPIER_CODEX_PROVIDER_API_KEY',
-              'OPENAI_API_KEY',
-              'CODEX_API_KEY',
-            ],
-          },
-          materialization: 'engineConfig',
-          applyPolicy: 'restart_session',
-          supportsFreeformModelIds: true,
+    connectedAccountDescriptors: [{
+      id: 'openai-codex',
+      title: 'Codex',
+      authentication: {
+        defaultModeId: 'oauth',
+        modes: [{
+          id: 'oauth',
+          kind: 'oauthAuthorizationCode',
+          scopes: ['openid', 'profile', 'email', 'offline_access'],
+          pkce: 'required',
+          outcomeReconciliation: 'none',
+        }],
+      },
+    }],
+    agents: [{
+      id: 'codex',
+      title: 'Codex',
+      runtime: { kind: 'custom' },
+      cli: {
+        displayName: 'OpenAI Codex CLI',
+        executable: {
+          binaryName: 'codex',
+          knownUserBinDirSuffixes: null,
+          sourcePreference: 'system-first',
         },
-        surfaceHandlers: [
-          {
-            surfaceApiVersion: 1,
-            id: 'codex.handoff.exportBundle',
-            kind: 'handoff',
-            operation: 'exportBundle',
-            handler: { target: 'daemon', exportName: 'exportCodexSessionBundle' },
+        install: {
+          managed: {
+            kind: 'github_release_binary',
+            githubRepo: 'openai/codex',
+            binaryName: 'codex',
           },
-          {
-            surfaceApiVersion: 1,
-            id: 'codex.handoff.importBundle',
-            kind: 'handoff',
-            operation: 'importBundle',
-            handler: { target: 'daemon', exportName: 'importCodexSessionBundle' },
+          manual: { kind: 'command' },
+          recommendationOrder: 20,
+          guideUrl: null,
+          docsUrl: 'https://github.com/openai/codex',
+        },
+        auth: {
+          support: 'login_terminal',
+          probe: {
+            parser: 'codexLoginStatus',
+            backgroundChecks: 'safe',
+            statusArgs: ['login', 'status'],
+            envVars: ['OPENAI_API_KEY', 'CODEX_API_KEY'],
+            credentialPaths: ['~/.codex/auth.json'],
           },
-          {
-            surfaceApiVersion: 1,
-            id: 'codex.fork.fork',
-            kind: 'fork',
-            operation: BackendSurfaceOperationCatalogV1.fork.fork,
-            handler: { target: 'daemon', exportName: 'forkCodexSession' },
+          loginLaunches: [{ kind: 'primary', args: ['login'] }],
+        },
+      },
+      primary: 'sessions',
+      connectedAccounts: [{
+        purpose: 'primary',
+        service: 'openai-codex',
+        required: false,
+        materializationKinds: ['files'],
+      }],
+      capabilities: {
+        surfaces: ['terminal', 'externalSessions'],
+        sessions: {
+          open: ['create', 'resume', 'fork'],
+          delivery: ['newTurn', 'steer', 'followUp'],
+          cancel: true,
+          configuration: true,
+          conversationRollback: true,
+          goals: {
+            active: {
+              get: true,
+              clear: true,
+              set: {
+                fields: ['objective', 'status', 'tokenBudget'],
+                writableStatuses: ['active', 'paused', 'complete'],
+              },
+            },
+            inactive: {
+              get: true,
+              clear: true,
+              set: {
+                fields: ['objective', 'status', 'tokenBudget'],
+                writableStatuses: ['active', 'paused', 'complete'],
+              },
+            },
+            source: 'goals',
           },
-          {
-            surfaceApiVersion: 1,
-            id: 'codex.terminalRuntime.launch',
-            kind: 'terminalRuntime',
-            operation: BackendSurfaceOperationCatalogV1.terminalRuntime.launch,
-            handler: { target: 'daemon' },
+          catalog: {
+            active: ['vendorPlugins', 'skills'],
+            inactive: ['vendorPlugins', 'skills'],
           },
-          {
-            surfaceApiVersion: 1,
-            id: 'codex.externalSession.resolveSource',
-            kind: 'externalSession',
-            operation: BackendSurfaceOperationCatalogV1.externalSession.resolveSource,
-            handler: { target: 'daemon' },
+          usageLimitRecovery: {
+            active: ['checkNow'],
+            inactive: ['checkNow'],
           },
+          continuationVerification: { intents: ['resume', 'fork'], requirement: 'required' },
+          workStateSources: [{ id: 'goals', itemKinds: ['goal'] }],
+          startupInstructions: { versions: [1] },
+        },
+        executionRuns: { open: ['create', 'resume'], checkpoint: true, stop: true },
+      },
+      providerRequirements: {
+        acceptsProtocols: ['openai-responses'],
+        required: { streaming: true, toolRoundTrips: true },
+        credentialSupport: {
+          supportsNoAuth: true,
+          apiKeyTransports: [{
+            protocol: 'openai-responses',
+            destination: { kind: 'httpHeader', names: 'anyValidated', formats: ['raw', 'bearer'] },
+          }],
+        },
+        authIsolation: {
+          suppressConnectedServiceIds: ['openai-codex', 'openai'],
+          ownedEnvKeys: ['HAPPIER_CODEX_PROVIDER_API_KEY', 'OPENAI_API_KEY', 'CODEX_API_KEY'],
+        },
+        materialization: 'engineConfig',
+        applyPolicy: 'restart_session',
+        supportsFreeformModelIds: true,
+      },
+      surfaces: { externalSession: {
+        externalLinkedTakeover: { writerSafety: 'unsupported' },
+        sources: [{
+        sourceKind: 'codexHome',
+        schema: {
+          passthrough: true,
+          fields: [
+            { name: 'kind', kind: 'literal', value: 'codexHome' },
+            { name: 'home', kind: 'enum', values: ['user', 'connectedService'] },
+            { name: 'homePath', kind: 'string', min: 1, optional: true },
+            { name: 'connectedServiceId', kind: 'string', min: 1, optional: true },
+            { name: 'connectedServiceProfileId', kind: 'string', min: 1, optional: true },
+            { name: 'connectedServiceGroupId', kind: 'string', min: 1, optional: true },
+          ],
+          refinements: [
+            { kind: 'requiresWhenEquals', field: 'connectedServiceId', when: { field: 'home', equals: 'connectedService' } },
+            { kind: 'forbidsWhenEquals', fields: ['connectedServiceId', 'connectedServiceProfileId', 'connectedServiceGroupId'], when: { field: 'home', equals: 'user' } },
+          ],
+        },
+        key: { segments: [
+          { kind: 'literal', value: 'codexHome' },
+          { kind: 'homeMode', field: 'home' },
+          { kind: 'conditionalField', field: 'connectedServiceId', when: { field: 'home', equals: 'connectedService' } },
+          { kind: 'connectedServiceScope', groupField: 'connectedServiceGroupId', profileField: 'connectedServiceProfileId', when: { field: 'home', equals: 'connectedService' } },
+          { kind: 'field', field: 'homePath' },
+        ] },
+        instances: [
+          { kind: 'default', constants: { home: 'user' } },
           {
-            surfaceApiVersion: 1,
-            id: 'codex.externalSession.listCandidates',
-            kind: 'externalSession',
-            operation: BackendSurfaceOperationCatalogV1.externalSession.listCandidates,
-            handler: { target: 'daemon' },
-          },
-          {
-            surfaceApiVersion: 1,
-            id: 'codex.externalSession.getActivity',
-            kind: 'externalSession',
-            operation: BackendSurfaceOperationCatalogV1.externalSession.getActivity,
-            handler: { target: 'daemon' },
-          },
-          {
-            surfaceApiVersion: 1,
-            id: 'codex.externalSession.pageTranscript',
-            kind: 'externalSession',
-            operation: BackendSurfaceOperationCatalogV1.externalSession.pageTranscript,
-            handler: { target: 'daemon' },
-          },
-          {
-            surfaceApiVersion: 1,
-            id: 'codex.externalSession.readAfterTranscript',
-            kind: 'externalSession',
-            operation: BackendSurfaceOperationCatalogV1.externalSession.readAfterTranscript,
-            handler: { target: 'daemon' },
-          },
-          {
-            surfaceApiVersion: 1,
-            id: 'codex.externalSession.resolveFollowTranscriptPath',
-            kind: 'externalSession',
-            operation: BackendSurfaceOperationCatalogV1.externalSession.resolveFollowTranscriptPath,
-            handler: { target: 'daemon' },
-          },
-          {
-            surfaceApiVersion: 1,
-            id: 'codex.externalSession.acquireFollowLease',
-            kind: 'externalSession',
-            operation: BackendSurfaceOperationCatalogV1.externalSession.acquireFollowLease,
-            handler: { target: 'daemon' },
-          },
-          {
-            surfaceApiVersion: 1,
-            id: 'codex.externalSession.resolveLinkIdentity',
-            kind: 'externalSession',
-            operation: BackendSurfaceOperationCatalogV1.externalSession.resolveLinkIdentity,
-            handler: { target: 'daemon' },
-          },
-          {
-            surfaceApiVersion: 1,
-            id: 'codex.externalSession.resolveLinkedIdentity',
-            kind: 'externalSession',
-            operation: BackendSurfaceOperationCatalogV1.externalSession.resolveLinkedIdentity,
-            handler: { target: 'daemon' },
-          },
-          {
-            surfaceApiVersion: 1,
-            id: 'codex.externalSession.resolveTakeoverLaunch',
-            kind: 'externalSession',
-            operation: BackendSurfaceOperationCatalogV1.externalSession.resolveTakeoverLaunch,
-            handler: { target: 'daemon' },
+            kind: 'connectedServiceProfiles',
+            serviceId: 'openai-codex',
+            constants: { home: 'connectedService' },
+            fields: {
+              serviceId: 'connectedServiceId',
+              profileId: 'connectedServiceProfileId',
+            },
           },
         ],
-        surfaces: {
-          externalSession: {
-            sources: [
-              {
-                sourceKind: 'codexHome',
-                schema: {
-                  passthrough: true,
-                  fields: [
-                    { name: 'kind', kind: 'literal', value: 'codexHome' },
-                    { name: 'home', kind: 'enum', values: ['user', 'connectedService'] },
-                    { name: 'homePath', kind: 'string', min: 1, optional: true },
-                    { name: 'connectedServiceId', kind: 'string', min: 1, optional: true },
-                    { name: 'connectedServiceProfileId', kind: 'string', min: 1, optional: true },
-                    { name: 'connectedServiceGroupId', kind: 'string', min: 1, optional: true },
-                  ],
-                  refinements: [
-                    {
-                      kind: 'requiresWhenEquals',
-                      field: 'connectedServiceId',
-                      when: { field: 'home', equals: 'connectedService' },
-                    },
-                    {
-                      kind: 'forbidsWhenEquals',
-                      fields: [
-                        'connectedServiceId',
-                        'connectedServiceProfileId',
-                        'connectedServiceGroupId',
-                      ],
-                      when: { field: 'home', equals: 'user' },
-                    },
-                  ],
-                },
-                key: {
-                  segments: [
-                    { kind: 'literal', value: 'codexHome' },
-                    { kind: 'homeMode', field: 'home' },
-                    {
-                      kind: 'conditionalField',
-                      field: 'connectedServiceId',
-                      when: { field: 'home', equals: 'connectedService' },
-                    },
-                    {
-                      kind: 'connectedServiceScope',
-                      groupField: 'connectedServiceGroupId',
-                      profileField: 'connectedServiceProfileId',
-                      when: { field: 'home', equals: 'connectedService' },
-                    },
-                    { kind: 'field', field: 'homePath' },
-                  ],
-                },
-              },
-            ],
-          },
-        },
-        capabilities: {
-          executionRun: {
-            supported: true,
-            structuredOutputRecovery: {
-              delegate: 'loose-deliverables-with-single-fallback',
-            },
-          },
-          session: {
-            media: {
-              emitsSessionMedia: {
-                supported: true,
-                mediaKinds: ['image'],
-                sources: ['provider-generated'],
-                storage: 'session-media-file',
-              },
-              nativeImageGeneration: {
-                supported: true,
-                mediaKinds: ['image'],
-                streamingPartials: false,
-              },
-            },
-          },
+      }],
+      } },
+    }],
+    voiceProviders: [{
+      id: 'realtime-codex',
+      title: 'Codex Realtime Voice — Experimental',
+      kind: 'conversation',
+      roles: [
+        'conversation_stt',
+        'conversation_tts',
+        'realtime_conversation',
+        'turn_control',
+      ],
+      platforms: ['web'],
+      capabilities: {
+        readiness: { requirements: [] },
+        turn: { cancelResponse: false, bargeIn: false },
+      },
+      execution: {
+        kind: 'experimental_agent_session_realtime',
+        agent: CODEX_AGENT_CONTRIBUTION_IDENTITY,
+      },
+      settings: {
+        schemaVersion: 2,
+        fields: [],
+        privacyDisclosure: CODEX_REALTIME_VOICE_PRIVACY_DISCLOSURE,
+        connectedServicesBinding: {
+          id: 'globalConnectedServices',
+          title: 'Codex account',
+          description: 'Connected Service account used by global Codex Voice sessions.',
+          agent: CODEX_AGENT_CONTRIBUTION_IDENTITY,
+          serviceIds: ['openai-codex'],
         },
       },
-    ],
+      client: {
+        artifactId: 'voice-runtime-web',
+        modulePath: './ui/voice',
+        exportName: 'activate',
+      },
+    }],
+    systemTools: [{ id: 'codex-cli', title: 'OpenAI Codex CLI', executableNames: ['codex'] }],
+    managedDependencies: [{
+      id: 'codex-acp', title: 'Codex ACP adapter',
+      sources: [{ kind: 'vendorRecipe', recipeId: 'codex-acp' }], executable: 'codex-acp',
+    }],
     hooks: [
-      {
-        id: 'agent.resolvePrerequisites',
-        hookApiVersion: 1,
-        category: 'decision',
-        scope: 'agent',
-        filters: { agentId: 'codex' },
-        executionKind: 'decide',
-        handler: {
-          target: 'plugin',
-          exportName: 'resolveCodexDaemonSpawnPrerequisites',
-        },
-      },
-      {
-        id: 'agent.spawnEnv.augment',
-        hookApiVersion: 1,
-        category: 'augmentation',
-        scope: 'daemon',
-        filters: { agentId: 'codex' },
-        executionKind: 'augment',
-        handler: {
-          target: 'plugin',
-          exportName: 'augmentCodexDaemonSpawnEnv',
-        },
-      },
+      { id: 'resolve-prerequisites', on: 'agent.resolvePrerequisites', category: 'decision', scope: 'agent', filters: { agentId: 'codex' }, executionKind: 'decide' },
+      { id: 'augment-spawn-env', on: 'agent.spawnEnv.augment', category: 'augmentation', scope: 'daemon', filters: { agentId: 'codex' }, executionKind: 'augment' },
     ],
-    managedDependencies: [CODEX_ACP_INSTALLABLE_DESCRIPTOR],
     mcp: {
       servers: [],
-      discoveryProviders: [
-        {
-          id: 'codex.config',
-          kind: 'mcp.discoveryProvider',
-          version: '1.0.0',
-          capabilityGates: [],
-          permissionGates: [],
-          redaction: 'none',
-          hidden: false,
-          agentId: 'codex',
-        },
-      ],
+      discoveryProviders: [{ id: 'config', title: 'Codex MCP configuration', metadata: { agentId: 'codex' } }],
     },
-    agentSettings: [CODEX_AGENT_SETTINGS_CONTRIBUTION],
-    systemTools: [{
-      toolId: 'codex-acp',
-      displayName: 'Codex ACP',
-      source: 'system',
-      lookupNames: ['codex-acp'],
-      defaultArgs: [],
-    }],
+    ui: {
+      translations: [{ locale: 'en', messages: CODEX_UI_TRANSLATIONS.en }],
+    },
+    settings: [CODEX_AGENT_SETTINGS_CONTRIBUTION],
   },
-} satisfies CodexPluginManifestV2);
+} satisfies PluginManifest;

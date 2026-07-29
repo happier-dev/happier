@@ -48,7 +48,7 @@ function validFile() {
       lastAccessedAt: 11,
     }],
     installationChecks: [{
-      key: { machineId: 'machine_a', contributionKey: 'plugin:a:providers:local', checkId: 'installed' },
+      key: { machineId: 'machine_a', contributionKey: 'plugin.a/local', checkId: 'installed' },
       state: { status: 'present', observedAt: 10 },
       lastAccessedAt: 11,
     }],
@@ -148,7 +148,16 @@ describe('provider endpoint runtime state', () => {
   });
 
   it('validates the exact array-based file envelope and attached catalog generation', () => {
-    expect(ProviderRuntimeStateFileV1Schema.parse(validFile())).toEqual(validFile());
+    expect(ProviderRuntimeStateFileV1Schema.parse(validFile())).toEqual({
+      ...validFile(),
+      installationChecks: [{
+        ...validFile().installationChecks[0],
+        key: {
+          ...validFile().installationChecks[0].key,
+          contributionKey: 'plugin.a/local',
+        },
+      }],
+    });
     expect(ProviderEndpointRuntimeStateRecordV1Schema.safeParse(validFile().endpointHealth[0]).success).toBe(true);
     expect(ProviderCatalogRuntimeStateRecordV1Schema.safeParse(validFile().catalogs[0]).success).toBe(true);
 
@@ -223,7 +232,13 @@ describe('provider endpoint runtime state', () => {
       state: { ...validFile().endpointHealth[0].state, activity: 'idle' },
     });
     expect(normalized.catalogs).toEqual(validFile().catalogs);
-    expect(normalized.installationChecks).toEqual(validFile().installationChecks);
+    expect(normalized.installationChecks).toEqual([{
+      ...validFile().installationChecks[0],
+      key: {
+        ...validFile().installationChecks[0].key,
+        contributionKey: 'plugin.a/local',
+      },
+    }]);
     expect(normalized.modelLoadStates).toEqual(validFile().modelLoadStates);
   });
 
@@ -309,9 +324,26 @@ describe('provider endpoint runtime state', () => {
     ]);
     expect(JSON.parse(serializeProviderInstallationRuntimeStateKeyV1(
       validFile().installationChecks[0].key,
-    ))).toEqual(['machine_a', 'plugin:a:providers:local', 'installed']);
+    ))).toEqual(['machine_a', 'plugin.a/local', 'installed']);
     expect(JSON.parse(serializeProviderModelLoadRuntimeStateKeyV1(
       validFile().modelLoadStates[0].key,
     ))).toEqual(['machine_a', 'pc_a', 'observation_a', 'model-a']);
+  });
+
+  it('treats repeated canonical Provider contribution keys as one installation identity', () => {
+    const firstKey = validFile().installationChecks[0].key;
+    const repeatedKey = { ...firstKey, contributionKey: 'plugin.a/local' };
+    expect(serializeProviderInstallationRuntimeStateKeyV1(firstKey)).toBe(
+      serializeProviderInstallationRuntimeStateKeyV1(repeatedKey),
+    );
+
+    const duplicate = structuredClone(validFile());
+    duplicate.installationChecks.push({
+      ...structuredClone(duplicate.installationChecks[0]!),
+      key: repeatedKey,
+    });
+    expect(parseProviderRuntimeStateFileV1(duplicate, {
+      expectedMachineId: 'machine_a',
+    })).toMatchObject({ ok: false, diagnostic: { reason: 'duplicate_key' } });
   });
 });

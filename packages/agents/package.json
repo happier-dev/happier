@@ -14,9 +14,9 @@
       "types": "./dist/permissions/index.d.ts",
       "default": "./dist/permissions/index.js"
     },
-    "./agentSettings": {
-      "types": "./dist/agentSettings/index.d.ts",
-      "default": "./dist/agentSettings/index.js"
+    "./process/shellCommand": {
+      "types": "./dist/process/shellCommand.d.ts",
+      "default": "./dist/process/shellCommand.js"
     },
     "./session/controls/checkpoints": {
       "types": "./dist/session/controls/checkpoints.d.ts",
@@ -25,6 +25,10 @@
     "./session/state/metadataWriters": {
       "types": "./dist/session/state/metadataWriters.d.ts",
       "default": "./dist/session/state/metadataWriters.js"
+    },
+    "./runtime/session/preAdmissionBuffer": {
+      "types": "./dist/runtime/session/preAdmissionBuffer.d.ts",
+      "default": "./dist/runtime/session/preAdmissionBuffer.js"
     },
     "./permissions/privilege": {
       "types": "./dist/permissions/privilege.d.ts",

@@ -1,7 +1,9 @@
 import { z } from 'zod';
 
 import { VoiceAssistantActionSchema } from '../../voice/actions.js';
+import { VoiceAgentOutputEventV1Schema } from '../../voice/outputEvents.js';
 import { BackendTargetRefSchema } from '../../backends/targets/backendTargetRef.js';
+import { PendingLocalIdSchema } from '../../sessions/pending/pendingLocalId.js';
 import {
   ExecutionRunClassSchema,
   type ExecutionRunClass,
@@ -103,6 +105,7 @@ export const ExecutionRunTransportErrorCodeSchema = z.enum([
   'execution_run_busy',
   'execution_run_failed',
   'execution_run_budget_exceeded',
+  'execution_run_connected_service_generation_refresh_required',
   'run_depth_exceeded',
   'permission_denied',
 ]);
@@ -237,10 +240,64 @@ export const ExecutionRunTurnStreamStartRequestSchema = z.object({
 }).passthrough();
 export type ExecutionRunTurnStreamStartRequest = z.infer<typeof ExecutionRunTurnStreamStartRequestSchema>;
 
+export const ExecutionRunUserTranscriptDirectiveSchema = z.discriminatedUnion('mode', [
+  z.object({
+    mode: z.literal('persist'),
+    localId: PendingLocalIdSchema,
+  }),
+  z.object({
+    mode: z.literal('suppress'),
+  }),
+]);
+export type ExecutionRunUserTranscriptDirective = z.infer<typeof ExecutionRunUserTranscriptDirectiveSchema>;
+
+export const ExecutionRunTurnStreamStartV2RequestSchema = ExecutionRunTurnStreamStartRequestSchema.extend({
+  userTranscript: ExecutionRunUserTranscriptDirectiveSchema,
+});
+export type ExecutionRunTurnStreamStartV2Request = z.infer<typeof ExecutionRunTurnStreamStartV2RequestSchema>;
+
 export const ExecutionRunTurnStreamStartResponseSchema = z.object({
   streamId: z.string().min(1),
 }).passthrough();
 export type ExecutionRunTurnStreamStartResponse = z.infer<typeof ExecutionRunTurnStreamStartResponseSchema>;
+
+const ExecutionRunUserTranscriptCommitPredecessorRequestSchema = z.object({
+  runId: z.string().min(1),
+  message: z.string().min(1),
+  displayMessage: z.string().min(1).optional(),
+  localId: PendingLocalIdSchema,
+  text: z.never().optional(),
+  displayText: z.never().optional(),
+}).passthrough();
+
+const ExecutionRunUserTranscriptCommitCurrentDevAliasRequestSchema = z.object({
+  runId: z.string().min(1),
+  text: z.string().min(1),
+  displayText: z.string().min(1).optional(),
+  localId: PendingLocalIdSchema,
+  message: z.never().optional(),
+  displayMessage: z.never().optional(),
+}).passthrough();
+
+/**
+ * Canonical writes retain the prospective predecessor vocabulary observed at
+ * ../remote-dev@0649e4de85aacf08476063fef1990f418ce8e80b in
+ * packages/protocol/src/executionRuns.ts. The text/displayText branch is a
+ * bounded read alias for already-running undeployed dev clients from
+ * dev@877ee97a0df346a1daaa541632dc42643d533120. Remove that alias once those
+ * clients have been drained/refreshed and before the first supported release
+ * of this method; it is not a lasting wire contract.
+ */
+export const ExecutionRunUserTranscriptCommitRequestSchema = z.union([
+  ExecutionRunUserTranscriptCommitPredecessorRequestSchema,
+  ExecutionRunUserTranscriptCommitCurrentDevAliasRequestSchema,
+]);
+export type ExecutionRunUserTranscriptCommitRequest = z.infer<typeof ExecutionRunUserTranscriptCommitRequestSchema>;
+
+export const ExecutionRunUserTranscriptCommitResponseSchema = z.object({
+  ok: z.literal(true),
+}).passthrough();
+export type ExecutionRunUserTranscriptCommitResponse = z.infer<typeof ExecutionRunUserTranscriptCommitResponseSchema>;
 
 export const ExecutionRunTurnStreamReadRequestSchema = z.object({
   runId: z.string().min(1),
@@ -275,11 +332,18 @@ export const ExecutionRunTurnStreamEventCancelledSchema = z.object({
 }).passthrough();
 export type ExecutionRunTurnStreamEventCancelled = z.infer<typeof ExecutionRunTurnStreamEventCancelledSchema>;
 
+export const ExecutionRunTurnStreamEventVoiceOutputSchema = z.object({
+  t: z.literal('voice_output'),
+  output: VoiceAgentOutputEventV1Schema,
+}).strict();
+export type ExecutionRunTurnStreamEventVoiceOutput = z.infer<typeof ExecutionRunTurnStreamEventVoiceOutputSchema>;
+
 export const ExecutionRunTurnStreamEventSchema = z.discriminatedUnion('t', [
   ExecutionRunTurnStreamEventDeltaSchema,
   ExecutionRunTurnStreamEventDoneSchema,
   ExecutionRunTurnStreamEventErrorSchema,
   ExecutionRunTurnStreamEventCancelledSchema,
+  ExecutionRunTurnStreamEventVoiceOutputSchema,
 ]);
 export type ExecutionRunTurnStreamEvent = z.infer<typeof ExecutionRunTurnStreamEventSchema>;
 

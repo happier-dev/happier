@@ -3,29 +3,33 @@ import {
     existsSync,
     mkdirSync,
     mkdtempSync,
-    readdirSync,
     readFileSync,
     rmSync,
-    statSync,
     symlinkSync,
+    writeFileSync,
 } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { spawnSync } from 'node:child_process';
 
 import * as ts from 'typescript';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
+    ingestPluginManifestV2,
     PluginManifestV2Schema,
     type ParsedPluginManifestV2,
 } from '@happier-dev/protocol';
-import {
-    computePluginUiArtifactFileSetSha256DigestV1,
-    computePluginUiArtifactSha256DigestV1,
-} from '@happier-dev/protocol/plugins/ui';
+import type { PluginApi } from '@happier-dev/plugin-sdk';
+import type {
+    PluginVoiceAccountOperationService,
+    PluginVoiceProviderRuntimeRegistration,
+} from '@happier-dev/plugin-sdk/runtime';
+import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
 
 const packageRoot = fileURLToPath(new URL('../..', import.meta.url));
+const repoRoot = fileURLToPath(new URL('../../../..', import.meta.url));
 const examplesRoot = join(packageRoot, 'examples');
 const packageJsonPath = join(packageRoot, 'package.json');
 
@@ -44,7 +48,7 @@ async function listTypeScriptFiles(dir: string): Promise<readonly string[]> {
         if (entry.isDirectory()) {
             return listTypeScriptFiles(entryPath);
         }
-        return entry.isFile() && entry.name.endsWith('.ts') ? [entryPath] : [];
+        return entry.isFile() && /\.tsx?$/u.test(entry.name) ? [entryPath] : [];
     }));
     return files.flat().sort();
 }
@@ -66,20 +70,6 @@ function readExampleManifest(exampleName: (typeof requiredExamples)[number]): Pa
     return parsed.data;
 }
 
-async function readAuthoredExampleManifest(
-    exampleName: (typeof requiredExamples)[number],
-): Promise<ParsedPluginManifestV2> {
-    const module = await import(pathToFileURL(join(examplesRoot, exampleName, 'src/index.ts')).href) as {
-        manifest?: unknown;
-    };
-    const parsed = PluginManifestV2Schema.safeParse(module.manifest);
-    expect(parsed.success, `${exampleName}/src/index.ts must export a protocol-valid manifest`).toBe(true);
-    if (!parsed.success) {
-        throw new Error(parsed.error.message);
-    }
-    return parsed.data;
-}
-
 function readPackageExportSpecifiers(): ReadonlySet<string> {
     const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8')) as {
         name: string;
@@ -87,81 +77,62 @@ function readPackageExportSpecifiers(): ReadonlySet<string> {
     };
     return new Set([
         packageJson.name,
-        ...Object.keys(packageJson.exports).map((subpath) => `${packageJson.name}${subpath.slice(1)}`),
+        ...Object.keys(packageJson.exports)
+            .filter((subpath) => !subpath.startsWith('./internal/'))
+            .map((subpath) => `${packageJson.name}${subpath.slice(1)}`),
     ]);
 }
 
-function relativeExampleArtifactPath(exampleName: string, artifactPath: string): string {
-    return `${exampleName}/${artifactPath.replace(/^\/+/u, '')}`;
-}
-
-function assertExampleFileExists(exampleName: string, relativePath: string, missing: string[]): void {
-    const filePath = join(examplesRoot, exampleName, relativePath);
-    if (!existsSync(filePath) || !statSync(filePath).isFile()) {
-        missing.push(relativeExampleArtifactPath(exampleName, relativePath));
-    }
-}
-
-function assertExampleDirectoryContainsIndex(exampleName: string, relativePath: string, missing: string[]): void {
-    const directoryPath = join(examplesRoot, exampleName, relativePath);
-    const indexPath = join(directoryPath, 'index.html');
-    if (
-        !existsSync(directoryPath)
-        || !statSync(directoryPath).isDirectory()
-        || !existsSync(indexPath)
-        || !statSync(indexPath).isFile()
-    ) {
-        missing.push(relativeExampleArtifactPath(exampleName, join(relativePath, 'index.html')));
-    }
-}
-
-function listArtifactFiles(root: string): readonly string[] {
-    const entries = readdirSync(root, { withFileTypes: true });
-    return entries.flatMap((entry) => {
-        const entryPath = join(root, entry.name);
-        if (entry.isDirectory()) {
-            return listArtifactFiles(entryPath);
-        }
-        return entry.isFile() ? [entryPath] : [];
-    }).sort();
-}
-
-function computeExampleFileDigest(exampleName: string, relativePath: string): string {
-    return computePluginUiArtifactSha256DigestV1(
-        readFileSync(join(examplesRoot, exampleName, relativePath)),
-    );
-}
-
-function computeExampleDirectoryDigest(exampleName: string, relativePath: string): string {
-    const directoryPath = join(examplesRoot, exampleName, relativePath);
-    const files = listArtifactFiles(directoryPath).map((filePath) => ({
-        relativePath: relative(join(examplesRoot, exampleName), filePath),
-        bytes: readFileSync(filePath),
-    }));
-    return computePluginUiArtifactFileSetSha256DigestV1(files);
+function shouldCopyExamplePath(source: string): boolean {
+    return !source.split(/[\\/]+/u).some((segment) => segment === 'node_modules' || segment === 'dist');
 }
 
 function copyExamplesOutsideWorkspace(): string {
     const tempRoot = mkdtempSync(join(tmpdir(), 'happier-plugin-sdk-examples-'));
     cpSync(examplesRoot, tempRoot, {
         recursive: true,
-        filter: (source) => !source.includes('/node_modules/') && !source.includes('/dist/'),
+        filter: shouldCopyExamplePath,
     });
     mkdirSync(join(tempRoot, 'node_modules', '@happier-dev'), { recursive: true });
     symlinkSync(packageRoot, join(tempRoot, 'node_modules', '@happier-dev', 'plugin-sdk'), 'dir');
     return tempRoot;
 }
 
-function formatDiagnostics(diagnostics: readonly ts.Diagnostic[]): string {
-    const host: ts.FormatDiagnosticsHost = {
-        getCanonicalFileName: (fileName) => fileName,
-        getCurrentDirectory: () => packageRoot,
-        getNewLine: () => '\n',
-    };
-    return ts.formatDiagnosticsWithColorAndContext([...diagnostics], host);
-}
+describe('public SDK authoring examples', { timeout: 60_000 }, () => {
+    it('uses one cold JSON manifest per external example with no ordinary startup activation', () => {
+        const exampleNames = [...requiredExamples, 'public-authoring'] as const;
 
-describe('public SDK authoring examples', () => {
+        for (const exampleName of exampleNames) {
+            const manifestPath = join(examplesRoot, exampleName, '.happier-plugin', 'plugin.json');
+            const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as unknown;
+            const parsed = PluginManifestV2Schema.safeParse(manifest);
+
+            expect(
+                parsed.success,
+                `${exampleName}/.happier-plugin/plugin.json must be the protocol-valid author source`,
+            ).toBe(true);
+            expect(
+                existsSync(join(examplesRoot, exampleName, 'manifest.ts')),
+                `${exampleName} must not teach an executable TypeScript manifest`,
+            ).toBe(false);
+            if (exampleName === 'public-authoring') {
+                expect(
+                    existsSync(join(examplesRoot, exampleName, 'voiceModelPack.ts')),
+                    'manifest contribution data must remain in the cold JSON manifest',
+                ).toBe(false);
+            }
+            const sourceEntryPath = join(examplesRoot, exampleName, 'src', 'index.ts');
+            if (existsSync(sourceEntryPath)) {
+                expect(readFileSync(sourceEntryPath, 'utf8')).not.toMatch(
+                    /\bexport\s+const\s+manifest\b/u,
+                );
+            }
+            if (parsed.success) {
+                expect(parsed.data.activation?.events ?? []).not.toContainEqual({ kind: 'startup' });
+            }
+        }
+    });
+
     it('import only public @happier-dev/plugin-sdk entry points', async () => {
         const allowedSpecifiers = readPackageExportSpecifiers();
         const files = await listTypeScriptFiles(examplesRoot);
@@ -197,6 +168,232 @@ describe('public SDK authoring examples', () => {
         expect(violations).toEqual([]);
     });
 
+    it('uses the canonical manifest, agent-runtime, and UI build entrypoints without predecessor authoring APIs', async () => {
+        const files = await listTypeScriptFiles(examplesRoot);
+        const violations: string[] = [];
+
+        for (const filePath of files) {
+            const relativePath = relative(packageRoot, filePath);
+            const source = readFileSync(filePath, 'utf8');
+            for (const retired of [
+                'defineAcpBackend',
+                'beginTurnLifecycle',
+                'startOrLoadSession',
+                'waitForTurnCompletion',
+                '@happier-dev/plugin-sdk/ui/hostApiClient',
+                '@happier-dev/plugin-sdk/ui/reactNativeBuild',
+                '@happier-dev/plugin-sdk/ui/reactNativeWebBuild',
+                '@happier-dev/plugin-sdk/ui/hostedWebBuild',
+            ]) {
+                if (source.includes(retired)) {
+                    violations.push(`${relativePath}:uses:${retired}`);
+                }
+            }
+        }
+
+        const publicAuthoringDaemon = readFileSync(
+            join(examplesRoot, 'public-authoring', 'daemon.ts'),
+            'utf8',
+        );
+        const publicAuthoringManifest = JSON.parse(readFileSync(
+            join(examplesRoot, 'public-authoring', '.happier-plugin', 'plugin.json'),
+            'utf8',
+        )) as ParsedPluginManifestV2;
+        const publicAuthoringBuild = readFileSync(
+            join(examplesRoot, 'public-authoring', 'pluginUiBuild.ts'),
+            'utf8',
+        );
+        const publicAuthoringVoice = readFileSync(
+            join(examplesRoot, 'public-authoring', 'voiceProvider.ts'),
+            'utf8',
+        );
+        const publicAuthoringIndex = readFileSync(
+            join(examplesRoot, 'public-authoring', 'index.ts'),
+            'utf8',
+        );
+        expect(publicAuthoringDaemon).toContain("from '@happier-dev/plugin-sdk/agent-runtime'");
+        expect(publicAuthoringDaemon).toContain("from '@happier-dev/plugin-sdk'");
+        expect(publicAuthoringManifest.entrypoints).toEqual({ daemon: './daemon.js' });
+        expect(publicAuthoringManifest.activation?.events ?? []).not.toContainEqual({ kind: 'startup' });
+        expect(publicAuthoringBuild).toContain("from '@happier-dev/plugin-sdk/ui/build'");
+        expect(publicAuthoringDaemon).toContain("api.actions.register('review-summary'");
+        expect(publicAuthoringDaemon).toContain("context.ui.status.set('review-summary'");
+        expect(publicAuthoringDaemon).toContain("api.hooks.register('session-spawned'");
+        expect(publicAuthoringDaemon).toContain("api.agents.register('review-agent'");
+        expect(publicAuthoringVoice).toContain("api.voiceProviders.register('credentialed-browser'");
+        expect(publicAuthoringVoice).toContain('PluginVoiceProviderSettingsOperations');
+        expect(publicAuthoringVoice).toContain("operationId: 'client-auth'");
+        expect(publicAuthoringVoice).toContain("operationId: 'list-catalog'");
+        expect(publicAuthoringVoice).not.toContain("ui.executeAction('mint-voice-session'");
+        expect(publicAuthoringVoice).not.toContain("ui.executeAction('list-voice-catalog'");
+        expect(publicAuthoringDaemon).not.toContain("api.actions.register('mint-voice-session'");
+        expect(publicAuthoringDaemon).not.toContain("api.actions.register('list-voice-catalog'");
+        expect(publicAuthoringDaemon).not.toContain('executeVoiceAccountOperation');
+        expect(publicAuthoringDaemon).not.toContain("kind: 'voiceAccountOperation'");
+        expect(publicAuthoringManifest.contributes.actions.map(({ id }) => id)).toEqual([
+            'review-summary',
+        ]);
+        expect(publicAuthoringIndex).toContain('activateAccountMediatedBrowserVoiceProvider');
+        expect(publicAuthoringIndex).not.toContain('activateCredentiallessBrowserVoiceProvider');
+        expect(publicAuthoringVoice).toContain("from '@happier-dev/plugin-sdk'");
+        expect(publicAuthoringDaemon).not.toContain('api.lifecycle.onWillDeactivate');
+        expect(publicAuthoringDaemon).not.toMatch(/\b(?:PluginContext|registerAction|registerHook|registerAgentRuntime|onDispose)\b/u);
+        expect(violations).toEqual([]);
+    });
+
+    it('executes declared Voice account operations through the provider runtime owner', async () => {
+        const voiceModule = await import(pathToFileURL(
+            join(examplesRoot, 'public-authoring', 'voiceProvider.ts'),
+        ).href) as Readonly<{
+            activate(api: Pick<PluginApi, 'voiceProviders'>): void;
+        }>;
+        const captured: { runtime: PluginVoiceProviderRuntimeRegistration | null } = {
+            runtime: null,
+        };
+        voiceModule.activate({
+            voiceProviders: {
+                register(id, runtime) {
+                    expect(id).toBe('credentialed-browser');
+                    captured.runtime = runtime;
+                },
+                registerSpeech(id): never {
+                    throw new Error(`unexpected_voice_speech_provider_registration:${id}`);
+                },
+            },
+        });
+        if (!captured.runtime) {
+            throw new Error('credentialed_browser_voice_provider_not_registered');
+        }
+        const runtime = captured.runtime;
+        const signal = new AbortController().signal;
+        const accountOperationRequest = vi.fn(async (
+            input: Parameters<PluginVoiceAccountOperationService['request']>[0],
+        ) => {
+            const body = input.operationId === 'client-auth'
+                ? {
+                    sessionToken: 'short-lived-client-token',
+                    expiresAtMs: 4_000_000_000_000,
+                }
+                : input.operationId === 'list-catalog'
+                    ? {
+                        voices: [{
+                            voiceId: 'synthetic-voice',
+                            displayName: 'Synthetic Voice',
+                            locale: 'en',
+                        }],
+                    }
+                    : null;
+            if (!body) {
+                throw new Error(`unexpected_voice_account_operation:${input.operationId}`);
+            }
+            return {
+                status: 200,
+                finalUrl: `https://voice.example.test/v1/${
+                    input.operationId === 'client-auth' ? 'session' : 'catalog'
+                }`,
+                headers: { 'content-type': 'application/json' },
+                body: new TextEncoder().encode(JSON.stringify(body)),
+            };
+        });
+        const accountOperations: PluginVoiceAccountOperationService = {
+            request: accountOperationRequest,
+        };
+
+        const preparation = await runtime.protocol.prepare({
+            controlSessionId: 'public-authoring-voice',
+            attemptId: 1,
+            reason: 'initial',
+            request: null,
+            platform: 'web',
+            providerConfig: {},
+            accountOperations,
+            providerConversation: null,
+            hostedConversation: null,
+            signal,
+        });
+        expect(preparation.kind).toBe('prepared');
+        if (preparation.kind !== 'prepared') {
+            throw new Error(`unexpected_voice_preparation:${preparation.kind}`);
+        }
+        expect(accountOperationRequest).toHaveBeenNthCalledWith(1, {
+            operationId: 'client-auth',
+            parameters: {},
+            signal,
+        });
+        expect(preparation.session.safeMetadata).toEqual({});
+        expect(JSON.stringify(preparation.session.safeMetadata)).not.toContain(
+            'short-lived-client-token',
+        );
+
+        const settingsOperations = runtime.settingsOperations;
+        if (!settingsOperations?.listCatalog) {
+            throw new Error('credentialed_browser_voice_catalog_not_registered');
+        }
+        await expect(settingsOperations.listCatalog({
+            catalog: 'voices',
+            providerConfig: {},
+            accountOperations,
+            signal,
+        })).resolves.toEqual([{
+            id: 'synthetic-voice',
+            name: 'Synthetic Voice',
+            metadata: { locale: 'en' },
+        }]);
+        expect(accountOperationRequest).toHaveBeenNthCalledWith(2, {
+            operationId: 'list-catalog',
+            parameters: {},
+            signal,
+        });
+
+        const executeAction = vi.fn(async (): Promise<never> => {
+            throw new Error('ui_execute_action_must_not_own_voice_account_operations');
+        });
+        const unexpectedUiCall = (method: string): never => {
+            throw new Error(`unexpected_ui_call:${method}`);
+        };
+        const ui: PluginUiHostApi = {
+            version: () => ({ apiVersion: '1', wireVersion: 1, methods: ['executeAction'] }),
+            context: async () => unexpectedUiCall('context'),
+            watchContext: () => unexpectedUiCall('watchContext'),
+            executeAction,
+            readResource: async () => unexpectedUiCall('readResource'),
+            watchResource: () => unexpectedUiCall('watchResource'),
+            openSurface: async () => unexpectedUiCall('openSurface'),
+            diagnostic: () => unexpectedUiCall('diagnostic'),
+            readClipboard: async () => unexpectedUiCall('readClipboard'),
+            writeClipboard: async () => unexpectedUiCall('writeClipboard'),
+            openExternalLink: async () => unexpectedUiCall('openExternalLink'),
+        };
+        const unexpectedMediaCall = (): never => {
+            throw new Error('unexpected_voice_media_call');
+        };
+        const connection = await runtime.createConnection({
+            session: preparation.session,
+            attemptId: 1,
+            mic: {
+                ensureActive: async () => undefined,
+                setMuted: () => undefined,
+                isMuted: () => false,
+                teardown: async () => undefined,
+                getStream: () => null,
+            },
+            interruption: { duckGain: 0.25, retainedOutputMaxMs: 500 },
+            levels: { onOutputLevel: () => undefined },
+            media: {
+                createSdkHandleConnection: unexpectedMediaCall,
+                createWebRtcConnection: unexpectedMediaCall,
+                createPcmConnection: unexpectedMediaCall,
+            },
+            tools: [],
+            ui,
+            signal,
+            execution: { kind: 'direct_media' },
+        });
+        await connection.connect(signal);
+        expect(executeAction).not.toHaveBeenCalled();
+        await connection.close({ code: 'user_stop' });
+    });
+
     it('ships the required installable example plugin packages', () => {
         const missing: string[] = [];
         for (const exampleName of requiredExamples) {
@@ -216,6 +413,15 @@ describe('public SDK authoring examples', () => {
         }
 
         expect(missing).toEqual([]);
+        const examplesTypeScriptConfig = JSON.parse(
+            readFileSync(join(examplesRoot, 'tsconfig.json'), 'utf8'),
+        ) as {
+            compilerOptions?: { jsx?: string; paths?: Readonly<Record<string, readonly string[]>> };
+            include?: readonly string[];
+        };
+        expect(examplesTypeScriptConfig.compilerOptions?.paths).toBeUndefined();
+        expect(examplesTypeScriptConfig.compilerOptions?.jsx).toBe('preserve');
+        expect(examplesTypeScriptConfig.include).toContain('**/*.tsx');
     });
 
     it('parses every example manifest with the protocol schema', () => {
@@ -224,166 +430,225 @@ describe('public SDK authoring examples', () => {
         }
     });
 
-    it('parses the public authoring source manifest with the protocol schema', async () => {
-        const module = await import(pathToFileURL(join(examplesRoot, 'public-authoring', 'manifest.ts')).href) as {
-            manifest?: unknown;
-        };
-        const parsed = PluginManifestV2Schema.safeParse(module.manifest);
-        const diagnostics = parsed.success
-            ? ''
-            : `\n${parsed.error.issues.map((issue) => `${issue.path.join('.') || '<root>'}: ${issue.message}`).join('\n')}`;
+    it('parses the public authoring cold JSON manifest with the protocol schema', () => {
+        const manifest = JSON.parse(readFileSync(
+            join(examplesRoot, 'public-authoring', '.happier-plugin', 'plugin.json'),
+            'utf8',
+        )) as unknown;
+        const ingested = ingestPluginManifestV2(manifest);
 
-        expect(parsed.success, `public-authoring/manifest.ts must match the protocol manifest schema${diagnostics}`).toBe(true);
-    });
-
-    it('keeps installable RN manifests aligned with authored Host API ABI', async () => {
-        const mismatches: string[] = [];
-
-        for (const exampleName of requiredExamples) {
-            const installable = readExampleManifest(exampleName);
-            const authored = await readAuthoredExampleManifest(exampleName);
-            for (const authoredBundle of authored.contributes.reactNativeBundles ?? []) {
-                const installedBundle = installable.contributes.reactNativeBundles?.find((candidate) => (
-                    candidate.id === authoredBundle.id
-                ));
-                if (!installedBundle) {
-                    mismatches.push(`${exampleName}:${authoredBundle.id}:missing-installed-rn-bundle`);
-                    continue;
-                }
-                expect(installedBundle.entry).toEqual(authoredBundle.entry);
-                expect(installedBundle.hostApi?.methods ?? []).toEqual(authoredBundle.hostApi?.methods ?? []);
-            }
+        expect(
+            ingested.ok,
+            ingested.ok ? undefined : JSON.stringify(ingested.diagnostics),
+        ).toBe(true);
+        if (ingested.ok) {
+            expect(ingested.manifest.contributes.voiceModelPacks).toHaveLength(1);
+            expect(ingested.manifest.contributes.voiceProviders).toEqual([
+                expect.objectContaining({
+                    id: 'credentialed-browser',
+                    platforms: ['web'],
+                    capabilities: expect.objectContaining({
+                        readiness: { requirements: ['credential'] },
+                    }),
+                    accountMediation: {
+                        credentialSlots: [{ id: 'api_key', scope: 'account' }],
+                        operations: [
+                            expect.objectContaining({
+                                id: 'client-auth',
+                                purpose: 'voice.client-auth',
+                                credentialSlotId: 'api_key',
+                                request: expect.objectContaining({ method: 'POST' }),
+                            }),
+                            expect.objectContaining({
+                                id: 'list-catalog',
+                                purpose: 'voice.catalog',
+                                credentialSlotId: 'api_key',
+                                request: expect.objectContaining({ method: 'GET' }),
+                            }),
+                        ],
+                    },
+                }),
+            ]);
+            expect(ingested.manifest.contributes.settings).toEqual(expect.arrayContaining([
+                expect.objectContaining({ id: 'preferences', scope: 'local' }),
+            ]));
+            expect(ingested.manifest.hostAccess.required).toContainEqual(expect.objectContaining({
+                id: 'model-pack-downloads',
+                capability: 'network',
+            }));
+            expect(ingested.manifest.hostAccess.required).toEqual(expect.arrayContaining([
+                expect.objectContaining({
+                    id: 'voice-client-auth',
+                    capability: 'network',
+                    scope: expect.objectContaining({ methods: ['POST'] }),
+                }),
+                expect.objectContaining({
+                    id: 'voice-catalog',
+                    capability: 'network',
+                    scope: expect.objectContaining({ methods: ['GET'] }),
+                }),
+            ]));
+            expect(ingested.manifest.contributes.actions).toEqual([
+                expect.objectContaining({
+                    id: 'review-summary',
+                    surfaces: ['cli', 'agent'],
+                    scopes: ['transcript'],
+                }),
+            ]);
+            expect(ingested.manifest.contributes.tools).toContainEqual(expect.objectContaining({
+                id: 'review-summary-tool',
+                action: 'review-summary',
+            }));
+            expect(ingested.manifest.contributes.commands).toContainEqual(expect.objectContaining({
+                id: 'review-summary-command',
+                action: 'review-summary',
+            }));
         }
-
-        expect(mismatches).toEqual([]);
     });
 
-    it('ships artifact files for every manifest-declared installable UI asset', () => {
-        const missing: string[] = [];
+    it('keeps executable source modules from becoming a second manifest owner', async () => {
+        for (const exampleName of requiredExamples) {
+            const module = await import(pathToFileURL(
+                join(examplesRoot, exampleName, 'src/index.ts'),
+            ).href) as { manifest?: unknown };
+            expect(module).not.toHaveProperty('manifest');
+        }
+    });
 
+    it('declares distinct strict public UI scenarios without authored artifact rows', async () => {
+        const kindsByExample = new Map<string, readonly string[]>();
         for (const exampleName of requiredExamples) {
             const manifest = readExampleManifest(exampleName);
-            for (const hostedWeb of manifest.contributes.hostedWeb ?? []) {
-                if (hostedWeb.service.kind === 'staticAssets') {
-                    assertExampleDirectoryContainsIndex(exampleName, hostedWeb.service.assetRootId, missing);
-                }
-            }
-            for (const reactNativeBundle of manifest.contributes.reactNativeBundles ?? []) {
-                const assetPath = reactNativeBundle.bundle.assetPath;
-                if (assetPath) {
-                    assertExampleFileExists(exampleName, assetPath, missing);
-                }
-            }
-            for (const artifact of manifest.contributes.uiArtifacts ?? []) {
-                if (artifact.assetPath && artifact.artifactKind === 'hostedWebAsset') {
-                    assertExampleDirectoryContainsIndex(exampleName, artifact.assetPath, missing);
-                } else if (artifact.assetPath) {
-                    assertExampleFileExists(exampleName, artifact.assetPath, missing);
-                }
-            }
+            kindsByExample.set(exampleName, manifest.contributes.ui.renderers.map((renderer) => renderer.kind));
+            expect(manifest).not.toHaveProperty('uses');
+            expect(manifest).not.toHaveProperty('permissions');
+            expect(manifest.contributes).not.toHaveProperty('uiArtifacts');
         }
-
-        expect(missing).toEqual([]);
+        expect(kindsByExample.get('descriptor-only')).toEqual(['declarative']);
+        expect(kindsByExample.get('hosted-web')).toEqual(['hostedWeb', 'declarative']);
+        expect(kindsByExample.get('react-native-installed')).toEqual(['reactNative', 'declarative']);
+        expect(kindsByExample.get('react-native-dev-hot-reload')).toEqual(['reactNative', 'declarative']);
+        expect(kindsByExample.get('multi-mode-fallback')).toEqual(['reactNative', 'hostedWeb', 'declarative']);
+        const developmentModule = await import(pathToFileURL(join(
+            examplesRoot,
+            'react-native-dev-hot-reload',
+            'src/index.ts',
+        )).href) as { activate?: unknown };
+        expect(developmentModule.activate).toBeTypeOf('function');
     });
 
-    it('ships visible RN example bundles instead of placeholder null panels', () => {
-        const placeholders: string[] = [];
-
-        for (const exampleName of requiredExamples) {
+    it('declares UI build inputs through the stable public build subpath', async () => {
+        for (const exampleName of requiredExamples.filter((name) => name !== 'descriptor-only')) {
+            const buildPath = join(examplesRoot, exampleName, 'pluginUiBuild.ts');
+            expect(readFileSync(buildPath, 'utf8')).toContain("from '@happier-dev/plugin-sdk/ui/build'");
+            const module = await import(pathToFileURL(buildPath).href) as {
+                pluginUiBuildConfig?: {
+                    outDir?: string;
+                    targets?: readonly {
+                        entry: string;
+                        kind: 'reactNative' | 'hostedWeb';
+                        rendererId: string;
+                    }[];
+                };
+            };
+            expect(module.pluginUiBuildConfig?.targets?.length).toBeGreaterThan(0);
+            expect(module.pluginUiBuildConfig?.outDir).toMatch(/^dist\//u);
+            expect(module.pluginUiBuildConfig).not.toHaveProperty('surfaces');
+            expect(module.pluginUiBuildConfig).not.toHaveProperty('runBundler');
             const manifest = readExampleManifest(exampleName);
-            for (const reactNativeBundle of manifest.contributes.reactNativeBundles ?? []) {
-                const assetPath = reactNativeBundle.bundle.assetPath;
-                if (!assetPath) continue;
-                const source = readFileSync(join(examplesRoot, exampleName, assetPath), 'utf8');
-                if (/return\s+null\s*;?/u.test(source)) {
-                    placeholders.push(`${exampleName}:${reactNativeBundle.id}:returns-null`);
-                }
-                if (!source.includes('getSurfaceContext')) {
-                    placeholders.push(`${exampleName}:${reactNativeBundle.id}:does-not-exercise-host-api`);
-                }
-            }
-        }
-
-        expect(placeholders).toEqual([]);
-    });
-
-    it('pins installable example artifacts to real content digests while keeping dev-hot-reload unpinned', () => {
-        const mismatches: string[] = [];
-        const unexpectedDevDigests: string[] = [];
-
-        for (const exampleName of requiredExamples) {
-            const manifest = readExampleManifest(exampleName);
-            for (const reactNativeBundle of manifest.contributes.reactNativeBundles ?? []) {
-                if (reactNativeBundle.bundle.assetPath) {
-                    const actualDigest = computeExampleFileDigest(exampleName, reactNativeBundle.bundle.assetPath);
-                    if (reactNativeBundle.bundle.integrity?.digest !== actualDigest) {
-                        mismatches.push(`${exampleName}:${reactNativeBundle.id}:bundle`);
-                    }
-                } else if (
-                    reactNativeBundle.bundle.channel === 'development'
-                    && reactNativeBundle.bundle.integrity !== undefined
-                ) {
-                    unexpectedDevDigests.push(`${exampleName}:${reactNativeBundle.id}:bundle`);
-                }
-            }
-
-            for (const artifact of manifest.contributes.uiArtifacts ?? []) {
-                if (artifact.devUrl) {
-                    if (artifact.integrity !== undefined) {
-                        unexpectedDevDigests.push(`${exampleName}:${artifact.id}:artifact`);
-                    }
-                    continue;
-                }
-                if (!artifact.assetPath) {
-                    continue;
-                }
-                const actualDigest = artifact.artifactKind === 'hostedWebAsset'
-                    ? computeExampleDirectoryDigest(exampleName, artifact.assetPath)
-                    : computeExampleFileDigest(exampleName, artifact.assetPath);
-                if (artifact.integrity?.digest !== actualDigest) {
-                    mismatches.push(`${exampleName}:${artifact.id}:artifact`);
+            const executableRenderers = manifest.contributes.ui.renderers
+                .filter((renderer) => renderer.kind !== 'declarative')
+                .map((renderer) => ({ rendererId: renderer.id, kind: renderer.kind }));
+            expect(module.pluginUiBuildConfig?.targets?.map(({ rendererId, kind }) => ({ rendererId, kind })))
+                .toEqual(executableRenderers);
+            for (const target of module.pluginUiBuildConfig?.targets ?? []) {
+                const sourceModule = await import(
+                    pathToFileURL(join(examplesRoot, exampleName, target.entry)).href
+                ) as { connectHostedWebPanel?: unknown; renderSurface?: unknown };
+                if (target.kind === 'reactNative') {
+                    expect(sourceModule.renderSurface, `${exampleName}:${target.rendererId}`).toBeTypeOf('function');
+                } else {
+                    expect(sourceModule.connectHostedWebPanel, `${exampleName}:${target.rendererId}`).toBeTypeOf('function');
                 }
             }
         }
 
-        expect(mismatches).toEqual([]);
-        expect(unexpectedDevDigests).toEqual([]);
+        const publicAuthoringBuild = await import(pathToFileURL(join(
+            examplesRoot,
+            'public-authoring',
+            'pluginUiBuild.ts',
+        )).href) as { pluginUiBuildConfig?: { outDir?: string } };
+        expect(publicAuthoringBuild.pluginUiBuildConfig?.outDir).toBe('dist/ui');
     });
 
-    it('typechecks copied examples outside the workspace through package exports only', () => {
+    it('typechecks copied installable and public-authoring examples through package exports only', () => {
+        expect(shouldCopyExamplePath('/tmp/examples/hosted-web/dist/ui/index.js')).toBe(false);
+        expect(shouldCopyExamplePath('C:\\tmp\\examples\\hosted-web\\dist\\ui\\index.js')).toBe(false);
+        expect(shouldCopyExamplePath('/tmp/examples/hosted-web/node_modules/pkg/index.js')).toBe(false);
+        expect(shouldCopyExamplePath('C:\\tmp\\examples\\hosted-web\\node_modules\\pkg\\index.js')).toBe(false);
+
         const copiedRoot = copyExamplesOutsideWorkspace();
         try {
+            const expectedTypeScriptFiles = [
+                ...requiredExamples.flatMap((exampleName) => [
+                    join(copiedRoot, exampleName, 'src/index.ts'),
+                    ...(exampleName === 'descriptor-only'
+                        ? []
+                        : [join(
+                            copiedRoot,
+                            exampleName,
+                            'ui',
+                            exampleName === 'hosted-web'
+                                ? 'panel.web.tsx'
+                                : exampleName === 'multi-mode-fallback'
+                                    ? 'panel.tsx'
+                                    : 'panel.native.tsx',
+                        )]),
+                ]),
+                ...['daemon.ts', 'index.ts', 'pluginUiBuild.ts', 'voiceProvider.ts']
+                    .map((fileName) => join(copiedRoot, 'public-authoring', fileName)),
+            ];
             const configFile = {
-                config: {
-                    compilerOptions: {
-                        target: 'ES2022',
-                        module: 'ESNext',
-                        moduleResolution: 'Bundler',
-                        lib: ['ES2022', 'DOM'],
-                        strict: true,
-                        skipLibCheck: true,
-                        noEmit: true,
-                    },
-                    include: ['**/*.ts'],
-                    exclude: ['node_modules'],
+                compilerOptions: {
+                    target: 'ES2022',
+                    module: 'ESNext',
+                    moduleResolution: 'Bundler',
+                    lib: ['ES2022', 'DOM'],
+                    strict: true,
+                    skipLibCheck: true,
+                    outDir: '.compiled-example-output',
+                    jsx: 'preserve',
                 },
+                include: ['**/*.ts', '**/*.tsx'],
+                exclude: ['node_modules'],
             };
-            const parsedConfig = ts.parseJsonConfigFileContent(
-                configFile.config,
-                ts.sys,
-                copiedRoot,
-            );
-            expect(parsedConfig.errors).toEqual([]);
-            expect(parsedConfig.fileNames.length).toBeGreaterThan(0);
-
-            const program = ts.createProgram({
-                rootNames: parsedConfig.fileNames,
-                options: parsedConfig.options,
+            const configPath = join(copiedRoot, 'tsconfig.json');
+            writeFileSync(configPath, `${JSON.stringify(configFile, null, 2)}\n`, 'utf8');
+            for (const sourcePath of expectedTypeScriptFiles) {
+                expect(existsSync(sourcePath), sourcePath).toBe(true);
+            }
+            const typecheck = spawnSync(process.execPath, [
+                join(repoRoot, 'scripts', 'workspaces', 'runTypeScriptCli.mjs'),
+                '-p',
+                configPath,
+            ], {
+                cwd: copiedRoot,
+                encoding: 'utf8',
             });
-            const diagnostics = ts.getPreEmitDiagnostics(program);
-            expect(formatDiagnostics(diagnostics)).toBe('');
+            expect(
+                typecheck.status,
+                [typecheck.stdout, typecheck.stderr].filter(Boolean).join('\n'),
+            ).toBe(0);
+            const emitRoot = join(copiedRoot, '.compiled-example-output');
+            expect(existsSync(emitRoot)).toBe(true);
+            for (const sourcePath of expectedTypeScriptFiles) {
+                const emittedRelativePath = relative(copiedRoot, sourcePath)
+                    .replace(/\.tsx$/u, '.jsx')
+                    .replace(/\.ts$/u, '.js');
+                expect(existsSync(join(emitRoot, emittedRelativePath)), emittedRelativePath).toBe(true);
+            }
         } finally {
             rmSync(copiedRoot, { recursive: true, force: true });
         }
-    }, 20_000);
+    });
 });

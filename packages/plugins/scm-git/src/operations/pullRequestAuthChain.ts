@@ -3,7 +3,7 @@ import {
   type ScmHostingProviderRef,
   type ScmPullRequestReference,
   type ScmPullRequestSummary,
-} from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm';
 
 export type BranchHeadContext = Readonly<{
     provider: ScmHostingProviderRef;

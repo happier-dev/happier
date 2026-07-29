@@ -11,6 +11,7 @@ export { SessionStateAcpConfigOptionValueSchema } from './acpConfigOption.js';
 export { SessionStateTitleValueSchema } from './title.js';
 export { SessionStateWorkStateValueSchema } from './workState.js';
 export { SessionStateRuntimeActivityValueSchema } from './runtimeActivity.js';
+export { SessionStateExternalAgentValueSchema } from './externalAgent.js';
 export {
   SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY,
   SESSION_USAGE_LIMIT_RECOVERY_STATE_FIELD_ID,

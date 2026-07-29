@@ -1,25 +1,15 @@
-import {
-  buildAgentSettingsDefaults,
-  defineAgentSettingsContribution,
-  agentSettingsContributionToUiDescriptor,
-} from '@happier-dev/plugin-sdk/experimental/manifest/agentSettings';
+import type { PluginSettingsContribution } from '@happier-dev/plugin-sdk/manifest';
 
-export const KILO_AGENT_SETTINGS_CONTRIBUTION = defineAgentSettingsContribution({
-  id: 'kilo.agentSettings.v1',
-  agentId: 'kilo',
+export const KILO_AGENT_SETTINGS_CONTRIBUTION = {
+  id: 'agent-settings',
+  version: 1,
+  title: { key: 'settingsAgents.plugins.kilo.title', fallback: 'Kilo' },
+  target: { kind: 'agent', agent: 'kilo' },
+  scope: 'synced',
   fields: [],
-  ui: {
-    title: { key: 'settingsAgents.plugins.kilo.title' },
+  presentation: {
     icon: { ionName: 'flash-outline', color: { kind: 'theme', token: 'orange' } },
-    subagentSettingsSections: [],
+    subagentSections: [],
     sections: [],
   },
-});
-
-export const KILO_AGENT_SETTINGS_DEFAULTS = buildAgentSettingsDefaults(
-  KILO_AGENT_SETTINGS_CONTRIBUTION,
-);
-
-export const KILO_AGENT_SETTINGS_DESCRIPTOR = agentSettingsContributionToUiDescriptor(
-  KILO_AGENT_SETTINGS_CONTRIBUTION,
-);
+} satisfies PluginSettingsContribution;

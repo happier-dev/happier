@@ -1,5 +1,6 @@
-import type { HandoffSurfaceV1, SessionStateUpdateV1 } from '@happier-dev/plugin-sdk';
-import { resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/plugin-sdk/sessions';
+import type { HandoffSurfaceV1, SessionStateUpdateV1 } from '@happier-dev/plugin-sdk/experimental/sessions';
+import { PluginError } from '@happier-dev/plugin-sdk';
+import { resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/plugin-sdk/experimental/sessions';
 
 import {
     exportClaudeSessionBundle,
@@ -59,6 +60,14 @@ export const claudeHandoffSurface = {
                 },
             };
         } catch (error) {
+            if (error instanceof PluginError && error.code === 'target_identity_conflict') {
+                return {
+                    ok: false,
+                    code: 'target_identity_conflict',
+                    message: error.message,
+                    retryable: error.retryable,
+                };
+            }
             return {
                 ok: false,
                 code: 'target_import_failed',

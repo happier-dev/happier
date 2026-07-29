@@ -1,15 +1,10 @@
-import type {
-  FetchRuntimeResponseV1,
-  FetchRuntimeServiceV1,
-} from '@happier-dev/plugin-sdk';
-
 import { readOpenCodeSessionRuntimeHandleFromMetadata } from '../../../identity/runtimeDescriptor.js';
-import { readOpenCodeManagedServerCredentialHeaders } from '../endpoint.js';
+import { readOpenCodeManagedServerTransport } from '../endpoint.js';
 import {
   createOpenCodeServerClient,
   isOpenCodeServerAuthFailure,
-  OpenCodeServerCredentialError,
 } from '../openCodeServerClient.js';
+import type { OpenCodeServerTransport } from '../transport.js';
 
 export type OpenCodeSessionCatalogControlAdapterParams = Readonly<{
   cwd?: unknown;
@@ -35,7 +30,7 @@ type OpenCodeCatalogClient = Readonly<{
 type OpenCodeCatalogClientParams = Readonly<{
   directory: string;
   baseUrlOverride?: string;
-  headers?: Readonly<Record<string, string>>;
+  transport?: OpenCodeServerTransport;
 }>;
 
 type OpenCodeServerCatalogControlAdapterDeps = Readonly<{
@@ -103,53 +98,20 @@ async function createDefaultClient(params: OpenCodeCatalogClientParams): Promise
       appSkills: async () => [],
     };
   }
-  if (!params.headers) {
+  if (!params.transport) {
     return {
       appSkills: async () => {
-        throw new OpenCodeServerCredentialError(
-          'OpenCode passive skill catalog listing requires a managed server credential',
-        );
+        throw new Error('OpenCode passive skill catalog listing requires an active managed server transport');
       },
     };
   }
   const client = createOpenCodeServerClient({
-    fetch: fetchWithGlobalFetch,
-    baseUrl,
-    headers: params.headers,
+    transport: params.transport,
   });
   return {
     appSkills: async () => client.appSkills({ directory: params.directory }),
   };
 }
-
-function headersToRecord(headers: Headers): Record<string, string> {
-  const record: Record<string, string> = {};
-  headers.forEach((value, key) => {
-    record[key] = value;
-  });
-  return record;
-}
-
-function toFetchRuntimeResponse(response: Response): FetchRuntimeResponseV1 {
-  return {
-    ok: response.ok,
-    status: response.status,
-    statusText: response.statusText,
-    headers: headersToRecord(response.headers),
-    text: async () => await response.text(),
-    json: async () => await response.json(),
-    arrayBuffer: async () => await response.arrayBuffer(),
-  };
-}
-
-const fetchWithGlobalFetch: FetchRuntimeServiceV1 = async (request) => {
-  const response = await fetch(request.url, {
-    method: request.method,
-    headers: request.headers,
-    signal: request.signal,
-  });
-  return toFetchRuntimeResponse(response);
-};
 
 export function createOpenCodeServerCatalogControlAdapter(
   deps: OpenCodeServerCatalogControlAdapterDeps = {},
@@ -167,11 +129,11 @@ export function createOpenCodeServerCatalogControlAdapter(
 
       let client: OpenCodeCatalogClient | null = null;
       try {
-        const credentialHeaders = readOpenCodeManagedServerCredentialHeaders(runtimeHandle.serverBaseUrl);
+        const transport = readOpenCodeManagedServerTransport(runtimeHandle.serverBaseUrl);
         client = await createClient({
           directory: cwd,
           baseUrlOverride: runtimeHandle.serverBaseUrl,
-          ...(credentialHeaders ? { headers: credentialHeaders } : {}),
+          ...(transport ? { transport } : {}),
         });
         return {
           supported: true,

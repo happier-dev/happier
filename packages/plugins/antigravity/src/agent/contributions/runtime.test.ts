@@ -54,4 +54,42 @@ describe('Antigravity agent runtime contribution', () => {
     expect(predicate?.({ serviceId: 'openai' })).toBe(false);
     expect(predicate?.(null)).toBe(false);
   });
+
+  it('proves only provider activity bound to the exact Antigravity credential epoch', async () => {
+    const adapter = ANTIGRAVITY_AGENT_RUNTIME_CONTRIBUTION.connectedServices.runtimeAuthAdapter as unknown as Readonly<{
+      verifyProviderOutcome?: (input: unknown) => Promise<unknown>;
+    }>;
+    const exactSelection = {
+      kind: 'profile',
+      serviceId: 'gemini',
+      profileId: 'vertex-work',
+      credentialRevision: 'csr_abcdefghijklmnopqrstuv',
+    };
+
+    await expect(adapter.verifyProviderOutcome?.({
+      target: { agentId: 'antigravity' },
+      selections: [exactSelection],
+      outcome: { kind: 'provider_activity', event: 'assistant_message_end' },
+    })).resolves.toEqual({
+      status: 'verified',
+      source: 'antigravity_provider_activity',
+      targets: [{
+        serviceId: 'gemini',
+        profileId: 'vertex-work',
+        groupId: null,
+        groupGeneration: null,
+        credentialRevision: 'csr_abcdefghijklmnopqrstuv',
+      }],
+    });
+    await expect(adapter.verifyProviderOutcome?.({
+      target: { agentId: 'antigravity' },
+      selections: [{ ...exactSelection, credentialRevision: undefined }],
+      outcome: { kind: 'provider_activity', event: 'assistant_message_end' },
+    })).resolves.toMatchObject({ status: 'unavailable' });
+    await expect(adapter.verifyProviderOutcome?.({
+      target: { agentId: 'antigravity' },
+      selections: [exactSelection],
+      outcome: { kind: 'provider_activity', event: 'task_started' },
+    })).resolves.toMatchObject({ status: 'unavailable' });
+  });
 });

@@ -24,7 +24,7 @@ export const AUGGIE_UI_DESCRIPTOR = Object.freeze({
     picker: {
       iconName: 'sparkles',
       iconScale: 1.15,
-      cliGlyphTokenId: 'agentGlyph.auggie',
+      cliGlyph: 'A',
       cliGlyphScale: 1.0,
       profileCompatibilityGlyphScale: 1.0,
     },
@@ -33,9 +33,6 @@ export const AUGGIE_UI_DESCRIPTOR = Object.freeze({
       iconScaleRatio: 0.22,
     },
     icon: { assetId: 'auggie' },
-  },
-  settings: {
-    descriptorId: 'auggie.agentSettings.v1',
   },
   behavior: {
     descriptorId: 'auggie.uiBehavior.v1',

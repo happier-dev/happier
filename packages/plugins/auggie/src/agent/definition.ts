@@ -29,40 +29,6 @@ export const AGENT_DEFINITION = Object.freeze({
     defaultMode: 'default',
     allowedModes: ['default'],
   },
-  authProbeConfig: {
-    agentId: AUGGIE_AGENT_ID,
-    binaryNames: ['auggie'],
-    statusCommand: null,
-    parser: 'unknown',
-    backgroundChecks: 'safe',
-  },
-  localCli: {
-    agentId: AUGGIE_AGENT_ID,
-    detectKey: 'auggie',
-    machineLoginKey: 'auggie',
-    supportKind: 'login_terminal',
-    loginLaunch: {
-      command: 'auggie',
-      args: ['login'],
-    },
-  },
-  agentCliRuntime: {
-    id: AUGGIE_AGENT_ID,
-    title: 'Auggie CLI',
-    binaryName: 'auggie',
-    knownUserBinDirSuffixes: null,
-    sourcePreferenceDefault: 'system-first',
-    managedInstall: {
-      kind: 'managed_package',
-      packageName: '@augmentcode/auggie',
-      binaryName: 'auggie',
-    },
-    manualInstallKind: 'command',
-    manualInstallRecipes: null,
-    acceptsJavaScriptFileOverride: false,
-    docsUrl: 'https://augmentcode.com',
-  },
-  agentSettings: null,
   runtimeContributions: {
     agentCatalogEntry: {
       importName: 'AUGGIE_AGENT_RUNTIME_CONTRIBUTION',

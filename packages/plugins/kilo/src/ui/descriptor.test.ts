@@ -44,8 +44,8 @@ describe('KILO_UI_DESCRIPTOR', () => {
         connectedService: { serviceId: null, labelKey: 'agentInput.agent.kilo', connectRoute: null },
         icon: { assetId: 'kilo' },
       },
-      settings: { descriptorId: 'kilo.agentSettings.v1' },
     });
+    expect(KILO_UI_DESCRIPTOR).not.toHaveProperty('settings');
   });
 
   it('is a data-only no-execute descriptor', () => {

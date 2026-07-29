@@ -151,7 +151,7 @@ describe('surface registry — derived-encoding closure (REG-6)', () => {
     // and the UI host (`rendererKindToRuntimeMode`) emit per declared renderer kind.
     // Each MUST be a registry runtime mode with a canonical live-host binding, so the
     // mount switch never reasons about a mode the registry does not recognize.
-    const RENDERER_KIND_MODES = ['host', 'hostedWeb', 'reactNative', 'embeddedWeb'] as const;
+    const RENDERER_KIND_MODES = ['host', 'hostedWeb', 'reactNative'] as const;
     for (const mode of RENDERER_KIND_MODES) {
       expect(
         PluginSurfaceRuntimeModeV1Schema.options.includes(mode),

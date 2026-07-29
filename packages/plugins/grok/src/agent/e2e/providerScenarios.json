@@ -1,0 +1,20 @@
+{
+  "v": 1,
+  "tiers": {
+    "smoke": [
+      "read_known_file"
+    ],
+    "extended": [
+      "acp_probe_models",
+      "acp_resume_load_session",
+      "acp_resume_fresh_session_imports_history",
+      "abort_turn_then_continue",
+      "search_known_token",
+      "edit_result_includes_diff",
+      "grok_set_reasoning_effort",
+      "grok_image_prompt",
+      "grok_outside_workspace_write_rejected",
+      "mcp_change_title"
+    ]
+  }
+}

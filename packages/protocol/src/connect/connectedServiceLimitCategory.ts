@@ -20,10 +20,12 @@ const connectedServiceLimitCategoryLegacyAliasValues = [
     'account_disabled',
 ] as const;
 
-const ConnectedServiceLimitCategoryCanonicalSchema = z.enum(connectedServiceLimitCategoryCanonicalValues);
+export const ConnectedServiceLimitCategoryCanonicalV1Schema = z.enum(
+    connectedServiceLimitCategoryCanonicalValues,
+);
 const ConnectedServiceLimitCategoryLegacyAliasSchema = z.enum(connectedServiceLimitCategoryLegacyAliasValues);
 
-export type ConnectedServiceLimitCategoryV1 = z.infer<typeof ConnectedServiceLimitCategoryCanonicalSchema>;
+export type ConnectedServiceLimitCategoryV1 = z.infer<typeof ConnectedServiceLimitCategoryCanonicalV1Schema>;
 export type ConnectedServiceLimitCategoryLegacyAliasV1 = z.infer<typeof ConnectedServiceLimitCategoryLegacyAliasSchema>;
 export type ConnectedServiceLimitCategoryInputV1 =
     | ConnectedServiceLimitCategoryV1
@@ -58,7 +60,7 @@ export function readConnectedServiceLimitCategoryV1(value: unknown): ConnectedSe
 
 export const ConnectedServiceLimitCategoryV1Schema = z
     .union([
-        ConnectedServiceLimitCategoryCanonicalSchema,
+        ConnectedServiceLimitCategoryCanonicalV1Schema,
         ConnectedServiceLimitCategoryLegacyAliasSchema,
     ])
     .transform(normalizeConnectedServiceLimitCategoryV1);

@@ -9,11 +9,12 @@ import { PROVIDER_CATALOG_LIMITS_V1 } from './limits.js';
 export const ProviderCatalogProbeModelV1Schema = z.object({
   id: ProviderModelDescriptorV1Schema.shape.id,
   name: ProviderModelDescriptorV1Schema.shape.name.optional(),
+  capabilities: ProviderModelDescriptorV1Schema.shape.capabilities,
 }).strict();
 export type ProviderCatalogProbeModelV1 = z.infer<typeof ProviderCatalogProbeModelV1Schema>;
 
 const ProviderRuntimeTimestampV1Schema = z.number().finite().nonnegative();
-const ProviderCatalogProbeModelsV1Schema = z.array(ProviderCatalogProbeModelV1Schema)
+export const ProviderCatalogProbeModelsV1Schema = z.array(ProviderCatalogProbeModelV1Schema)
   .max(PROVIDER_CATALOG_LIMITS_V1.maxModelsPerConnection)
   .superRefine((models, ctx) => {
     const ids = new Set<string>();
@@ -73,7 +74,7 @@ export type ProviderCatalogRefreshV1 =
 export type ProviderMergedCatalogRowV1 = Readonly<{
   descriptor: ProviderModelDescriptorV1;
   sources: Readonly<{ manual: boolean; static: boolean; probe: boolean }>;
-  confidence: 'manual' | 'verified_static' | 'probe';
+  confidence: 'manual' | 'verified_static' | 'probe' | 'account_unverified';
   catalogStale: boolean;
   stale?: true;
 }>;
@@ -81,7 +82,7 @@ export type ProviderMergedCatalogRowV1 = Readonly<{
 export const ProviderMergedCatalogRowV1Schema = z.object({
   descriptor: ProviderModelDescriptorV1Schema,
   sources: z.object({ manual: z.boolean(), static: z.boolean(), probe: z.boolean() }).strict(),
-  confidence: z.enum(['manual', 'verified_static', 'probe']),
+  confidence: z.enum(['manual', 'verified_static', 'probe', 'account_unverified']),
   catalogStale: z.boolean(),
   stale: z.literal(true).optional(),
 }).strict().superRefine((value, ctx) => {
@@ -144,13 +145,18 @@ export function applyProviderCatalogRefreshV1(
 }
 
 function probeDescriptor(model: ProviderCatalogProbeModelV1): ProviderModelDescriptorV1 {
-  return { id: model.id, name: model.name ?? model.id };
+  return {
+    id: model.id,
+    name: model.name ?? model.id,
+    ...(model.capabilities ? { capabilities: model.capabilities } : {}),
+  };
 }
 
 export function mergeProviderCatalogV1(input: Readonly<{
   staticModels: readonly ProviderModelDescriptorV1[];
   manualModels: readonly ProviderManualModelV1[];
   probeState: ProviderCatalogTransitionStateV1;
+  probeConfidence?: 'probe' | 'account_unverified';
 }>): Readonly<{
   rows: readonly ProviderMergedCatalogRowV1[];
   staleRows: readonly ProviderMergedCatalogRowV1[];
@@ -206,7 +212,8 @@ export function mergeProviderCatalogV1(input: Readonly<{
     if (aName !== bName) return aName < bName ? -1 : 1;
     return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
   });
-  for (const model of remainingProbe) emit(model.id, probeDescriptor(model), 'probe');
+  const probeConfidence = input.probeConfidence ?? 'probe';
+  for (const model of remainingProbe) emit(model.id, probeDescriptor(model), probeConfidence);
 
   const staleRows: ProviderMergedCatalogRowV1[] = [];
   for (const model of staleProbeModels) {
@@ -214,7 +221,7 @@ export function mergeProviderCatalogV1(input: Readonly<{
     staleRows.push({
       descriptor: probeDescriptor(model),
       sources: { manual: false, static: false, probe: true },
-      confidence: 'probe',
+      confidence: probeConfidence,
       catalogStale: true,
       stale: true,
     });

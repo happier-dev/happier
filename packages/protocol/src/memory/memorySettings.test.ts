@@ -14,7 +14,7 @@ describe('memorySettings', () => {
   it('uses generated protocol-local memory defaults', () => {
     const source = readFileSync(join(process.cwd(), 'src/memory/memorySettings.ts'), 'utf8');
 
-    expect(source).toContain('../providers/generated/memory/defaults.js');
+    expect(source).toContain('../agents/generated/memory/defaults.js');
     expect(source).not.toContain('../providers/claude/memoryDefaults.js');
   });
 

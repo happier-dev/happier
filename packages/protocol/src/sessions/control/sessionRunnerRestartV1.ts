@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { SessionProviderBindingSecurityChangeConfirmationV1Schema } from '../../providers/sessions/bindingMetadataV1.js';
+
 const SessionRunnerSessionIdV1Schema = z.string().trim().min(1);
 const SessionRunnerIdentityV1Schema = z.string().trim().min(1);
 const SessionRunnerPidV1Schema = z.number().int().positive();
@@ -21,6 +23,7 @@ export const SESSION_RUNNER_RESTART_REASONS_V1 = [
   'doctor_repair',
   'restart_session_runners_on_update_config',
   'daemon_dist_generation_rollout',
+  'provider_binding_change_recovery',
 ] as const;
 export const SessionRunnerRestartReasonV1Schema = z.enum(SESSION_RUNNER_RESTART_REASONS_V1);
 export type SessionRunnerRestartReasonV1 = z.infer<typeof SessionRunnerRestartReasonV1Schema>;
@@ -80,8 +83,35 @@ export const RestartSessionRunnerRequestV1Schema = z
     expectedRunnerPid: SessionRunnerPidV1Schema.nullable().optional(),
     expectedProcessCommandHash: NullableIdentityFieldV1Schema,
     expectedRunnerEntrypointIdentity: NullableIdentityFieldV1Schema,
+    providerBindingSecurityChangeConfirmationV1:
+      SessionProviderBindingSecurityChangeConfirmationV1Schema.optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, ctx) => {
+    const isProviderRecovery = value.reason === 'provider_binding_change_recovery';
+    if (isProviderRecovery && value.mode !== 'force_current_cli') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['mode'],
+        message: 'Provider binding recovery must force the current CLI runtime',
+      });
+    }
+    const confirmation = value.providerBindingSecurityChangeConfirmationV1;
+    if (confirmation && !isProviderRecovery) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['providerBindingSecurityChangeConfirmationV1'],
+        message: 'Provider binding confirmation is valid only for Provider binding recovery',
+      });
+    }
+    if (confirmation && confirmation.sessionId !== value.sessionId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['providerBindingSecurityChangeConfirmationV1', 'sessionId'],
+        message: 'Provider binding confirmation must target the restarted session',
+      });
+    }
+  });
 export type RestartSessionRunnerRequestV1 = z.infer<typeof RestartSessionRunnerRequestV1Schema>;
 
 const RestartSessionRunnerEndpointSummaryV1Schema = z
@@ -110,7 +140,7 @@ export const RestartAllSessionRunnersRequestV1Schema = z
   .object({
     mode: SessionRunnerRestartModeV1Schema,
     dryRun: z.boolean().optional(),
-    reason: SessionRunnerRestartReasonV1Schema,
+    reason: SessionRunnerRestartReasonV1Schema.exclude(['provider_binding_change_recovery']),
   })
   .strict();
 export type RestartAllSessionRunnersRequestV1 =

@@ -1,56 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  PluginInstallationManifestProjectionV1Schema,
   PluginInstallationManifestPublisherProofV1Schema,
-  PluginInstallationManifestUpsertActionInputV1Schema,
   createPluginInstallationManifestPublisherSigningInputV1,
   stringifyPluginInstallationManifestCanonicalJsonV1,
 } from '../../index.js';
 
 describe('plugin installation manifest contracts', () => {
-  it('keeps persistence projections strict so forward manifest fields do not leak', () => {
-    const projection = {
-      v: 1,
-      accountId: 'acct_1',
-      machineId: 'machine_1',
-      pluginId: 'acme.plugin',
-      manifestVersion: '1.2.3',
-      manifestDigest: 'sha256:manifest',
-      displayName: 'Acme Plugin',
-      enabled: true,
-      createdAt: 1,
-      updatedAt: 2,
-    };
-
-    expect(PluginInstallationManifestProjectionV1Schema.parse(projection)).toMatchObject({
-      pluginId: 'acme.plugin',
-      requiredPermissions: [],
-      optionalPermissions: [],
-    });
-    expect(PluginInstallationManifestProjectionV1Schema.safeParse({
-      ...projection,
-      xFutureManifestRoot: { preservedByManifestSchema: true },
-    }).success).toBe(false);
-
-    const upsert = {
-      pluginId: 'acme.plugin',
-      manifestVersion: '1.2.3',
-      manifestDigest: 'sha256:manifest',
-      displayName: 'Acme Plugin',
-    };
-
-    expect(PluginInstallationManifestUpsertActionInputV1Schema.parse(upsert)).toMatchObject({
-      enabled: true,
-      requiredPermissions: [],
-      optionalPermissions: [],
-    });
-    expect(PluginInstallationManifestUpsertActionInputV1Schema.safeParse({
-      ...upsert,
-      xFutureManifestRoot: { preservedByManifestSchema: true },
-    }).success).toBe(false);
-  });
-
   it('keeps publisher signing identity strict and signature-free', () => {
     const proof = {
       v: 1,
@@ -60,7 +16,7 @@ describe('plugin installation manifest contracts', () => {
       issuedAt: 1,
       nonce: 'nonce_1',
       method: 'POST',
-      path: '/v3/plugins/installations/manifests',
+      path: '/v1/plugins/permissions/grants/request',
       bodySha256Base64Url: 'body-digest',
       signatureBase64Url: 'signature',
     } as const;

@@ -1,54 +1,43 @@
-import type { PluginContextV1 } from '@happier-dev/plugin-sdk';
+import type { PluginExecService } from '@happier-dev/plugin-sdk/runtime';
 import { describe, expect, it, vi } from 'vitest';
 
 import { resolveGeminiAcpFlag, resolveGeminiApiKeyFromEnv, resolveGeminiAuthConfig } from './resolution.js';
 
-function createContext(stdout: string): PluginContextV1 {
+function createExec(stdout: string): Pick<PluginExecService, 'run'> {
   return {
-    agentRuntime: {
-      exec: {
-        run: vi.fn(async () => ({
-          exitCode: 0,
-          signal: null,
-          stdout,
-          stderr: '',
-        })),
-      },
-    },
-  } as unknown as PluginContextV1;
+    run: vi.fn(async () => ({
+      termination: { observed: { kind: 'exit' as const, exitCode: 0 }, requestedBy: { kind: 'none' as const } },
+      stdout: new TextEncoder().encode(stdout),
+      stderr: new Uint8Array(),
+      stdoutTruncated: false,
+      stderrTruncated: false,
+    })),
+  };
 }
 
 describe('resolveGeminiAcpFlag', () => {
-  it('probes Gemini ACP flags through the host-mediated agent CLI launch', async () => {
-    const ctx = createContext('Usage: gemini --acp');
+  it('probes Gemini ACP flags through the public system-tool exec service', async () => {
+    const exec = createExec('Usage: gemini --acp');
 
-    await expect(resolveGeminiAcpFlag(ctx, { env: { GEMINI_CLI_HOME: '/tmp/gemini' } })).resolves.toBe('--acp');
+    await expect(resolveGeminiAcpFlag(exec, { env: { GEMINI_CLI_HOME: '/tmp/gemini' } })).resolves.toBe('--acp');
 
-    expect(ctx.agentRuntime.exec.run).toHaveBeenCalledWith(
+    expect(exec.run).toHaveBeenCalledWith(
       {
-        kind: 'agent-cli',
-        agentId: 'gemini',
+        executable: { kind: 'systemTool', id: 'gemini-cli' },
         args: ['--help'],
         env: { GEMINI_CLI_HOME: '/tmp/gemini' },
+        timeoutMs: 2000,
       },
-      { timeoutMs: 2000 },
+      { signal: undefined },
     );
   });
 
   it('does not convert host-aborted probes into the default flag', async () => {
     const abortError = new Error('Plugin exec operation was aborted');
     abortError.name = 'AbortError';
-    const ctx = {
-      agentRuntime: {
-        exec: {
-          run: vi.fn(async () => {
-            throw abortError;
-          }),
-        },
-      },
-    } as unknown as PluginContextV1;
+    const exec = { run: vi.fn(async () => { throw abortError; }) };
 
-    await expect(resolveGeminiAcpFlag(ctx, {})).rejects.toBe(abortError);
+    await expect(resolveGeminiAcpFlag(exec, {})).rejects.toBe(abortError);
   });
 });
 

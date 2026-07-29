@@ -66,6 +66,10 @@ describe('provider endpoint URL syntax normalization', () => {
     ['https://models.example.test/%2f%2fevil.example/models', 'invalid_url'],
     ['http://2130706433:11434', 'odd_ip_encoding'],
     ['http://169.254.169.254/latest/meta-data', 'unsafe_address'],
+    ['http://[64:ff9b:1:a9fe:a9:fe00::]/latest/meta-data', 'unsafe_address'],
+    ['http://[fd20:ce::254]/computeMetadata/v1', 'unsafe_address'],
+    ['https://metadata.google.internal/computeMetadata/v1', 'unsafe_address'],
+    ['https://metadata.goog/computeMetadata/v1', 'unsafe_address'],
     ['https://models.example.test/v1?api_key=secret', 'secret_in_url'],
   ])('rejects unsafe persisted URL syntax %s', (rawUrl, code) => {
     expect(() => normalizeProviderEndpointUrlSyntax(rawUrl)).toThrowError(
@@ -102,6 +106,7 @@ describe('provider endpoint safety', () => {
     ['https://models.example.test/\nmodels', 'control_character'],
     ['http://models.example.test/v1', 'http_public_forbidden'],
     ['http://169.254.169.254/latest/meta-data', 'unsafe_address'],
+    ['http://[64:ff9b:1:a9fe:a9:fe00::]/latest/meta-data', 'unsafe_address'],
     ['http://100.100.100.200/latest/meta-data', 'unsafe_address'],
     ['http://0.0.0.0:11434', 'unsafe_address'],
     ['http://224.0.0.1:11434', 'unsafe_address'],
@@ -176,6 +181,9 @@ describe('provider endpoint safety', () => {
 
     expect(() => assessProviderEndpoint('https://gateway.example.test/v1', {
       resolvedAddresses: ['93.184.216.34', '169.254.169.254'],
+    })).toThrowError(expect.objectContaining({ code: 'unsafe_address' }));
+    expect(() => assessProviderEndpoint('https://gateway.example.test/v1', {
+      resolvedAddresses: ['93.184.216.34', '64:ff9b:1:a9fe:a9:fe00::'],
     })).toThrowError(expect.objectContaining({ code: 'unsafe_address' }));
   });
 

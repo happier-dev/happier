@@ -1,11 +1,11 @@
 import type {
   ScmOperationErrorCode,
   ScmRemoteRequest,
-} from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm';
 import {
   mapGitScmErrorCode,
   normalizeScmRemoteRequest,
-} from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm';
 
 export function buildGitPushArgs(request: Readonly<Pick<ScmRemoteRequest, 'remote' | 'branch'>>): string[] {
     const args = ['push'];

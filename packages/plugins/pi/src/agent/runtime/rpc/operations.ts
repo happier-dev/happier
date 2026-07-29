@@ -1,53 +1,66 @@
 import { randomUUID } from 'node:crypto';
 
 import type {
-  ExecJsonStreamClientSpecV1,
-  ExecClientHandleV1,
-  JsonStreamClientV1,
-  PluginContextV1,
-  RuntimeCancelResultV1,
-  RuntimeEventV1,
-  RuntimeInputPayloadV1,
-  RuntimeSendOptionsV1,
-  RuntimeSendResultV1,
-  SessionRuntimeConfigUpdateV1,
-  SessionRuntimeV1,
-} from '@happier-dev/plugin-sdk';
-import {
-  buildSessionRuntimeIssueV1,
-  type RuntimePromptAcceptedCallbackV1,
-  type RuntimePromptAcceptedInfoV1,
-  RuntimeEventV1Schema,
-} from '@happier-dev/plugin-sdk/experimental/runtime/session';
+  AgentSessionCompactRequest,
+  AgentSessionConfigurationSnapshot,
+  AgentSessionRuntime,
+  AgentSessionRuntimeEvent,
+  AgentSessionSendRequest,
+} from '@happier-dev/plugin-sdk/agent-runtime';
+import { AgentSessionRuntimeEventSchema } from '@happier-dev/plugin-sdk/agent-runtime';
+import type { PluginDiagnosticData } from '@happier-dev/plugin-sdk';
+import type {
+  ManagedExecutableRef,
+  PluginLoggerService,
+  PluginServices,
+} from '@happier-dev/plugin-sdk/runtime';
 import { raceWithTimeout } from '@happier-dev/plugin-sdk/experimental/timeout';
+import {
+  createAgentSessionPreAdmissionBuffer,
+  type AgentSessionPreAdmissionBuffer,
+  type AgentSessionPreAdmissionBufferResult,
+} from '@happier-dev/agents/runtime/session/preAdmissionBuffer';
 
 import {
-  PI_BROKER_LOAD_NONCE_ENV,
-  PI_BROKER_PROVIDERS,
-  PI_BROKER_SELECTIONS_ENV,
-  parsePiBrokerSelections,
-  verifyPiBrokerReadyForConnectedSession,
-} from '../../auth/services/broker/index.js';
+  PI_REQUEST_AUTH_CAPABILITY_PATH_ENV,
+  PI_REQUEST_AUTH_PRODUCER_VERSION_ENV,
+} from '../../auth/services/requestAuth/index.js';
 import { PI_THINKING_LEVEL_ENV, resolvePiThinkingLevelFromEnv } from '../../../protocol/thinking.js';
 import { buildPiRpcArgs, readPiConnectedServiceIdFromEnv } from './args.js';
-import { createPiJsonStreamRpcClient, type PiJsonStreamRpcClient } from './client.js';
-import { projectPiRuntimeEvents, readPiProviderTurnId, readPiRuntimeRecordType } from './events.js';
+import {
+  createPiJsonStreamRpcClient,
+  PiRpcNegativeAcknowledgementError,
+  type PiJsonStreamRpcClient,
+} from './client.js';
+import {
+  createPiRuntimeEventProjector,
+  readPiProviderTurnId,
+  readPiRuntimeRecordType,
+  type PiRuntimeEvent,
+} from './events.js';
+import { classifyPiAgentEndBoundary } from './lifecycle.js';
+import {
+  PiRequestAuthCompatibilityError,
+  resolvePiRequestAuthCompatibility,
+} from './requestAuthCompatibility.js';
 import type { PiPermissionMode, PiRpcStateData } from './types.js';
 
-const DEFAULT_PI_RPC_PROMPT_ACK_START_GRACE_MS = 2_500;
+const PI_VERSION_PROBE_TIMEOUT_MS = 30_000;
 
 type PiRuntimeOperationsParams = Readonly<{
-  ctx: PluginContextV1;
+  services: Pick<PluginServices, 'exec'>;
+  logger: PluginLoggerService;
   cwd: string;
   env: Readonly<Record<string, string>>;
+  unsetEnvKeys?: readonly string[];
   permissionMode?: PiPermissionMode;
   initialSessionId?: string | null;
   resumeSessionId?: string | null;
-  happierSessionId?: string | null;
+  sessionId: string;
   eagerStart?: boolean;
 }>;
 
-type RuntimeEventHandler = (event: RuntimeEventV1) => void;
+type RuntimeEventHandler = (event: AgentSessionRuntimeEvent) => void;
 type RuntimeEventPublisher = (event: unknown) => void;
 
 type ActiveTurnState = Readonly<{
@@ -61,28 +74,47 @@ type PendingCompletion = Readonly<{
   reject: (error: Error) => void;
 }>;
 
+type PendingPromptAdmission = {
+  turnId: string;
+  onAccepted: () => void;
+  bufferedRecords: AgentSessionPreAdmissionBuffer<Readonly<Record<string, unknown>>>;
+  bufferFailure: Exclude<AgentSessionPreAdmissionBufferResult, { status: 'accepted' }> | null;
+};
+
+type PendingCancellation = {
+  turnId: string;
+  reason: 'user' | 'hostShutdown' | 'sessionDispose' | 'runtimeRecovery';
+  finalBoundaryObserved: boolean;
+  finalBoundaryAgentTurnId: string | null;
+};
+
 type PiRuntimeTurnOperations = Readonly<{
-  beginTurnLifecycle(): void;
-  startOrLoadSession(opts?: Readonly<Record<string, unknown>>): Promise<string | null>;
-  sendTurnPrompt(prompt: string, delivery?: 'followUp'): Promise<void>;
+  beginTurnLifecycle(turnId?: string): void;
+  openSession(opts?: Readonly<Record<string, unknown>>): Promise<string | null>;
+  sendTurnPrompt(
+    prompt: string,
+    turnId: string,
+    delivery?: 'followUp',
+    onAccepted?: () => void,
+  ): Promise<void>;
   steerInFlightTurn(message: string): Promise<void>;
   waitForTurnCompletion(opts?: Readonly<Record<string, unknown>>): Promise<void>;
   subscribeRuntimeEvents(handler: RuntimeEventHandler): () => void;
-  cancelTurn(): Promise<void>;
+  cancelTurn(
+    turnId: string,
+    reason: PendingCancellation['reason'],
+  ): Promise<void>;
   readSessionIdentity(): Readonly<{ sessionId: string | null }>;
-  updateSessionRuntimeConfig(update: SessionRuntimeConfigUpdateV1): Promise<void>;
+  updateSessionRuntimeConfig(update: AgentSessionConfigurationSnapshot): Promise<readonly string[]>;
+  compactContext(request: AgentSessionCompactRequest): Promise<void>;
+  publishRuntimeEvent(event: PiRuntimeEvent): void;
   resetOrDisposeRuntime(): Promise<void>;
 }>;
 
 type RuntimeOperationsWithRecordHandler = PiRuntimeTurnOperations & Readonly<{
   handleRuntimeRecord(record: Readonly<Record<string, unknown>>): void;
+  handleProcessExit(result: Parameters<Parameters<PiJsonStreamRpcClient['onExit']>[0]>[0]): void;
 }>;
-
-type PendingPromptAcceptance = {
-  info: RuntimePromptAcceptedInfoV1;
-  providerEvidenceObserved: boolean;
-  submitted: boolean;
-};
 
 function readString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
@@ -90,6 +122,21 @@ function readString(value: unknown): string | null {
 
 function isPiRpcClientDisposedError(error: unknown): boolean {
   return error instanceof Error && error.message === 'Pi RPC client disposed';
+}
+
+class PiRpcSubmissionOutcomeUnknownError extends Error {
+  readonly kind = 'possible_write';
+
+  constructor(error: Error) {
+    super(error.message);
+    this.name = 'PiRpcSubmissionOutcomeUnknownError';
+  }
+}
+
+function classifyPiRpcSubmissionFailure(error: Error): Error {
+  return error instanceof PiRpcNegativeAcknowledgementError
+    ? error
+    : new PiRpcSubmissionOutcomeUnknownError(error);
 }
 
 function readRawString(value: unknown): string | null {
@@ -141,6 +188,12 @@ function readPiAssistantErrorPreview(record: Readonly<Record<string, unknown>>):
   const message = isRecord(record.message) ? record.message : null;
   if (message?.role !== 'assistant') return null;
   const stopReason = readString(message.stopReason ?? message.stop_reason ?? record.stopReason ?? record.stop_reason);
+  const retainedProviderDiagnostic = readString(
+    message.happierRequestAuthProviderDiagnostic,
+  );
+  if (retainedProviderDiagnostic && stopReason === 'error') {
+    return retainedProviderDiagnostic;
+  }
   const candidates = [
     message.errorMessage,
     message.error_message,
@@ -159,49 +212,8 @@ function readPiAssistantErrorPreview(record: Readonly<Record<string, unknown>>):
   return readProviderErrorPreviewFromText(preview);
 }
 
-function readRuntimeInputText(input: RuntimeInputPayloadV1): string | null {
-  return readString(input.text);
-}
-
-function readRuntimePromptAcceptedInfo(options: RuntimeSendOptionsV1 | undefined): RuntimePromptAcceptedInfoV1 {
-  const localInputIds: string[] = [];
-  const appendLocalInputId = (value: unknown) => {
-    const localInputId = readString(value);
-    if (!localInputId || localInputIds.includes(localInputId)) return;
-    localInputIds.push(localInputId);
-  };
-  appendLocalInputId(options?.localInputId);
-  for (const localInputId of options?.localInputIds ?? []) {
-    appendLocalInputId(localInputId);
-  }
-
-  const userMessageSeqs: number[] = [];
-  const appendUserMessageSeq = (value: unknown) => {
-    if (!Number.isSafeInteger(value) || (value as number) < 0) return;
-    if (userMessageSeqs.includes(value as number)) return;
-    userMessageSeqs.push(value as number);
-  };
-  appendUserMessageSeq(options?.userMessageSeq);
-  for (const userMessageSeq of options?.userMessageSeqs ?? []) {
-    appendUserMessageSeq(userMessageSeq);
-  }
-
-  const primaryUserMessageSeq = options?.userMessageSeq;
-  return {
-    ...(localInputIds.length === 0 ? {} : { localInputIds }),
-    userMessageSeq: Number.isSafeInteger(primaryUserMessageSeq) && (primaryUserMessageSeq as number) >= 0
-      ? Math.trunc(primaryUserMessageSeq as number)
-      : null,
-    ...(userMessageSeqs.length === 0 ? {} : { userMessageSeqs }),
-  };
-}
-
-function accepted(): RuntimeSendResultV1 {
-  return { status: 'accepted' };
-}
-
-function rejected(diagnostic: string): RuntimeSendResultV1 {
-  return { status: 'rejected', diagnostic };
+function diagnostic(code: string, message: string): PluginDiagnosticData {
+  return { code, severity: 'error', message };
 }
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -214,14 +226,46 @@ function normalizeEnv(env: Readonly<Record<string, string | undefined>>): Record
   );
 }
 
-function withPiBrokerLoadNonceForSpawn(env: Readonly<Record<string, string>>): Record<string, string> {
-  const next = { ...env };
-  const selections = parsePiBrokerSelections(next[PI_BROKER_SELECTIONS_ENV]);
-  const hasBrokeredProvider = PI_BROKER_PROVIDERS.some((provider) => selections[provider]);
-  if (hasBrokeredProvider) {
-    next[PI_BROKER_LOAD_NONCE_ENV] = randomUUID();
+function hasPiRequestAuthProvider(env: Readonly<Record<string, string | undefined>>): boolean {
+  return readString(env[PI_REQUEST_AUTH_CAPABILITY_PATH_ENV]) !== null
+    || readPiConnectedServiceIdFromEnv(env) !== null;
+}
+
+function assertPiRequestAuthRuntimeConfigured(env: Readonly<Record<string, string | undefined>>): void {
+  if (
+    readString(env.PI_CODING_AGENT_DIR) === null
+    || readString(env[PI_REQUEST_AUTH_CAPABILITY_PATH_ENV]) === null
+  ) {
+    throw new Error('Pi request-auth runtime requires the agent dir and child endpoint capability');
   }
-  return next;
+}
+
+async function requireSupportedPiRequestAuthVersion(
+  params: PiRuntimeOperationsParams,
+  executable: ManagedExecutableRef,
+): Promise<string> {
+  let output = '';
+  try {
+    const result = await params.services.exec.run({
+      executable,
+      args: ['--version'],
+      cwd: { root: 'workspace', relativePath: '' },
+      timeoutMs: PI_VERSION_PROBE_TIMEOUT_MS,
+      maxStdoutBytes: 8 * 1024,
+      maxStderrBytes: 8 * 1024,
+    });
+    if (result.termination.observed.kind === 'exit' && result.termination.observed.exitCode === 0) {
+      const decode = new TextDecoder();
+      output = `${decode.decode(result.stdout)}\n${decode.decode(result.stderr)}`;
+    }
+  } catch {
+    // The compatibility resolver below turns an unavailable/unreadable probe into a typed refusal.
+  }
+  const compatibility = resolvePiRequestAuthCompatibility(output);
+  if (!compatibility.supported) {
+    throw new PiRequestAuthCompatibilityError(compatibility);
+  }
+  return compatibility.version;
 }
 
 function readSessionIdFromState(value: unknown): string | null {
@@ -269,12 +313,15 @@ async function withTimeout(promise: Promise<void>, opts: Readonly<Record<string,
   }
 }
 
-function createPiExecSpec(params: PiRuntimeOperationsParams): ExecJsonStreamClientSpecV1 {
+function createPiExecSpec(
+  params: PiRuntimeOperationsParams,
+  executable: ManagedExecutableRef,
+) {
   const thinkingLevel = resolvePiThinkingLevelFromEnv(params.env);
   return {
+    kind: 'jsonStream' as const,
     launch: {
-      kind: 'agent-cli',
-      agentId: 'pi',
+      executable,
       args: buildPiRpcArgs({
         permissionMode: params.permissionMode,
         thinkingLevel,
@@ -282,7 +329,7 @@ function createPiExecSpec(params: PiRuntimeOperationsParams): ExecJsonStreamClie
         connectedServiceId: readPiConnectedServiceIdFromEnv(params.env),
         env: params.env,
       }),
-      cwd: params.cwd,
+      cwd: { root: 'workspace' as const, relativePath: '' },
       env: {
         ...params.env,
         ...(thinkingLevel ? { [PI_THINKING_LEVEL_ENV]: thinkingLevel } : {}),
@@ -290,56 +337,62 @@ function createPiExecSpec(params: PiRuntimeOperationsParams): ExecJsonStreamClie
         DEBUG: '',
         CI: '1',
       },
+      ...(params.unsetEnvKeys && params.unsetEnvKeys.length > 0
+        ? { unsetEnvKeys: params.unsetEnvKeys }
+        : {}),
     },
-    transport: {
-      kind: 'stdio',
-      framing: { kind: 'strict-lf-json' },
-    },
-    protocol: { kind: 'json-stream' },
-    lifecycle: {
-      requestTimeoutMs: 30_000,
-      maxStderrBytes: 4096,
-    },
+    maxFrameBytes: 16 * 1024 * 1024,
   };
 }
 
 function createRuntimeOperations(params: Readonly<{
   rpc: PiJsonStreamRpcClient;
-  happierSessionId: string | null;
+  sessionId: string;
   initialSessionId: string | null;
   subscribeRuntimeEvents: (handler: RuntimeEventHandler) => () => void;
   publishRuntimeEvent: RuntimeEventPublisher;
 }>): RuntimeOperationsWithRecordHandler {
+  const runtimeEventProjector = createPiRuntimeEventProjector();
   let sessionId = params.initialSessionId;
   let activeTurn: ActiveTurnState | null = null;
   let activeTurnStartObserved = false;
   let activeTurnAssistantMessageObserved = false;
   let activeTurnProviderErrorPreview: string | null = null;
-  let promptAckFailureGraceActive = false;
+  let retryingTurnProviderErrorPreview: string | null = null;
+  let replayingPromptAckFailureRecords = false;
   let settledTurnFailure: Error | null = null;
   let pendingCompletion: PendingCompletion | null = null;
+  let disposalStarted = false;
+  let unexpectedExitPublished = false;
+  let publishedProviderSessionId: string | null = null;
+  let pendingPromptAdmission: PendingPromptAdmission | null = null;
+  let pendingCancellation: PendingCancellation | null = null;
 
-  function beginTurn(agentTurnId: string | null = null): ActiveTurnState {
+  function beginTurn(
+    agentTurnId: string | null = null,
+    turnId: string = randomUUID(),
+    startedBy: 'host' | 'provider' = 'provider',
+  ): ActiveTurnState {
+    runtimeEventProjector.resetTurn();
     const turn = Object.freeze({
-      turnId: randomUUID(),
+      turnId,
       agentTurnId,
     });
     activeTurn = turn;
     activeTurnStartObserved = false;
     activeTurnAssistantMessageObserved = false;
     activeTurnProviderErrorPreview = null;
+    retryingTurnProviderErrorPreview = null;
     settledTurnFailure = null;
     pendingCompletion = createCompletion();
-    if (params.happierSessionId) {
-      params.publishRuntimeEvent({
+    params.publishRuntimeEvent({
         kind: 'turn-start',
-        sessionId: params.happierSessionId,
+        sessionId: params.sessionId,
         emittedAtMs: Date.now(),
         turnId: turn.turnId,
         ...(agentTurnId ? { agentTurnId } : {}),
-        startedBy: 'provider',
+        startedBy,
       });
-    }
     return turn;
   }
 
@@ -348,7 +401,9 @@ function createRuntimeOperations(params: Readonly<{
     activeTurnStartObserved = false;
     activeTurnAssistantMessageObserved = false;
     activeTurnProviderErrorPreview = null;
+    retryingTurnProviderErrorPreview = null;
     pendingCompletion = null;
+    runtimeEventProjector.resetTurn();
   }
 
   function rejectActiveTurn(error: Error): void {
@@ -356,22 +411,24 @@ function createRuntimeOperations(params: Readonly<{
     clearActiveTurn();
   }
 
-  function readOrBeginTurn(agentTurnId: string | null = null): ActiveTurnState {
-    if (!activeTurn) return beginTurn(agentTurnId);
+  function readOrBeginTurn(
+    agentTurnId: string | null = null,
+    turnId?: string,
+    startedBy: 'host' | 'provider' = 'provider',
+  ): ActiveTurnState {
+    if (!activeTurn) return beginTurn(agentTurnId, turnId, startedBy);
     if (agentTurnId && activeTurn.agentTurnId !== agentTurnId) {
       activeTurn = Object.freeze({
         turnId: activeTurn.turnId,
         agentTurnId,
       });
-      if (params.happierSessionId) {
-        params.publishRuntimeEvent({
+      params.publishRuntimeEvent({
           kind: 'turn-agent-id-observed',
-          sessionId: params.happierSessionId,
+          sessionId: params.sessionId,
           emittedAtMs: Date.now(),
           turnId: activeTurn.turnId,
           agentTurnId,
         });
-      }
     }
     return activeTurn;
   }
@@ -381,25 +438,22 @@ function createRuntimeOperations(params: Readonly<{
     agentTurnId: string | null,
     completion: PendingCompletion | null,
   ): boolean {
-    if (!params.happierSessionId || activeTurnAssistantMessageObserved) return false;
-    const emittedAtMs = Date.now();
     const providerErrorPreview = activeTurnProviderErrorPreview;
+    if (activeTurnAssistantMessageObserved && !providerErrorPreview) return false;
+    const emittedAtMs = Date.now();
     settledTurnFailure = new Error(providerErrorPreview
       ?? 'Pi completed the turn without returning an assistant message. Check provider credentials, model availability, and Pi logs.');
     params.publishRuntimeEvent({
       kind: 'turn-failed',
-      sessionId: params.happierSessionId,
+      sessionId: params.sessionId,
       emittedAtMs,
       turnId: turn.turnId,
       ...(agentTurnId ? { agentTurnId } : {}),
-      issue: buildSessionRuntimeIssueV1({
-        code: providerErrorPreview ? 'pi_provider_session_error' : 'pi_empty_provider_response',
-        source: 'agent_session_error',
-        occurredAt: emittedAtMs,
-        agentId: 'pi',
-        sanitizedPreview: providerErrorPreview
+      diagnostic: diagnostic(
+        providerErrorPreview ? 'pi_provider_session_error' : 'pi_empty_provider_response',
+        providerErrorPreview
           ?? 'Pi completed the turn without returning an assistant message. Check provider credentials, model availability, and Pi logs.',
-      }),
+      ),
     });
     clearActiveTurn();
     completion?.resolve();
@@ -414,38 +468,49 @@ function createRuntimeOperations(params: Readonly<{
     if (settleTurnFailedForEmptyResponse(turn, terminalProviderTurnId, completion)) {
       return;
     }
-    if (params.happierSessionId) {
-      params.publishRuntimeEvent({
+    params.publishRuntimeEvent({
         kind: 'turn-complete',
-        sessionId: params.happierSessionId,
+        sessionId: params.sessionId,
         emittedAtMs: Date.now(),
         turnId: turn.turnId,
         ...(terminalProviderTurnId ? { agentTurnId: terminalProviderTurnId } : {}),
       });
-    }
     settledTurnFailure = null;
     clearActiveTurn();
     completion?.resolve();
   }
 
-  async function waitForAcceptedTurnStreamAfterPromptAckFailure(completion: PendingCompletion): Promise<boolean> {
-    const deadline = Date.now() + DEFAULT_PI_RPC_PROMPT_ACK_START_GRACE_MS;
-    while (Date.now() < deadline) {
-      if (!pendingCompletion || pendingCompletion !== completion) {
-        if (settledTurnFailure) throw settledTurnFailure;
-        return true;
-      }
-      if (activeTurnStartObserved || activeTurnAssistantMessageObserved) {
-        await completion.promise;
-        if (settledTurnFailure) throw settledTurnFailure;
-        return true;
-      }
-      await new Promise((resolve) => setTimeout(resolve, Math.min(25, Math.max(1, deadline - Date.now()))));
-    }
-    return false;
+  function settleTurnCancelled(
+    turnId: string,
+    reason: PendingCancellation['reason'],
+  ): void {
+    const turn = activeTurn;
+    if (!turn || turn.turnId !== turnId) return;
+    const completion = pendingCompletion;
+    const providerErrorPreview =
+      activeTurnProviderErrorPreview ?? retryingTurnProviderErrorPreview;
+    params.publishRuntimeEvent({
+      kind: 'turn-cancelled',
+      sessionId: params.sessionId,
+      emittedAtMs: Date.now(),
+      turnId: turn.turnId,
+      ...(turn.agentTurnId ? { agentTurnId: turn.agentTurnId } : {}),
+      cause: reason,
+      ...(providerErrorPreview
+        ? {
+          diagnostic: diagnostic(
+            'pi_provider_session_error',
+            providerErrorPreview,
+          ),
+        }
+        : {}),
+    });
+    settledTurnFailure = null;
+    clearActiveTurn();
+    completion?.resolve();
   }
 
-  function handleRuntimeRecord(record: Readonly<Record<string, unknown>>): void {
+  function handleRuntimeRecordNow(record: Readonly<Record<string, unknown>>): void {
     const type = readPiRuntimeRecordType(record);
     const agentTurnId = readPiProviderTurnId(record);
     if (type === 'turn_start' || type === 'agent_start') {
@@ -458,12 +523,13 @@ function createRuntimeOperations(params: Readonly<{
     if (
       providerErrorPreview
       && !activeTurnProviderErrorPreview
-      && (!promptAckFailureGraceActive || activeTurnStartObserved || activeTurnAssistantMessageObserved)
+      && (!replayingPromptAckFailureRecords || activeTurnStartObserved || activeTurnAssistantMessageObserved)
     ) {
       activeTurnProviderErrorPreview = providerErrorPreview;
+      retryingTurnProviderErrorPreview = null;
     }
-    const projectedEvents = projectPiRuntimeEvents(record, {
-      sessionId: params.happierSessionId,
+    const projectedEvents = runtimeEventProjector.project(record, {
+      sessionId: params.sessionId,
       turnId: turn?.turnId ?? null,
       agentSessionId: sessionId,
       nowMs: () => Date.now(),
@@ -475,7 +541,7 @@ function createRuntimeOperations(params: Readonly<{
       params.publishRuntimeEvent(event);
     }
     if (
-      promptAckFailureGraceActive
+      replayingPromptAckFailureRecords
       && !activeTurnStartObserved
       && !activeTurnAssistantMessageObserved
       && (type === 'turn_end' || type === 'agent_end')
@@ -484,23 +550,88 @@ function createRuntimeOperations(params: Readonly<{
     }
     if (type === 'turn_end') {
       if (agentTurnId) readOrBeginTurn(agentTurnId);
-      settleTurnComplete(agentTurnId);
       return;
     }
-    if (type === 'agent_end' && record.willRetry !== true) {
-      settleTurnComplete(agentTurnId);
+    const agentEndBoundary = classifyPiAgentEndBoundary(record);
+    if (agentEndBoundary === 'retrying') {
+      retryingTurnProviderErrorPreview = activeTurnProviderErrorPreview;
+      activeTurnProviderErrorPreview = null;
+      return;
+    }
+    if (type === 'auto_retry_end' && record.success === false) {
+      activeTurnProviderErrorPreview ??= retryingTurnProviderErrorPreview;
+      if (turn && pendingCancellation?.turnId === turn.turnId) {
+        pendingCancellation.finalBoundaryObserved = true;
+        pendingCancellation.finalBoundaryAgentTurnId =
+          agentTurnId ?? turn.agentTurnId;
+        return;
+      }
+      settleTurnComplete(activeTurn?.agentTurnId ?? null);
+      return;
+    }
+    if (agentEndBoundary === 'final') {
+      if (turn && pendingCancellation?.turnId === turn.turnId) {
+        pendingCancellation.finalBoundaryObserved = true;
+        pendingCancellation.finalBoundaryAgentTurnId = agentTurnId ?? turn.agentTurnId;
+        return;
+      }
+      settleTurnComplete(activeTurn?.agentTurnId ?? null);
     }
   }
 
+  function handleProcessExit(
+    result: Parameters<Parameters<PiJsonStreamRpcClient['onExit']>[0]>[0],
+  ): void {
+    if (disposalStarted || unexpectedExitPublished) return;
+    unexpectedExitPublished = true;
+    const exitDescription = result.signal
+      ? `signal ${result.signal}`
+      : `exit code ${result.exitCode ?? 'unknown'}`;
+    const failure = new Error(`Pi RPC process exited unexpectedly (${exitDescription}).`);
+    const turn = activeTurn;
+    const completion = pendingCompletion;
+    if (turn) {
+      const emittedAtMs = Date.now();
+      params.publishRuntimeEvent({
+        kind: 'turn-failed',
+        sessionId: params.sessionId,
+        emittedAtMs,
+        turnId: turn.turnId,
+        ...(turn.agentTurnId ? { agentTurnId: turn.agentTurnId } : {}),
+        diagnostic: diagnostic('pi_rpc_unexpected_exit', failure.message),
+      });
+    }
+    settledTurnFailure = failure;
+    clearActiveTurn();
+    completion?.reject(failure);
+    params.publishRuntimeEvent({
+        kind: 'runtime-ended',
+        sessionId: params.sessionId,
+        emittedAtMs: Date.now(),
+        cause: 'processExited',
+        retryable: true,
+        diagnostic: diagnostic('pi_rpc_unexpected_exit', failure.message),
+      });
+  }
+
   return {
-    beginTurnLifecycle() {
-      beginTurn();
+    beginTurnLifecycle(turnId) {
+      beginTurn(null, turnId);
     },
-    async startOrLoadSession(opts?: Readonly<Record<string, unknown>>): Promise<string | null> {
+    async openSession(opts?: Readonly<Record<string, unknown>>): Promise<string | null> {
       const requestedResumeId = readString(opts?.resumeId) ?? readString(opts?.providerSessionId);
       if (sessionId) {
         if (requestedResumeId && requestedResumeId !== sessionId) {
           throw new Error(`Pi session mismatch (expected ${requestedResumeId}, got ${sessionId})`);
+        }
+        if (publishedProviderSessionId !== sessionId) {
+          publishedProviderSessionId = sessionId;
+          params.publishRuntimeEvent({
+            kind: 'provider-session-id',
+            sessionId: params.sessionId,
+            emittedAtMs: Date.now(),
+            providerSessionId: sessionId,
+          });
         }
         return sessionId;
       }
@@ -517,35 +648,92 @@ function createRuntimeOperations(params: Readonly<{
       if (!sessionId) {
         throw new Error('Pi did not return a session id');
       }
+      if (publishedProviderSessionId !== sessionId) {
+        publishedProviderSessionId = sessionId;
+        params.publishRuntimeEvent({
+          kind: 'provider-session-id',
+          sessionId: params.sessionId,
+          emittedAtMs: Date.now(),
+          providerSessionId: sessionId,
+        });
+      }
       return sessionId;
     },
-    async sendTurnPrompt(prompt: string, delivery?: 'followUp'): Promise<void> {
-      readOrBeginTurn();
-      const completion = pendingCompletion;
+    async sendTurnPrompt(
+      prompt: string,
+      turnId: string,
+      delivery?: 'followUp',
+      onAccepted: () => void = () => undefined,
+    ): Promise<void> {
+      if (pendingPromptAdmission) {
+        throw new Error('Pi prompt admission is already in progress');
+      }
+      const admission: PendingPromptAdmission = {
+        turnId,
+        onAccepted,
+        bufferedRecords: createAgentSessionPreAdmissionBuffer(),
+        bufferFailure: null,
+      };
+      pendingPromptAdmission = admission;
+      const accept = () => {
+        admission.onAccepted();
+        readOrBeginTurn(null, admission.turnId, 'host');
+      };
+      const replayBufferedRecords = () => {
+        const records = admission.bufferedRecords.drain();
+        for (const record of records) handleRuntimeRecordNow(record);
+      };
       try {
         await params.rpc.send({
           type: 'prompt',
           message: prompt,
           ...(delivery ? { streamingBehavior: delivery } : {}),
         }, 30_000);
+        accept();
+        if (admission.bufferFailure !== null) {
+          const failure = admission.bufferFailure;
+          throw new Error(
+            `Pi pre-admission record buffer rejected a record (${failure.status}${failure.status === 'overflow' ? `:${failure.reason}` : ''})`,
+          );
+        }
+        pendingPromptAdmission = null;
+        replayBufferedRecords();
+        admission.bufferedRecords.dispose();
       } catch (error) {
         const promptError = error instanceof Error ? error : new Error(String(error));
-        if (completion) {
-          promptAckFailureGraceActive = true;
-          try {
-            if (await waitForAcceptedTurnStreamAfterPromptAckFailure(completion)) {
-              return;
-            }
-          } finally {
-            promptAckFailureGraceActive = false;
-          }
+        if (admission.bufferFailure !== null) {
+          admission.bufferedRecords.dispose();
+          pendingPromptAdmission = null;
+          const submissionError = classifyPiRpcSubmissionFailure(promptError);
+          rejectActiveTurn(submissionError);
+          throw submissionError;
         }
-        rejectActiveTurn(promptError);
-        throw promptError;
+        replayingPromptAckFailureRecords = true;
+        try {
+          // Pi stream events do not echo the prompt request ID, so replay them for output/lifecycle
+          // visibility without treating unrelated activity as acceptance evidence for this prompt.
+          const records = admission.bufferedRecords.drain();
+          for (const record of records) handleRuntimeRecordNow(record);
+        } finally {
+          replayingPromptAckFailureRecords = false;
+          admission.bufferedRecords.dispose();
+        }
+        pendingPromptAdmission = null;
+        const submissionError = classifyPiRpcSubmissionFailure(promptError);
+        rejectActiveTurn(submissionError);
+        throw submissionError;
       }
     },
     async steerInFlightTurn(message: string): Promise<void> {
-      await params.rpc.send({ type: 'prompt', message, streamingBehavior: 'steer' }, 30_000);
+      if (pendingPromptAdmission) {
+        throw new Error('Pi prompt admission is already in progress');
+      }
+      try {
+        await params.rpc.send({ type: 'prompt', message, streamingBehavior: 'steer' }, 30_000);
+      } catch (error) {
+        const promptError = error instanceof Error ? error : new Error(String(error));
+        throw classifyPiRpcSubmissionFailure(promptError);
+      }
     },
     async waitForTurnCompletion(opts?: Readonly<Record<string, unknown>>): Promise<void> {
       const completion = pendingCompletion;
@@ -555,19 +743,41 @@ function createRuntimeOperations(params: Readonly<{
     subscribeRuntimeEvents(handler: RuntimeEventHandler): () => void {
       return params.subscribeRuntimeEvents(handler);
     },
-    async cancelTurn(): Promise<void> {
+    async cancelTurn(turnId, reason): Promise<void> {
+      if (pendingCancellation) {
+        throw new Error('Pi cancellation is already in progress');
+      }
+      const cancellation: PendingCancellation | null = activeTurn?.turnId === turnId
+        ? {
+          turnId,
+          reason,
+          finalBoundaryObserved: false,
+          finalBoundaryAgentTurnId: null,
+        }
+        : null;
+      pendingCancellation = cancellation;
       try {
         await params.rpc.send({ type: 'abort' }, 30_000);
       } catch (error) {
+        if (pendingCancellation === cancellation) pendingCancellation = null;
         if (isPiRpcClientDisposedError(error)) return;
+        if (
+          cancellation?.finalBoundaryObserved
+          && activeTurn?.turnId === cancellation.turnId
+        ) {
+          settleTurnComplete(cancellation.finalBoundaryAgentTurnId);
+        }
         throw error;
       }
+      if (pendingCancellation === cancellation) pendingCancellation = null;
+      if (cancellation) settleTurnCancelled(cancellation.turnId, cancellation.reason);
     },
     readSessionIdentity() {
       return { sessionId };
     },
-    async updateSessionRuntimeConfig(update: Readonly<Record<string, unknown>>): Promise<void> {
-      const modelId = readString(update.modelId) ?? readString(update.model);
+    async updateSessionRuntimeConfig(update): Promise<readonly string[]> {
+      const changed: string[] = [];
+      const modelId = readString(update.model.value);
       if (modelId) {
         const [provider, ...modelParts] = modelId.split('/');
         await params.rpc.send({
@@ -575,189 +785,293 @@ function createRuntimeOperations(params: Readonly<{
           provider: modelParts.length > 0 ? provider : 'default',
           modelId: modelParts.length > 0 ? modelParts.join('/') : modelId,
         }, 30_000);
+        changed.push('model');
       }
-      const configOption = isRecord(update.configOption) ? update.configOption : null;
-      if (configOption?.id === 'piThinkingLevel' || configOption?.id === 'reasoning_effort') {
-        const level = readString(configOption.value);
-        if (level) await params.rpc.send({ type: 'set_thinking_level', level }, 30_000);
+      const reasoning = update.options.reasoning_effort ?? update.options.piThinkingLevel;
+      const level = readString(reasoning?.value);
+      if (level) {
+        await params.rpc.send({ type: 'set_thinking_level', level }, 30_000);
+        changed.push('options');
+      }
+      return changed;
+    },
+    async compactContext(request): Promise<void> {
+      runtimeEventProjector.expectHostCompaction(request);
+      try {
+        await params.rpc.send({
+          type: 'compact',
+          ...(request.instructions ? { customInstructions: request.instructions } : {}),
+        }, 60_000);
+      } catch (error) {
+        runtimeEventProjector.clearExpectedHostCompaction(request.compactionId);
+        throw error;
       }
     },
+    publishRuntimeEvent(event) {
+      params.publishRuntimeEvent(event);
+    },
     async resetOrDisposeRuntime(): Promise<void> {
+      disposalStarted = true;
+      pendingPromptAdmission?.bufferedRecords.dispose();
+      pendingPromptAdmission = null;
+      pendingCancellation = null;
       pendingCompletion?.reject(new Error('Pi runtime disposed'));
       clearActiveTurn();
       settledTurnFailure = null;
       await params.rpc.dispose();
     },
-    handleRuntimeRecord,
+    handleRuntimeRecord(record) {
+      const admission = pendingPromptAdmission;
+      if (!admission) {
+        handleRuntimeRecordNow(record);
+        return;
+      }
+      const result = admission.bufferedRecords.admit(record);
+      if (result.status !== 'accepted' && admission.bufferFailure === null) {
+        admission.bufferFailure = result;
+        admission.bufferedRecords.dispose();
+      }
+    },
+    handleProcessExit,
   };
 }
 
+export type PiSessionRuntime = AgentSessionRuntime;
+
 function createPiSessionRuntime(params: Readonly<{
   operations: PiRuntimeTurnOperations;
+  sessionId: string;
   resumeSessionId: string | null;
   clearSubscribers: () => void;
-}>): SessionRuntimeV1 {
-  let promptAcceptedCallback: RuntimePromptAcceptedCallbackV1 | null = null;
-  const pendingPromptAcceptances: PendingPromptAcceptance[] = [];
-  const flushProviderAcceptedPrompts = (): void => {
-    const accepted = pendingPromptAcceptances.filter((pending) =>
-      pending.submitted && pending.providerEvidenceObserved);
-    for (const pending of accepted) {
-      const index = pendingPromptAcceptances.indexOf(pending);
-      if (index >= 0) pendingPromptAcceptances.splice(index, 1);
-      promptAcceptedCallback?.(pending.info);
-    }
-  };
-  const observeProviderAcceptanceEvidence = (): void => {
-    const pending = pendingPromptAcceptances.find((candidate) => !candidate.providerEvidenceObserved);
-    if (!pending) return;
-    pending.providerEvidenceObserved = true;
-    flushProviderAcceptedPrompts();
-  };
-  const enqueuePromptAcceptance = (info: RuntimePromptAcceptedInfoV1): PendingPromptAcceptance => {
-    const pending = {
-      info,
-      providerEvidenceObserved: false,
-      submitted: false,
-    };
-    pendingPromptAcceptances.push(pending);
-    return pending;
-  };
-  const markPromptSubmitted = (pending: PendingPromptAcceptance): void => {
-    pending.submitted = true;
-    flushProviderAcceptedPrompts();
-  };
-  const removePendingPromptAcceptance = (pending: PendingPromptAcceptance): void => {
-    const index = pendingPromptAcceptances.indexOf(pending);
-    if (index >= 0) pendingPromptAcceptances.splice(index, 1);
-  };
-  const providerEvidenceSubscription = params.operations.subscribeRuntimeEvents((event) => {
+}>): PiSessionRuntime {
+  let disposed = false;
+  let activeCompactionId: string | null = null;
+  const compactionSubscription = params.operations.subscribeRuntimeEvents((event) => {
     if (
-      event.kind === 'message-delta'
-      || event.kind === 'tool-call'
-      || event.kind === 'tool-result'
-      || event.kind === 'tool-progress'
-      || event.kind === 'turn-agent-id-observed'
-      || event.kind === 'turn-progress'
-      || event.kind === 'turn-complete'
-      || event.kind === 'turn-failed'
-      || event.kind === 'turn-cancelled'
+      event.kind === 'context-compaction'
+      && event.compactionId === activeCompactionId
+      && ['completed', 'failed', 'cancelled', 'outcomeUnknown'].includes(event.phase)
     ) {
-      observeProviderAcceptanceEvidence();
+      activeCompactionId = null;
     }
   });
-  const submitPromptWithAcceptanceTracking = async (
-    info: RuntimePromptAcceptedInfoV1,
-    submit: () => Promise<void>,
-  ): Promise<void> => {
-    const pending = enqueuePromptAcceptance(info);
-    try {
-      await submit();
-      markPromptSubmitted(pending);
-    } catch (error) {
-      removePendingPromptAcceptance(pending);
-      throw error;
+
+  const publishInputRejected = (request: AgentSessionSendRequest, reason: PluginDiagnosticData): void => {
+    params.operations.publishRuntimeEvent({
+      kind: 'input-rejected',
+      sessionId: params.sessionId,
+      emittedAtMs: Date.now(),
+      inputIds: request.inputIds,
+      diagnostic: reason,
+      retryable: false,
+    });
+  };
+
+  const publishInputAccepted = (request: AgentSessionSendRequest): void => {
+    params.operations.publishRuntimeEvent({
+      kind: 'input-accepted',
+      sessionId: params.sessionId,
+      emittedAtMs: Date.now(),
+      inputIds: request.inputIds,
+      delivery: request.delivery,
+    });
+  };
+
+  const publishInputCustodyUnknown = (request: AgentSessionSendRequest, issue: PluginDiagnosticData): void => {
+    params.operations.publishRuntimeEvent({
+      kind: 'input-custody-unknown',
+      sessionId: params.sessionId,
+      emittedAtMs: Date.now(),
+      inputIds: request.inputIds,
+      issue,
+    });
+  };
+
+  const publishInputDeliveryFailed = (request: AgentSessionSendRequest, issue: PluginDiagnosticData): void => {
+    if (request.delivery.kind === 'steer') {
+      params.operations.publishRuntimeEvent({
+        kind: 'input-custody-unknown',
+        sessionId: params.sessionId,
+        emittedAtMs: Date.now(),
+        inputIds: request.inputIds,
+        issue,
+      });
+      return;
     }
+    params.operations.publishRuntimeEvent({
+      kind: 'input-delivery-failed',
+      sessionId: params.sessionId,
+      emittedAtMs: Date.now(),
+      inputIds: request.inputIds,
+      delivery: request.delivery,
+      issue,
+      duplicateRisk: 'unknown',
+    });
   };
 
   return {
-    identity: {
-      read: () => ({
-        providerSessionId: params.operations.readSessionIdentity().sessionId,
-      }),
-    },
-    events: {
-      subscribe: (handler) => params.operations.subscribeRuntimeEvents(handler),
-    },
-    async send(input: RuntimeInputPayloadV1, options?: RuntimeSendOptionsV1): Promise<RuntimeSendResultV1> {
-      const prompt = readRuntimeInputText(input);
+    async send(request, options) {
+      const prompt = readString(request.input.text);
       if (!prompt) {
-        return rejected('Pi runtime input did not include text');
+        const reason = diagnostic('pi_input_missing_text', 'Pi runtime input did not include text');
+        publishInputRejected(request, reason);
+        return { status: 'rejected', diagnostic: reason, retryable: false };
       }
       if (options?.signal?.aborted === true) {
-        return rejected('Pi runtime input was aborted before delivery');
+        const reason = diagnostic('pi_input_aborted', 'Pi runtime input was aborted before delivery');
+        publishInputRejected(request, reason);
+        return { status: 'rejected', diagnostic: reason, retryable: false };
       }
-      await params.operations.startOrLoadSession(
-        params.resumeSessionId ? { resumeId: params.resumeSessionId } : undefined,
-      );
-      const acceptedInfo = readRuntimePromptAcceptedInfo(options);
-      if (options?.deliverAs === 'steer') {
-        await submitPromptWithAcceptanceTracking(acceptedInfo, async () => {
-          await params.operations.steerInFlightTurn(prompt);
-        });
-        return accepted();
-      }
-      await submitPromptWithAcceptanceTracking(acceptedInfo, async () => {
-        await params.operations.sendTurnPrompt(
-          prompt,
-          options?.deliverAs === 'followUp' ? 'followUp' : undefined,
+      let accepted = false;
+      try {
+        await params.operations.openSession(
+          params.resumeSessionId ? { resumeId: params.resumeSessionId } : undefined,
         );
-      });
-      return accepted();
+        if (request.delivery.kind === 'steer') {
+          await params.operations.steerInFlightTurn(prompt);
+          publishInputAccepted(request);
+          accepted = true;
+        } else {
+          await params.operations.sendTurnPrompt(
+            prompt,
+            request.delivery.turnId,
+            request.delivery.kind === 'followUp' ? 'followUp' : undefined,
+            () => {
+              publishInputAccepted(request);
+              accepted = true;
+            },
+          );
+        }
+        return { status: 'admitted' };
+      } catch (error) {
+        const outcomeUnknown = error instanceof PiRpcSubmissionOutcomeUnknownError;
+        const reason = diagnostic(
+          outcomeUnknown ? 'pi_input_outcome_unknown' : 'pi_input_rejected',
+          error instanceof Error ? error.message : String(error),
+        );
+        if (accepted) publishInputDeliveryFailed(request, reason);
+        else if (outcomeUnknown) publishInputCustodyUnknown(request, reason);
+        else publishInputRejected(request, reason);
+        return { status: 'rejected', diagnostic: reason, retryable: false };
+      }
     },
-    async cancel(): Promise<RuntimeCancelResultV1> {
-      await params.operations.cancelTurn();
-      return { status: 'cancelled' };
+    async cancel(request, options) {
+      if (options?.signal?.aborted) {
+        return { status: 'unavailable', diagnostic: diagnostic('pi_cancel_aborted', 'Pi cancellation was aborted') };
+      }
+      try {
+        await params.operations.cancelTurn(request.turnId, request.reason);
+        return { status: 'requested', turnId: request.turnId };
+      } catch (error) {
+        return {
+          status: 'unavailable',
+          diagnostic: diagnostic('pi_cancel_failed', error instanceof Error ? error.message : String(error)),
+        };
+      }
     },
-    permissions: { capability: 'static' },
-    updateConfig: async (update) => {
-      await params.operations.updateSessionRuntimeConfig(update);
+    async updateConfiguration(update, options) {
+      if (options?.signal?.aborted) {
+        return { status: 'unavailable', diagnostic: diagnostic('pi_configuration_aborted', 'Pi configuration update was aborted') };
+      }
+      try {
+        return { status: 'applied', changed: await params.operations.updateSessionRuntimeConfig(update) };
+      } catch (error) {
+        return {
+          status: 'rejected',
+          diagnostic: diagnostic('pi_configuration_failed', error instanceof Error ? error.message : String(error)),
+        };
+      }
     },
-    setOnPromptAcceptedByProvider: (handler) => {
-      promptAcceptedCallback = handler;
+    async compact(request, options) {
+      if (options?.signal?.aborted) {
+        return { status: 'rejected', diagnostic: diagnostic('pi_compaction_aborted', 'Pi compaction was aborted'), retryable: false };
+      }
+      if (activeCompactionId) {
+        return { status: 'rejected', diagnostic: diagnostic('pi_compaction_in_progress', 'Pi compaction is already running'), retryable: true };
+      }
+      activeCompactionId = request.compactionId;
+      try {
+        await params.operations.compactContext(request);
+        return { status: 'admitted' };
+      } catch (error) {
+        activeCompactionId = null;
+        return {
+          status: 'rejected',
+          diagnostic: diagnostic('pi_compaction_failed', error instanceof Error ? error.message : String(error)),
+          retryable: true,
+        };
+      }
+    },
+    watch(listener) {
+      const unsubscribe = params.operations.subscribeRuntimeEvents(listener);
+      return { dispose: unsubscribe };
     },
     dispose: async () => {
-      providerEvidenceSubscription();
-      pendingPromptAcceptances.length = 0;
-      promptAcceptedCallback = null;
+      if (disposed) return;
+      disposed = true;
+      compactionSubscription();
       params.clearSubscribers();
       await params.operations.resetOrDisposeRuntime();
     },
   };
 }
 
-export async function createPiRuntimeOperations(params: PiRuntimeOperationsParams): Promise<SessionRuntimeV1> {
+export async function createPiRuntimeOperations(params: PiRuntimeOperationsParams): Promise<PiSessionRuntime> {
   const normalizedEnv = normalizeEnv(params.env);
-  const spawnEnv = withPiBrokerLoadNonceForSpawn(normalizedEnv);
-  const happierSessionId = readString(params.happierSessionId);
-  const handle = await params.ctx.agentRuntime.exec.spawnClient(createPiExecSpec({
-    ...params,
-    env: spawnEnv,
-  }));
-  // Connected sessions auth via the Happier Pi broker extension (the materializer wrote it into the
-  // agent dir's `extensions/` auto-load dir + emitted the broker env). Fail-closed BEFORE the first
-  // prompt: confirm the extension exists, the daemon bridge is reachable, and the extension actually
-  // LOADED (it pings the daemon on activation). No-op for native + direct-API-key sessions. The marker
-  // credential is non-functional without the extension, so a failed preflight must fail the session
-  // rather than silently fall back to native/upstream auth.
-  const brokerReadiness = await verifyPiBrokerReadyForConnectedSession(spawnEnv);
-  if (!brokerReadiness.ready) {
-    await handle.dispose({ code: 'PI_BROKER_NOT_READY', message: brokerReadiness.reason }).catch(() => {});
-    throw new Error(`Pi connected-service broker not ready: ${brokerReadiness.reason}`);
+  const requestAuthEnabled = hasPiRequestAuthProvider(normalizedEnv);
+  if (requestAuthEnabled) {
+    assertPiRequestAuthRuntimeConfigured(normalizedEnv);
   }
+  let requestAuthProducerVersion: string | null = null;
+  const resolved = await params.services.exec.systemTools.resolve({
+    toolId: 'pi-cli',
+    purpose: 'Run the Pi RPC runtime',
+    cwd: params.cwd,
+  });
+  const executable = resolved.executable;
+  if (requestAuthEnabled) {
+    requestAuthProducerVersion = await requireSupportedPiRequestAuthVersion(params, executable);
+  }
+  const handle = await params.services.exec.clients.spawn(createPiExecSpec({
+    ...params,
+    env: {
+      ...normalizedEnv,
+      ...(requestAuthProducerVersion
+        ? { [PI_REQUEST_AUTH_PRODUCER_VERSION_ENV]: requestAuthProducerVersion }
+        : {}),
+    },
+  }, executable));
   const subscribers = new Set<RuntimeEventHandler>();
   let malformedRuntimeEventPublished = false;
-  const publishParsedRuntimeEvent = (event: RuntimeEventV1): void => {
+  let terminalRuntimeEventPublished = false;
+  let sequence = 0;
+  const publishParsedRuntimeEvent = (event: AgentSessionRuntimeEvent): void => {
+    if (terminalRuntimeEventPublished) return;
     for (const subscriber of subscribers) {
       subscriber(event);
     }
+    if (event.kind === 'runtime-ended') terminalRuntimeEventPublished = true;
   };
   const publishMalformedRuntimeEventDiagnostic = (
     event: unknown,
     issues: ReadonlyArray<Readonly<{ code: string; path: readonly PropertyKey[]; message: string }>>,
   ): void => {
-    params.ctx.logger.warn('[PiRuntime] rejected malformed RuntimeEventV1 payload', { issues });
+    params.logger.warn('[PiRuntime] rejected malformed AgentSessionRuntimeEvent payload');
     if (malformedRuntimeEventPublished) return;
     malformedRuntimeEventPublished = true;
     const eventKind = isRecord(event) && typeof event.kind === 'string' ? event.kind : null;
-    const diagnostic = RuntimeEventV1Schema.safeParse({
-      kind: 'backend-error',
-      sessionId: happierSessionId,
+    const parsedDiagnostic = AgentSessionRuntimeEventSchema.safeParse({
+      sequence: sequence + 1,
+      kind: 'runtime-ended',
+      sessionId: params.sessionId,
       emittedAtMs: Math.max(0, Math.trunc(Date.now())),
-      error: {
-        message: 'Pi emitted a malformed runtime event; event was rejected at the adapter boundary',
+      cause: 'protocolError',
+      retryable: true,
+      diagnostic: {
         code: 'malformed_runtime_event',
-        cause: {
+        severity: 'error',
+        message: 'Pi emitted a malformed native runtime event',
+        details: {
           eventKind,
           issues: issues.slice(0, 5).map((issue) => ({
             code: issue.code,
@@ -767,11 +1081,17 @@ export async function createPiRuntimeOperations(params: PiRuntimeOperationsParam
         },
       },
     });
-    if (diagnostic.success) publishParsedRuntimeEvent(diagnostic.data);
+    if (parsedDiagnostic.success) {
+      sequence += 1;
+      publishParsedRuntimeEvent(parsedDiagnostic.data);
+    }
   };
   const publishRuntimeEvent: RuntimeEventPublisher = (event): void => {
-    const parsed = RuntimeEventV1Schema.safeParse(event);
+    const parsed = AgentSessionRuntimeEventSchema.safeParse(
+      isRecord(event) ? { ...event, sequence: sequence + 1 } : event,
+    );
     if (parsed.success) {
+      sequence += 1;
       publishParsedRuntimeEvent(parsed.data);
       return;
     }
@@ -790,7 +1110,7 @@ export async function createPiRuntimeOperations(params: PiRuntimeOperationsParam
   });
   operations = createRuntimeOperations({
     rpc,
-    happierSessionId,
+    sessionId: params.sessionId,
     initialSessionId: params.initialSessionId ?? null,
     subscribeRuntimeEvents(handler) {
       subscribers.add(handler);
@@ -800,14 +1120,21 @@ export async function createPiRuntimeOperations(params: PiRuntimeOperationsParam
     },
     publishRuntimeEvent,
   });
+  const unsubscribeProcessExit = rpc.onExit((result) => {
+    operations?.handleProcessExit(result);
+  });
   if (params.eagerStart === true) {
-    await operations.startOrLoadSession(
+    await operations.openSession(
       params.resumeSessionId ? { resumeId: params.resumeSessionId } : undefined,
     );
   }
   return createPiSessionRuntime({
     operations,
+    sessionId: params.sessionId,
     resumeSessionId: readString(params.resumeSessionId),
-    clearSubscribers: () => subscribers.clear(),
+    clearSubscribers: () => {
+      unsubscribeProcessExit();
+      subscribers.clear();
+    },
   });
 }

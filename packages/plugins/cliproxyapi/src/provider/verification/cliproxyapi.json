@@ -1,0 +1,38 @@
+{
+  "v": 1,
+  "contributionKey": "happier.provider.cliproxyapi/cliproxyapi",
+  "reviewedAt": "2026-07-27",
+  "sources": [
+    { "id": "upstream-overview", "kind": "official-doc", "url": "https://github.com/router-for-me/CLIProxyAPI/blob/f71ec0eb6776854457892452cf28c47f0d658251/README.md", "accessedAt": "2026-07-23", "revision": "v7.2.95-f71ec0eb6776854457892452cf28c47f0d658251" },
+    { "id": "upstream-config", "kind": "official-doc", "url": "https://github.com/router-for-me/CLIProxyAPI/blob/f71ec0eb6776854457892452cf28c47f0d658251/config.example.yaml", "accessedAt": "2026-07-23", "revision": "v7.2.95-f71ec0eb6776854457892452cf28c47f0d658251" },
+    { "id": "upstream-routes", "kind": "official-doc", "url": "https://github.com/router-for-me/CLIProxyAPI/blob/f71ec0eb6776854457892452cf28c47f0d658251/internal/api/server.go", "accessedAt": "2026-07-23", "revision": "v7.2.95-f71ec0eb6776854457892452cf28c47f0d658251" },
+    { "id": "upstream-access", "kind": "official-doc", "url": "https://github.com/router-for-me/CLIProxyAPI/blob/f71ec0eb6776854457892452cf28c47f0d658251/internal/access/config_access/provider.go", "accessedAt": "2026-07-23", "revision": "v7.2.95-f71ec0eb6776854457892452cf28c47f0d658251" },
+    { "id": "upstream-release", "kind": "official-doc", "url": "https://github.com/router-for-me/CLIProxyAPI/blob/f71ec0eb6776854457892452cf28c47f0d658251/.github/workflows/release.yaml", "accessedAt": "2026-07-23", "revision": "v7.2.95-f71ec0eb6776854457892452cf28c47f0d658251" },
+    { "id": "product-contract", "kind": "product-decision", "locator": ".project/plans/cliproxyapi-provider-gateway/PLAN.md", "accessedAt": "2026-07-27", "revision": "r4.4.9" }
+  ],
+  "facts": [
+    { "path": "catalog.probes.cliproxyapi-openai-responses.openai-models", "sourceIds": ["upstream-routes", "product-contract"], "status": "verified" },
+    { "path": "catalog.source", "sourceIds": ["upstream-routes", "product-contract"], "status": "verified" },
+    { "path": "credential.kind", "sourceIds": ["upstream-access", "upstream-config"], "status": "verified" },
+    { "path": "credential.required", "sourceIds": ["upstream-access", "upstream-config"], "status": "verified" },
+    { "path": "credential.transports.cliproxyapi-http-bearer", "sourceIds": ["upstream-access"], "status": "verified" },
+    { "path": "discovery.availabilityProbe", "sourceIds": ["upstream-routes", "upstream-config"], "status": "verified" },
+    { "path": "discovery.listener", "sourceIds": ["upstream-config", "upstream-release"], "status": "verified" },
+    { "path": "endpointTemplates.cliproxyapi-anthropic.capabilities.reasoningControls", "sourceIds": ["upstream-overview", "upstream-routes"], "status": "experimental" },
+    { "path": "endpointTemplates.cliproxyapi-anthropic.capabilities.streaming", "sourceIds": ["upstream-overview", "upstream-routes"], "status": "verified" },
+    { "path": "endpointTemplates.cliproxyapi-anthropic.capabilities.toolRoundTrips", "sourceIds": ["upstream-overview", "upstream-routes"], "status": "verified" },
+    { "path": "endpointTemplates.cliproxyapi-anthropic.localUrlCandidates", "sourceIds": ["upstream-config", "upstream-routes"], "status": "verified" },
+    { "path": "endpointTemplates.cliproxyapi-anthropic.protocol", "sourceIds": ["upstream-overview", "upstream-routes"], "status": "verified" },
+    { "path": "endpointTemplates.cliproxyapi-openai-chat.capabilities.streaming", "sourceIds": ["upstream-overview", "upstream-routes"], "status": "verified" },
+    { "path": "endpointTemplates.cliproxyapi-openai-chat.capabilities.toolRoundTrips", "sourceIds": ["upstream-overview", "upstream-routes"], "status": "verified" },
+    { "path": "endpointTemplates.cliproxyapi-openai-chat.localUrlCandidates", "sourceIds": ["upstream-config", "upstream-routes"], "status": "verified" },
+    { "path": "endpointTemplates.cliproxyapi-openai-chat.protocol", "sourceIds": ["upstream-overview", "upstream-routes"], "status": "verified" },
+    { "path": "endpointTemplates.cliproxyapi-openai-responses.capabilities.reasoningControls", "sourceIds": ["upstream-overview", "upstream-routes"], "status": "experimental" },
+    { "path": "endpointTemplates.cliproxyapi-openai-responses.capabilities.streaming", "sourceIds": ["upstream-overview", "upstream-routes"], "status": "verified" },
+    { "path": "endpointTemplates.cliproxyapi-openai-responses.capabilities.toolRoundTrips", "sourceIds": ["upstream-overview", "upstream-routes"], "status": "verified" },
+    { "path": "endpointTemplates.cliproxyapi-openai-responses.localUrlCandidates", "sourceIds": ["upstream-config", "upstream-routes"], "status": "verified" },
+    { "path": "endpointTemplates.cliproxyapi-openai-responses.protocol", "sourceIds": ["upstream-overview", "upstream-routes"], "status": "verified" },
+    { "path": "kind", "sourceIds": ["upstream-overview", "product-contract"], "status": "verified" },
+    { "path": "websiteUrl", "sourceIds": ["upstream-overview"], "status": "verified" }
+  ]
+}

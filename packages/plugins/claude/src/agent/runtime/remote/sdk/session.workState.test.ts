@@ -9,7 +9,7 @@ import type {
   SessionSystemRecordReadRequestV1,
   SessionSystemRecordReadResultV1,
   SessionSystemRecordWriteRequestV1,
-} from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/experimental/sessions';
 
 import {
   createEventsFixture,
@@ -19,7 +19,7 @@ import {
   expectRuntimeEnvelope,
 } from '../../engine.testkit.js';
 import { getClaudeProjectPath } from '../../../surfaces/sessions/handoff/path.js';
-import { bindClaudeAgentSdkFallbackSession, createClaudeAgentSdkTurnOperations } from './session.js';
+import { bindClaudeAgentSdkFallbackSession, createClaudeAgentSdkTurnOperations } from './session.testkit.js';
 
 /**
  * Agent-SDK runner parity for goals + Dynamic Workflows.

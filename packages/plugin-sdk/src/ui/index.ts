@@ -12,4 +12,4 @@ export * from './reactNativeBuild.js';
 export * from './reactNativeBundles.js';
 export * from './reactNativeDevServer.js';
 export * from './reactNativeWebBuild.js';
-export type { SettingDefinitionMap } from '../ui.js';
+export type { SettingDefinitionMap } from '@happier-dev/protocol';

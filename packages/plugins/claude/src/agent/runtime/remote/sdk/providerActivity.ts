@@ -1,344 +1,398 @@
-import {
-    isTerminalClaudeAgentSdkProviderTaskStatus,
-    normalizeClaudeAgentSdkProviderTaskId,
-    normalizeClaudeAgentSdkProviderTaskStatus,
-    readClaudeAgentSdkProviderTaskStatus,
-} from './providerTaskStatus.js';
+import { normalizeClaudeAgentSdkProviderTaskId } from './providerTaskStatus.js';
+import type { SDKHookResponseMessage } from '../../../sdk/types.js';
 
+export type ClaudeProviderTaskIdentity = Readonly<{ sessionId: string; taskId: string }>;
 export type ClaudeProviderTaskActivity =
-    | Readonly<{ type: 'background'; taskId: string }>
-    | Readonly<{ type: 'started'; taskId: string }>
-    | Readonly<{ type: 'progress'; taskId: string }>
-    | Readonly<{ type: 'terminal'; taskId: string }>;
-
-export type ClaudeProviderActivitySource =
-    | 'assistant-auto-backgrounded-tool-result'
-    | 'system-task-progress'
-    | 'system-task-started';
-
-/**
- * Backstop TTL (W-3) for a provider task in the "is the session still working?" ledger. A dropped
- * terminal `task_updated` (connection gap / mode switch) would otherwise keep the session pinned
- * "working" until the process restarts. A task with no progress/terminal event within this window
- * stops blocking `hasActiveProviderTasks()`. Hook reconciliation stays the canonical clearer; this
- * is only the safety net for the case where no event ever arrives.
- */
-export const CLAUDE_PROVIDER_TASK_ACTIVITY_TTL_MS = 10 * 60_000;
-
-type ProviderTaskEntry = {
-    taskId: string;
-    sources: Set<ClaudeProviderActivitySource>;
-    /** Wall-clock ms of the most recent event for this task; drives the TTL backstop (W-3). */
-    lastEventAt: number;
-};
-
-/** Cancel handle for a scheduled expiry re-check. */
-type CancelTimer = () => void;
-
-export type ClaudeProviderActivityLedgerOptions = Readonly<{
-    /** Injectable clock (default `Date.now`); tests advance it deterministically. */
-    now?: () => number;
-    /** Per-task inactivity TTL in ms (default {@link CLAUDE_PROVIDER_TASK_ACTIVITY_TTL_MS}). */
-    ttlMs?: number;
-    /**
-     * Invoked after a TTL sweep drops one or more tasks, so the owner can re-check idle emission
-     * (the session may have gone completely silent with no further events to trigger the check).
-     */
-    onActiveTasksExpired?: () => void;
-    /**
-     * Injectable proactive-expiry scheduler (default `setTimeout` with `unref`). Tests pass a
-     * manual scheduler so the sweep fires deterministically without real timers.
-     */
-    setExpiryTimer?: (fn: () => void, delayMs: number) => CancelTimer;
+  | (ClaudeProviderTaskIdentity & Readonly<{
+    type: 'started';
+    admission?: 'launch' | 'resume';
+  }>)
+  | (ClaudeProviderTaskIdentity & Readonly<{ type: 'progress' }>)
+  | (ClaudeProviderTaskIdentity & Readonly<{
+    type: 'terminal';
+    terminalStatus?: 'completed' | 'failed' | 'stopped';
+  }>);
+export type ClaudeProviderTaskInterruptTarget = Readonly<{
+  type: 'active' | 'terminal';
+  taskId: string;
+}>;
+export type ClaudeProviderTaskEvent = Readonly<{
+  activity: ClaudeProviderTaskActivity | null;
+  interruptTarget: ClaudeProviderTaskInterruptTarget | null;
 }>;
 
-function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
-    return value && typeof value === 'object' && !Array.isArray(value)
-        ? value as Readonly<Record<string, unknown>>
-        : null;
+export type ClaudeProviderActivitySnapshot = Readonly<
+  | { state: 'active'; activeCount: number }
+  | { state: 'idle'; activeCount: 0 }
+  | { state: 'unknown'; activeCount: 0 }
+>;
+
+export type ClaudeProviderActivityLedgerOptions = Readonly<{
+  onSnapshotChanged?: (snapshot: ClaudeProviderActivitySnapshot) => void;
+}>;
+
+function record(value: unknown): Readonly<Record<string, unknown>> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Readonly<Record<string, unknown>>
+    : null;
 }
 
-function readProviderTaskId(value: unknown): string | null {
-    const record = readRecord(value);
-    if (!record) return null;
-    return normalizeClaudeAgentSdkProviderTaskId(
-        record.task_id
-        ?? record.taskId
-        ?? record.agent_id
-        ?? record.agentId,
-    );
+function normalizedString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() !== '' ? value.trim() : null;
 }
 
-function readString(value: unknown): string | null {
-    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+function terminalStatus(value: unknown): 'completed' | 'failed' | 'stopped' | null {
+  if (value === 'completed' || value === 'failed' || value === 'stopped') return value;
+  return value === 'killed' ? 'stopped' : null;
 }
 
-function readTextContent(value: unknown): string | null {
-    if (typeof value === 'string') return value;
-    if (!Array.isArray(value)) return null;
-    const texts: string[] = [];
-    for (const item of value) {
-        const text = readString(readRecord(item)?.text);
-        if (text) texts.push(text);
+function taskNotificationTerminalStatus(value: unknown): 'completed' | 'failed' | 'stopped' | null {
+  return value === 'completed' || value === 'failed' || value === 'stopped' ? value : null;
+}
+
+function taskUpdatedTerminalStatus(value: unknown): 'completed' | 'failed' | 'stopped' | null {
+  if (value === 'completed' || value === 'failed') return value;
+  return value === 'killed' ? 'stopped' : null;
+}
+
+function readHookEventName(row: Readonly<Record<string, unknown>>): string | null {
+  return normalizedString(row.hook_event_name)
+    ?? normalizedString(row.hookEventName)
+    ?? normalizedString(row.eventName);
+}
+
+function readToolName(row: Readonly<Record<string, unknown>>): string | null {
+  return normalizedString(row.tool_name) ?? normalizedString(row.toolName);
+}
+
+function readToolInput(row: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> | null {
+  return record(row.tool_input) ?? record(row.toolInput);
+}
+
+function readToolResponse(row: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> | null {
+  return record(row.tool_response)
+    ?? record(row.toolResponse)
+    ?? record(row.tool_use_result)
+    ?? record(row.toolUseResult);
+}
+
+function readTaskId(row: Readonly<Record<string, unknown>>): string | null {
+  return normalizeClaudeAgentSdkProviderTaskId(
+    row.task_id ?? row.taskId ?? row.agent_id ?? row.agentId,
+  );
+}
+
+function isFailedToolResponse(response: Readonly<Record<string, unknown>>): boolean {
+  if (response.success === false || response.is_error === true || response.isError === true) return true;
+  if (response.error !== undefined && response.error !== null) return true;
+  const status = normalizedString(response.status)?.toLowerCase();
+  return status === 'failed' || status === 'error' || status === 'denied' || status === 'rejected';
+}
+
+function readHookTaskActivity(
+  row: Readonly<Record<string, unknown>>,
+  contextualSessionId?: string,
+): ClaudeProviderTaskActivity | null {
+  const eventName = readHookEventName(row);
+  if (!eventName) return null;
+  const sessionId = normalizedString(row.session_id)
+    ?? normalizedString(row.sessionId)
+    ?? normalizedString(contextualSessionId);
+  if (!sessionId) return null;
+
+  const sidechainAgentId = normalizeClaudeAgentSdkProviderTaskId(row.agent_id);
+  if (eventName === 'StopFailure') {
+    return sidechainAgentId
+      ? { type: 'terminal', terminalStatus: 'failed', sessionId, taskId: sidechainAgentId }
+      : null;
+  }
+  if (eventName === 'SubagentStart') {
+    return sidechainAgentId
+      ? { type: 'progress', sessionId, taskId: sidechainAgentId }
+      : null;
+  }
+  if (eventName === 'SubagentStop') {
+    return sidechainAgentId
+      ? { type: 'terminal', terminalStatus: 'stopped', sessionId, taskId: sidechainAgentId }
+      : null;
+  }
+  if (eventName !== 'PostToolUse' || sidechainAgentId) return null;
+
+  const toolName = readToolName(row);
+  const response = readToolResponse(row);
+  if (!toolName || !response) return null;
+
+  if (toolName === 'Agent') {
+    if (response.status === 'async_launched') {
+      const taskId = normalizeClaudeAgentSdkProviderTaskId(response.agentId ?? response.agent_id);
+      return taskId ? { type: 'started', admission: 'launch', sessionId, taskId } : null;
     }
-    return texts.length > 0 ? texts.join('\n') : null;
-}
-
-function readXmlTag(source: string, tag: string): string | null {
-    const match = source.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, 'iu'));
-    return match?.[1] !== undefined ? readString(match[1]) : null;
-}
-
-function isTaskNotificationXml(text: string): boolean {
-    return /^\s*<task-notification\b/iu.test(text);
-}
-
-function readTaskNotificationXmlText(value: unknown): string | null {
-    const record = readRecord(value);
-    if (!record) return null;
-
-    if (record.type === 'queue-operation') {
-        const text = readString(record.content);
-        return text && isTaskNotificationXml(text) ? text : null;
+    if (response.status === 'remote_launched') {
+      const taskId = normalizeClaudeAgentSdkProviderTaskId(response.taskId ?? response.task_id);
+      return taskId ? { type: 'started', admission: 'launch', sessionId, taskId } : null;
     }
-
-    if (record.type === 'attachment') {
-        const attachment = readRecord(record.attachment);
-        if (attachment?.type !== 'queued_command') return null;
-        const text = readString(attachment.prompt);
-        return text && isTaskNotificationXml(text) ? text : null;
-    }
-
-    if (record.type === 'user') {
-        const nested = readRecord(record.message);
-        const text = readTextContent(nested?.content);
-        return text && isTaskNotificationXml(text) ? text : null;
-    }
-
     return null;
-}
+  }
 
-function readTaskNotificationOrigin(value: unknown): Readonly<{ taskId: string | null; status: string | null }> | null {
-    const origin = readRecord(readRecord(value)?.origin);
-    if (readString(origin?.kind) !== 'task-notification') return null;
-    return {
-        taskId: normalizeClaudeAgentSdkProviderTaskId(origin?.taskId ?? origin?.task_id),
-        status: normalizeClaudeAgentSdkProviderTaskStatus(origin?.status),
-    };
-}
+  if (toolName === 'Workflow') {
+    if (response.status !== 'async_launched' && response.status !== 'remote_launched') return null;
+    const taskId = normalizeClaudeAgentSdkProviderTaskId(response.taskId);
+    return taskId ? { type: 'started', admission: 'launch', sessionId, taskId } : null;
+  }
 
-function readTranscriptTaskNotificationActivity(value: unknown): ClaudeProviderTaskActivity | null {
-    const origin = readTaskNotificationOrigin(value);
-    const xmlText = readTaskNotificationXmlText(value);
-    if (!origin && !xmlText) return null;
-
-    const taskId = origin?.taskId ?? normalizeClaudeAgentSdkProviderTaskId(
-        xmlText ? readXmlTag(xmlText, 'task-id') : null,
+  if (toolName === 'SendMessage') {
+    if (isFailedToolResponse(response)) return null;
+    const taskId = normalizeClaudeAgentSdkProviderTaskId(
+      response.resumedAgentId ?? response.resumed_agent_id,
     );
-    if (!taskId) return null;
-    const status = origin?.status ?? normalizeClaudeAgentSdkProviderTaskStatus(
-        xmlText ? readXmlTag(xmlText, 'status') : null,
-    );
+    return taskId ? { type: 'started', admission: 'resume', sessionId, taskId } : null;
+  }
 
-    return isTerminalClaudeAgentSdkProviderTaskStatus(status)
-        ? { type: 'terminal', taskId }
-        : { type: 'progress', taskId };
-}
+  const input = readToolInput(row);
+  const requestedTaskId = input ? readTaskId(input) : null;
+  if (!requestedTaskId) return null;
 
-export function buildClaudeProviderTaskRuntimeActivitySourceId(taskId: unknown): string | null {
-    const normalizedTaskId = normalizeClaudeAgentSdkProviderTaskId(taskId);
-    return normalizedTaskId ? `claude:provider-task:${normalizedTaskId}` : null;
+  if (toolName === 'TaskOutput') {
+    if (response.retrieval_status !== 'success' && response.retrievalStatus !== 'success') return null;
+    const nestedTask = record(response.task);
+    if (!nestedTask || readTaskId(nestedTask) !== requestedTaskId) return null;
+    const status = terminalStatus(nestedTask.status);
+    return status
+      ? { type: 'terminal', terminalStatus: status, sessionId, taskId: requestedTaskId }
+      : null;
+  }
+
+  if (toolName === 'TaskStop') {
+    const nestedTask = record(response.task) ?? response;
+    if (readTaskId(nestedTask) !== requestedTaskId) return null;
+    const status = terminalStatus(nestedTask.status);
+    return status
+      ? { type: 'terminal', terminalStatus: status, sessionId, taskId: requestedTaskId }
+      : null;
+  }
+
+  return null;
 }
 
 export function isReplayClaudeAgentSdkMessage(value: unknown): boolean {
-    const record = readRecord(value);
-    return record?.isReplay === true || record?.is_replay === true;
+  const row = record(value);
+  return row?.isReplay === true || row?.is_replay === true;
 }
 
-export function readClaudeAgentSdkBackgroundTaskId(message: unknown): string | null {
-    const record = readRecord(message);
-    if (!record) return null;
-    const taskResult = readRecord(record.tool_use_result ?? record.toolUseResult);
-    if (!taskResult) return null;
-    const status = normalizeClaudeAgentSdkProviderTaskStatus(taskResult.status);
-    const launchedAsync = taskResult.assistantAutoBackgrounded === true
-        || taskResult.assistant_auto_backgrounded === true
-        || taskResult.isAsync === true
-        || status === 'async_launched';
-    if (
-        !launchedAsync
-        && (taskResult.assistantAutoBackgrounded === false || taskResult.assistant_auto_backgrounded === false)
-    ) {
-        return null;
+function isSdkHookResponseMessage(
+  value: Readonly<Record<string, unknown>>,
+): value is Readonly<Record<string, unknown>> & SDKHookResponseMessage {
+  return value.type === 'system'
+    && value.subtype === 'hook_response'
+    && (value.outcome === 'success' || value.outcome === 'error' || value.outcome === 'cancelled');
+}
+
+export function isClaudeProviderActivityHookObservationLoss(
+  value: unknown,
+  currentProviderSessionId: string | null | undefined,
+): boolean {
+  const row = record(value);
+  const currentSessionId = normalizedString(currentProviderSessionId);
+  if (
+    !row
+    || !currentSessionId
+    || !isSdkHookResponseMessage(row)
+    || normalizedString(row.session_id) !== currentSessionId
+    || isReplayClaudeAgentSdkMessage(row)
+  ) return false;
+
+  const hookEvent = normalizedString(row.hook_event);
+  if (hookEvent !== 'PostToolUse' && hookEvent !== 'SubagentStart' && hookEvent !== 'SubagentStop') {
+    return false;
+  }
+  return row.outcome !== 'success';
+}
+
+function readStrictClaudeProviderTaskActivity(
+  value: unknown,
+  contextualSessionId?: string,
+): ClaudeProviderTaskActivity | null {
+  const row = record(value);
+  if (!row) return null;
+  const hookActivity = readHookTaskActivity(row, contextualSessionId);
+  if (hookActivity) return hookActivity;
+  if (row.type !== 'system') return null;
+  const sessionId = normalizedString(row.session_id) ?? normalizedString(contextualSessionId);
+  const taskId = normalizeClaudeAgentSdkProviderTaskId(row.task_id);
+  if (!sessionId || !taskId) return null;
+  if (row.subtype === 'task_started') {
+    if (row.task_type !== 'local_workflow' && row.task_type !== 'local_bash') return null;
+    return { type: 'started', admission: 'launch', sessionId, taskId };
+  }
+  if (row.subtype === 'task_progress') return { type: 'progress', sessionId, taskId };
+  if (row.subtype === 'task_notification') {
+    const status = taskNotificationTerminalStatus(row.status);
+    if (status) return { type: 'terminal', terminalStatus: status, sessionId, taskId };
+  }
+  const taskUpdatedStatus = record(row.patch)?.status;
+  if (row.subtype === 'task_updated') {
+    const status = taskUpdatedTerminalStatus(taskUpdatedStatus);
+    if (status) return { type: 'terminal', terminalStatus: status, sessionId, taskId };
+  }
+  return null;
+}
+
+/**
+ * Separates strict provider-activity evidence from the broader provider-native task identity
+ * accepted for an exact stop_task request.
+ */
+export function normalizeClaudeProviderTaskEvent(
+  value: unknown,
+  contextualSessionId?: string,
+): ClaudeProviderTaskEvent {
+  const row = record(value);
+  if (!row || isReplayClaudeAgentSdkMessage(row)) {
+    return { activity: null, interruptTarget: null };
+  }
+
+  const activity = readStrictClaudeProviderTaskActivity(row, contextualSessionId);
+  if (activity) {
+    return {
+      activity,
+      interruptTarget: {
+        type: activity.type === 'terminal' ? 'terminal' : 'active',
+        taskId: activity.taskId,
+      },
+    };
+  }
+
+  const response = readToolResponse(row);
+  const launchedTaskId = response
+    && (response.status === 'async_launched' || response.status === 'remote_launched')
+    ? readTaskId(response)
+    : null;
+  if (launchedTaskId) {
+    return {
+      activity: null,
+      interruptTarget: { type: 'active', taskId: launchedTaskId },
+    };
+  }
+
+  if (row.type === 'system') {
+    const taskId = readTaskId(row);
+    if (taskId && (row.subtype === 'task_started' || row.subtype === 'task_progress')) {
+      return {
+        activity: null,
+        interruptTarget: { type: 'active', taskId },
+      };
     }
-    const explicitBackgroundTaskId = normalizeClaudeAgentSdkProviderTaskId(
-        taskResult.backgroundTaskId
-        ?? taskResult.background_task_id,
-    );
-    if (explicitBackgroundTaskId) return explicitBackgroundTaskId;
-
-    if (!launchedAsync) return null;
-
-    return normalizeClaudeAgentSdkProviderTaskId(
-        taskResult.taskId
-        ?? taskResult.task_id
-        ?? taskResult.agentId
-        ?? taskResult.agent_id,
-    );
-}
-
-export function isClaudeAgentSdkStopHookWithNoBackgroundTasks(message: unknown): boolean {
-    const record = readRecord(message);
-    if (!record) return false;
-    const hookEventName = record.hook_event_name ?? record.hookEventName;
-    if (hookEventName !== 'Stop') return false;
-    const backgroundTasks = record.background_tasks ?? record.backgroundTasks;
-    return Array.isArray(backgroundTasks) && backgroundTasks.length === 0;
-}
-
-export function readClaudeProviderTaskActivity(message: unknown): ClaudeProviderTaskActivity | null {
-    const backgroundTaskId = readClaudeAgentSdkBackgroundTaskId(message);
-    if (backgroundTaskId) {
-        return { type: 'background', taskId: backgroundTaskId };
+    if (taskId && row.subtype === 'task_notification' && taskNotificationTerminalStatus(row.status)) {
+      return {
+        activity: null,
+        interruptTarget: { type: 'terminal', taskId },
+      };
     }
-
-    const transcriptTaskNotificationActivity = readTranscriptTaskNotificationActivity(message);
-    if (transcriptTaskNotificationActivity) return transcriptTaskNotificationActivity;
-
-    const record = readRecord(message);
-    if (!record || record.type !== 'system') return null;
-    const taskId = readProviderTaskId(record);
-    if (!taskId) return null;
-    const status = readClaudeAgentSdkProviderTaskStatus(record);
-    const hasTerminalStatus = isTerminalClaudeAgentSdkProviderTaskStatus(status);
-    switch (record.subtype) {
-        case 'task_started':
-            return hasTerminalStatus ? { type: 'terminal', taskId } : { type: 'started', taskId };
-        case 'task_progress':
-        case 'task_updated':
-        case 'task_notification':
-            return hasTerminalStatus ? { type: 'terminal', taskId } : { type: 'progress', taskId };
-        default:
-            return null;
+    if (taskId && row.subtype === 'task_updated') {
+      return {
+        activity: null,
+        interruptTarget: {
+          type: taskUpdatedTerminalStatus(record(row.patch)?.status) ? 'terminal' : 'active',
+          taskId,
+        },
+      };
     }
+  }
+
+  return { activity: null, interruptTarget: null };
 }
 
-const defaultExpiryTimer = (fn: () => void, delayMs: number): CancelTimer => {
-    const timer = setTimeout(fn, delayMs);
-    timer.unref?.();
-    return () => clearTimeout(timer);
-};
+/** Reads the installed Claude SDK's typed task rows and authenticated hook payloads. */
+export function readClaudeProviderTaskActivity(
+  value: unknown,
+  contextualSessionId?: string,
+): ClaudeProviderTaskActivity | null {
+  return normalizeClaudeProviderTaskEvent(value, contextualSessionId).activity;
+}
+
+function keyOf(identity: ClaudeProviderTaskIdentity): string {
+  return JSON.stringify([identity.sessionId, identity.taskId]);
+}
 
 export function createClaudeProviderActivityLedger(options?: ClaudeProviderActivityLedgerOptions) {
-    const activeProviderTasks = new Map<string, ProviderTaskEntry>();
-    const now = options?.now ?? Date.now;
-    const ttlMs = options?.ttlMs ?? CLAUDE_PROVIDER_TASK_ACTIVITY_TTL_MS;
-    const onActiveTasksExpired = options?.onActiveTasksExpired;
-    const setExpiryTimer = options?.setExpiryTimer ?? defaultExpiryTimer;
-    let cancelExpiryTimer: CancelTimer | null = null;
+  type LedgerEntry = ClaudeProviderTaskIdentity & Readonly<{
+    phase: 'active' | 'terminal_before_confirmation';
+  }>;
+  const entries = new Map<string, LedgerEntry>();
+  let observationGapFree = true;
 
-    /** Drop tasks whose last event is older than the TTL. Returns the dropped task ids. */
-    const pruneExpiredProviderTasks = (): string[] => {
-        const nowMs = now();
-        const expired: string[] = [];
-        for (const [taskId, entry] of activeProviderTasks) {
-            if (entry.lastEventAt + ttlMs <= nowMs) {
-                activeProviderTasks.delete(taskId);
-                expired.push(taskId);
-            }
-        }
-        return expired;
-    };
+  const activeEntries = (): LedgerEntry[] => [...entries.values()]
+    .filter((entry) => entry.phase === 'active');
 
-    const clearExpiryTimer = (): void => {
-        if (cancelExpiryTimer) {
-            cancelExpiryTimer();
-            cancelExpiryTimer = null;
-        }
-    };
+  const getSnapshot = (): ClaudeProviderActivitySnapshot => {
+    const activeCount = activeEntries().length;
+    if (activeCount > 0) return { state: 'active', activeCount };
+    return observationGapFree
+      ? { state: 'idle', activeCount: 0 }
+      : { state: 'unknown', activeCount: 0 };
+  };
 
-    /** (Re)arm a single proactive sweep at the earliest task deadline so a silent session still idles. */
-    const rescheduleExpiryTimer = (): void => {
-        clearExpiryTimer();
-        if (activeProviderTasks.size === 0) return;
-        const nowMs = now();
-        let earliestDeadline = Infinity;
-        for (const entry of activeProviderTasks.values()) {
-            earliestDeadline = Math.min(earliestDeadline, entry.lastEventAt + ttlMs);
-        }
-        const delayMs = Math.max(0, earliestDeadline - nowMs);
-        cancelExpiryTimer = setExpiryTimer(() => {
-            cancelExpiryTimer = null;
-            const expired = pruneExpiredProviderTasks();
-            rescheduleExpiryTimer();
-            if (expired.length > 0) onActiveTasksExpired?.();
-        }, delayMs);
-    };
+  const notifyIfChanged = (previous: ClaudeProviderActivitySnapshot): void => {
+    const next = getSnapshot();
+    if (previous.state === next.state && previous.activeCount === next.activeCount) return;
+    options?.onSnapshotChanged?.(next);
+  };
 
-    const noteProviderTask = (
-        taskId: unknown,
-        source: ClaudeProviderActivitySource,
-    ): string | null => {
-        const normalizedTaskId = normalizeClaudeAgentSdkProviderTaskId(taskId);
-        if (!normalizedTaskId) return null;
-        const nowMs = now();
-        const existing = activeProviderTasks.get(normalizedTaskId);
-        if (existing) {
-            existing.sources.add(source);
-            existing.lastEventAt = nowMs;
+  return Object.freeze({
+    apply(activity: ClaudeProviderTaskActivity): boolean {
+      const previous = getSnapshot();
+      const key = keyOf(activity);
+      if (activity.type === 'terminal') {
+        const current = entries.get(key);
+        if (current?.phase === 'active') {
+          entries.set(key, {
+            sessionId: activity.sessionId,
+            taskId: activity.taskId,
+            phase: 'terminal_before_confirmation',
+          });
         } else {
-            activeProviderTasks.set(normalizedTaskId, {
-                taskId: normalizedTaskId,
-                sources: new Set([source]),
-                lastEventAt: nowMs,
+          if (!current) {
+            entries.set(key, {
+              sessionId: activity.sessionId,
+              taskId: activity.taskId,
+              phase: 'terminal_before_confirmation',
             });
+          }
+          return false;
         }
-        rescheduleExpiryTimer();
-        return normalizedTaskId;
-    };
-
-    return {
-        getActiveProviderTaskIds: (): readonly string[] => {
-            pruneExpiredProviderTasks();
-            return [...activeProviderTasks.keys()];
-        },
-        getActiveProviderTaskCount: (): number => {
-            pruneExpiredProviderTasks();
-            return activeProviderTasks.size;
-        },
-        hasActiveProviderTasks: (): boolean => {
-            pruneExpiredProviderTasks();
-            return activeProviderTasks.size > 0;
-        },
-        hasProviderTask: (taskId: unknown): boolean => {
-            const normalizedTaskId = normalizeClaudeAgentSdkProviderTaskId(taskId);
-            if (!normalizedTaskId) return false;
-            pruneExpiredProviderTasks();
-            return activeProviderTasks.has(normalizedTaskId);
-        },
-        noteBackgroundProviderTask: (taskId: unknown): string | null => noteProviderTask(
-            taskId,
-            'assistant-auto-backgrounded-tool-result',
-        ),
-        noteProviderTaskFinished: (taskId: unknown): string | null => {
-            const normalizedTaskId = normalizeClaudeAgentSdkProviderTaskId(taskId);
-            if (!normalizedTaskId) return null;
-            const deleted = activeProviderTasks.delete(normalizedTaskId);
-            rescheduleExpiryTimer();
-            if (!deleted) return null;
-            return normalizedTaskId;
-        },
-        noteProviderTaskProgress: (taskId: unknown): string | null => noteProviderTask(
-            taskId,
-            'system-task-progress',
-        ),
-        noteProviderTaskStarted: (taskId: unknown): string | null => noteProviderTask(
-            taskId,
-            'system-task-started',
-        ),
-        clearProviderTasks: (): void => {
-            activeProviderTasks.clear();
-            clearExpiryTimer();
-        },
-    };
+      } else if (activity.type === 'progress') {
+        return false;
+      } else {
+        const current = entries.get(key);
+        if (current?.phase === 'active') return false;
+        if (current?.phase === 'terminal_before_confirmation' && activity.admission !== 'resume') {
+          return false;
+        }
+        entries.set(key, {
+          sessionId: activity.sessionId,
+          taskId: activity.taskId,
+          phase: 'active',
+        });
+      }
+      notifyIfChanged(previous);
+      return true;
+    },
+    getSnapshot,
+    getActiveProviderTasks(): readonly ClaudeProviderTaskIdentity[] {
+      return activeEntries().map(({ sessionId, taskId }) => ({ sessionId, taskId }));
+    },
+    getActiveProviderTaskCount(): number {
+      return activeEntries().length;
+    },
+    hasActiveProviderTasks(): boolean {
+      return activeEntries().length > 0;
+    },
+    hasProviderTask(identity: ClaudeProviderTaskIdentity): boolean {
+      return entries.get(keyOf(identity))?.phase === 'active';
+    },
+    noteObservationLost(): void {
+      const previous = getSnapshot();
+      observationGapFree = false;
+      notifyIfChanged(previous);
+    },
+  });
 }

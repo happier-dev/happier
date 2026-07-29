@@ -22,15 +22,12 @@ export const ANTIGRAVITY_UI_DESCRIPTOR = Object.freeze({
     toolRendering: { hideUnknownToolsByDefault: false },
     picker: {
       iconName: 'rocket-outline',
-      cliGlyphTokenId: 'agentGlyph.antigravity',
+      cliGlyph: 'AG',
       cliGlyphScale: 0.92,
       profileCompatibilityGlyphScale: 0.92,
     },
     avatarOverlay: { circleScale: 0.35, iconScaleRatio: 0.22 },
     icon: { assetId: 'antigravity' },
-  },
-  settings: {
-    descriptorId: 'antigravity.agentSettings.v1',
   },
   behavior: {},
   session: {},

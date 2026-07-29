@@ -1,6 +1,6 @@
-import type { ExecRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
+import type { PluginExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/runtime';
 
-import { ANTIGRAVITY_AGENT_ID } from '../install/cliRuntime.js';
+import { ANTIGRAVITY_CLI_SYSTEM_TOOL_ID } from '../systemTool.js';
 import {
   ANTIGRAVITY_CLI_MODELS_COMMAND_ARGS,
   ANTIGRAVITY_CLI_MODELS_READINESS_OUTPUT_MAX_BYTES,
@@ -36,10 +36,17 @@ function cacheKey(params: Readonly<{
   });
 }
 
-function readDiagnostic(result: Readonly<{ stdout: string; stderr: string; exitCode: number | null }>): string {
-  return result.stderr.trim()
-    || result.stdout.trim()
-    || `agy models exited with code ${result.exitCode ?? 'unknown'}.`;
+function readExitCode(result: PluginProcessResult): number | null {
+  return result.termination.observed.kind === 'exit'
+    ? result.termination.observed.exitCode
+    : null;
+}
+
+function readDiagnostic(result: PluginProcessResult): string {
+  const stderr = new TextDecoder().decode(result.stderr).trim();
+  const stdout = new TextDecoder().decode(result.stdout).trim();
+  const exitCode = readExitCode(result);
+  return stderr || stdout || `agy models exited with code ${exitCode ?? 'unknown'}.`;
 }
 
 export function clearAntigravityCliPrintAvailabilityCache(): void {
@@ -47,7 +54,7 @@ export function clearAntigravityCliPrintAvailabilityCache(): void {
 }
 
 export async function probeAntigravityCliPrintAvailability(params: Readonly<{
-  exec: ExecRuntimeServiceV1;
+  exec: PluginExecService;
   cwd?: string | null;
   env?: Readonly<Record<string, string>>;
   signal?: AbortSignal;
@@ -62,19 +69,21 @@ export async function probeAntigravityCliPrintAvailability(params: Readonly<{
 
   let result: AntigravityCliPrintAvailabilityProbeResult;
   try {
-    const run = await params.exec.run({
-      kind: 'agent-cli',
-      agentId: ANTIGRAVITY_AGENT_ID,
-      args: ANTIGRAVITY_CLI_MODELS_COMMAND_ARGS,
+    const resolved = await params.exec.systemTools.resolve({
+      toolId: ANTIGRAVITY_CLI_SYSTEM_TOOL_ID,
+      purpose: 'Check whether Antigravity CLI print model discovery is available.',
       ...(params.cwd ? { cwd: params.cwd } : {}),
+      ...(params.signal ? { signal: params.signal } : {}),
+    });
+    const run = await params.exec.run({
+      executable: resolved.executable,
+      args: ANTIGRAVITY_CLI_MODELS_COMMAND_ARGS,
       ...(params.env ? { env: params.env } : {}),
-    }, {
-      signal: params.signal,
       timeoutMs: ANTIGRAVITY_CLI_MODELS_READINESS_TIMEOUT_MS,
       maxStdoutBytes: ANTIGRAVITY_CLI_MODELS_READINESS_OUTPUT_MAX_BYTES,
       maxStderrBytes: ANTIGRAVITY_CLI_MODELS_READINESS_OUTPUT_MAX_BYTES,
-    });
-    result = run.exitCode === 0
+    }, params.signal ? { signal: params.signal } : undefined);
+    result = readExitCode(run) === 0
       ? { available: true }
       : {
           available: false,

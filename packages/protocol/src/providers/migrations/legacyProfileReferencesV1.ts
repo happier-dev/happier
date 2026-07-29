@@ -2,7 +2,7 @@ import type { ProviderBoundModelRef } from '../selection/v1.js';
 import type { ProviderSettingsMigrationStateV1 } from '../settings/v1.js';
 
 export type LegacyAiLaunchProfileReferenceResolutionV1 = Readonly<{
-  status: 'unchanged' | 'retained' | 'default_environment' | 'migrated';
+  status: 'unchanged' | 'retained' | 'default_environment' | 'migrated' | 'review_required';
   legacyAiLaunchProfileId: string | null;
   modelRef: ProviderBoundModelRef | null;
 }>;
@@ -27,6 +27,11 @@ export function normalizeLegacyAiLaunchProfileReferenceV1(input: Readonly<{
   }
   if (outcome.kind === 'skipped_disabled') {
     return { status: 'retained', legacyAiLaunchProfileId: profileId, modelRef: null };
+  }
+  if (profileId === 'deepseek'
+    && outcome.modelSelection
+    && (outcome.sourceRevision === undefined || outcome.modelSelectionOrigin === undefined)) {
+    return { status: 'review_required', legacyAiLaunchProfileId: profileId, modelRef: null };
   }
   return {
     status: 'migrated',

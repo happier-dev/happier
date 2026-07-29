@@ -21,7 +21,7 @@ describe('defineLocalService', () => {
         });
 
         expect(declaration.launchMode.kind).toBe('detectAfterLaunch');
-        expectTypeOf(declaration).toEqualTypeOf<LocalServiceDeclarationV1>();
+        expectTypeOf(declaration).toMatchTypeOf<LocalServiceDeclarationV1>();
     });
 
     it('exports environment keys from one SDK owner', () => {

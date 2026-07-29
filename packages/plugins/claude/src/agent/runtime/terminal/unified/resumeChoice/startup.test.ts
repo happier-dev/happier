@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE } from '@happier-dev/agents';
 
 import {
   createEventsFixture,
@@ -62,6 +63,22 @@ const UNKNOWN_DIALOG = [
   '  2. Continue anyway',
 ].join('\n');
 
+const AMBIGUOUS_UNKNOWN_DIALOG = [
+  UNKNOWN_DIALOG,
+  '',
+  'Another prompt',
+  '❯ 1. First',
+  '  2. Second',
+].join('\n');
+
+const TRUST_FOLDER_DIALOG = [
+  'Accessing workspace:',
+  '/private/tmp/new-project',
+  'Quick safety check: Is this a project you created or one you trust?',
+  '❯ 1. Yes, I trust this folder',
+  '  2. No, exit',
+].join('\n');
+
 function createContext(requestDecision = vi.fn(async () => ({ decision: 'approved' as const }))) {
   const terminalHost = createTerminalHostFixture();
   const events = createEventsFixture();
@@ -70,6 +87,12 @@ function createContext(requestDecision = vi.fn(async () => ({ decision: 'approve
       requestDecision,
       getMode: () => 'default',
     },
+  });
+}
+
+function pendingDecisionUntilAbort<T>(signal: AbortSignal | undefined): Promise<T> {
+  return new Promise<T>((_resolve, reject) => {
+    signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
   });
 }
 
@@ -89,7 +112,7 @@ describe('createClaudeUnifiedResumeChoiceStartupHandler', () => {
 
     expect(await handler.handle(parseClaudeScreenState(EFFORT_HIGH_DIALOG))).toBe('handled');
     expect(port.sentLiteral).toEqual(['1']);
-    expect(port.sentKeys).toEqual(['Enter']);
+    expect(port.sentKeys).toEqual([]);
   });
 
   it('declines an orphan effort dialog for a different target', async () => {
@@ -107,7 +130,7 @@ describe('createClaudeUnifiedResumeChoiceStartupHandler', () => {
 
     expect(await handler.handle(parseClaudeScreenState(EFFORT_LOW_DIALOG))).toBe('handled');
     expect(port.sentLiteral).toEqual(['2']);
-    expect(port.sentKeys).toEqual(['Enter']);
+    expect(port.sentKeys).toEqual([]);
   });
 
   it('leaves driver-owned effort dialogs to runtime control while it is in flight', async () => {
@@ -143,7 +166,7 @@ describe('createClaudeUnifiedResumeChoiceStartupHandler', () => {
 
     expect(await confirmHandler.handle(parseClaudeScreenState(SWITCH_MODEL_DIALOG))).toBe('handled');
     expect(confirmPort.sentLiteral).toEqual(['1']);
-    expect(confirmPort.sentKeys).toEqual(['Enter']);
+    expect(confirmPort.sentKeys).toEqual([]);
 
     const declinePort = createFakeControlPort({ captures: [SWITCH_MODEL_DIALOG, IDLE_COMPOSER] });
     const declineHandler = createClaudeUnifiedResumeChoiceStartupHandler({
@@ -159,7 +182,7 @@ describe('createClaudeUnifiedResumeChoiceStartupHandler', () => {
 
     expect(await declineHandler.handle(parseClaudeScreenState(SWITCH_MODEL_DIALOG))).toBe('handled');
     expect(declinePort.sentLiteral).toEqual(['2']);
-    expect(declinePort.sentKeys).toEqual(['Enter']);
+    expect(declinePort.sentKeys).toEqual([]);
   });
 
   it('does not repeatedly type an auto answer after terminal control fails', async () => {
@@ -176,14 +199,17 @@ describe('createClaudeUnifiedResumeChoiceStartupHandler', () => {
     expect(await handler.handle(parseClaudeScreenState(RESUME_CHOICE_DIALOG))).toBe('unhandled');
     expect(await handler.handle(parseClaudeScreenState(RESUME_CHOICE_DIALOG))).toBe('unhandled');
     expect(port.sentLiteral).toEqual(['2']);
-    expect(port.sentKeys).toEqual(['Enter']);
+    expect(port.sentKeys).toEqual([]);
   });
 
   it('aborts a pending ask request when the dialog disappears before the user answers', async () => {
     let signal: AbortSignal | null = null;
     const requestDecision = vi.fn((_request: unknown, options?: Readonly<{ signal?: AbortSignal }>) => {
       signal = options?.signal ?? null;
-      return new Promise<Readonly<{ decision: 'approved'; answers: Readonly<Record<string, string>> }>>(() => undefined);
+      return pendingDecisionUntilAbort<Readonly<{
+        decision: 'approved';
+        answers: Readonly<Record<string, string>>;
+      }>>(options?.signal);
     });
     const port = createFakeControlPort({ captures: [RESUME_CHOICE_DIALOG, IDLE_COMPOSER] });
     const handler = createClaudeUnifiedResumeChoiceStartupHandler({
@@ -205,7 +231,10 @@ describe('createClaudeUnifiedResumeChoiceStartupHandler', () => {
     let signal: AbortSignal | null = null;
     const requestDecision = vi.fn((_request: unknown, options?: Readonly<{ signal?: AbortSignal }>) => {
       signal = options?.signal ?? null;
-      return new Promise<Readonly<{ decision: 'approved'; answers: Readonly<Record<string, string>> }>>(() => undefined);
+      return pendingDecisionUntilAbort<Readonly<{
+        decision: 'approved';
+        answers: Readonly<Record<string, string>>;
+      }>>(options?.signal);
     });
     const port = createFakeControlPort({ captures: [RESUME_CHOICE_DIALOG, IDLE_COMPOSER] });
     const handler = createClaudeUnifiedResumeChoiceStartupHandler({
@@ -218,7 +247,7 @@ describe('createClaudeUnifiedResumeChoiceStartupHandler', () => {
     });
 
     expect(await handler.handle(parseClaudeScreenState(RESUME_CHOICE_DIALOG))).toBe('waiting_for_user');
-    handler.dispose();
+    await handler.dispose();
     expect(signal?.aborted).toBe(true);
     expect(await handler.handle(parseClaudeScreenState(RESUME_CHOICE_DIALOG))).toBe('unhandled');
     expect(requestDecision).toHaveBeenCalledTimes(1);
@@ -243,7 +272,7 @@ describe('createClaudeUnifiedResumeChoiceStartupHandler', () => {
     await vi.waitFor(() => {
       expect(port.sentLiteral).toEqual(['1']);
     });
-    expect(port.sentKeys).toEqual(['Enter']);
+    expect(port.sentKeys).toEqual([]);
   });
 
   it('publishes a user-action safeguard question and sends the selected option', async () => {
@@ -265,9 +294,10 @@ describe('createClaudeUnifiedResumeChoiceStartupHandler', () => {
     await vi.waitFor(() => {
       expect(port.sentLiteral).toEqual(['2']);
     });
-    expect(port.sentKeys).toEqual(['Enter']);
+    expect(port.sentKeys).toEqual([]);
     expect(requestDecision).toHaveBeenCalledWith(expect.objectContaining({
       provider: 'claude',
+      source: CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE,
       toolName: 'AskUserQuestion',
       input: expect.objectContaining({
         questions: [expect.objectContaining({
@@ -282,12 +312,83 @@ describe('createClaudeUnifiedResumeChoiceStartupHandler', () => {
     }), expect.objectContaining({ signal: expect.any(AbortSignal) }));
   });
 
-  it('fail-closed publishes an open-terminal notice for an unrecognized dialog and never types', async () => {
+  it('publishes pre-hook workspace trust and sends only the user-selected decision', async () => {
     const requestDecision = vi.fn(async () => ({
       decision: 'approved' as const,
-      answers: { openTerminal: 'open_terminal' },
+      answers: { claudeUnifiedTerminalTrustFolder: 'trust_once' },
     }));
-    const port = createFakeControlPort({ captures: [UNKNOWN_DIALOG, UNKNOWN_DIALOG] });
+    const port = createFakeControlPort({ captures: [TRUST_FOLDER_DIALOG, IDLE_COMPOSER] });
+    const handler = createClaudeUnifiedResumeChoiceStartupHandler({
+      ctx: createContext(requestDecision),
+      sessionId: 'session-1',
+      policy: 'ask_every_time',
+      port,
+      settleMs: 0,
+      wait: async () => undefined,
+    });
+
+    expect(await handler.handle(parseClaudeScreenState(TRUST_FOLDER_DIALOG))).toBe('waiting_for_user');
+    await vi.waitFor(() => {
+      expect(port.sentLiteral).toEqual(['1']);
+      expect(port.sentKeys).toEqual([]);
+    });
+    expect(requestDecision).toHaveBeenCalledWith(expect.objectContaining({
+      provider: 'claude',
+      toolName: 'AskUserQuestion',
+      reason: 'claude_unified_terminal_trust_folder',
+      input: expect.objectContaining({
+        happierDialog: expect.objectContaining({
+          kind: 'recognized',
+          dialogId: 'trust_folder',
+          secondaryAction: 'open_terminal',
+        }),
+        questions: [expect.objectContaining({
+          options: expect.arrayContaining([
+            expect.objectContaining({
+              choice: 'always_trust_happier_workspaces',
+              settingMutation: {
+                settingId: 'claudeUnifiedTerminalWorkspaceTrust',
+                value: 'always_trust_happier_workspaces',
+              },
+            }),
+            expect.objectContaining({
+              choice: 'always_reject_happier_workspaces',
+              settingMutation: {
+                settingId: 'claudeUnifiedTerminalWorkspaceTrust',
+                value: 'always_reject_happier_workspaces',
+              },
+            }),
+          ]),
+        })],
+      }),
+    }), expect.objectContaining({ signal: expect.any(AbortSignal) }));
+  });
+
+  it('applies an allowlisted remembered trust preference to the exact recaptured prompt', async () => {
+    const requestDecision = vi.fn(async () => ({ decision: 'approved' as const }));
+    const port = createFakeControlPort({ captures: [TRUST_FOLDER_DIALOG, IDLE_COMPOSER] });
+    const handler = createClaudeUnifiedResumeChoiceStartupHandler({
+      ctx: createContext(requestDecision),
+      sessionId: 'session-1',
+      policy: 'ask_every_time',
+      workspaceTrustPolicy: 'always_reject_happier_workspaces',
+      port,
+      settleMs: 0,
+      wait: async () => undefined,
+    });
+
+    expect(await handler.handle(parseClaudeScreenState(TRUST_FOLDER_DIALOG))).toBe('handled');
+    expect(port.sentLiteral).toEqual(['2']);
+    expect(port.sentKeys).toEqual([]);
+    expect(requestDecision).not.toHaveBeenCalled();
+  });
+
+  it('publishes complete generic context/options and answers only the exact recaptured dialog', async () => {
+    const requestDecision = vi.fn(async () => ({
+      decision: 'approved' as const,
+      answers: { claudeUnifiedTerminalGenericDialog: '2' },
+    }));
+    const port = createFakeControlPort({ captures: [UNKNOWN_DIALOG, IDLE_COMPOSER] });
     const handler = createClaudeUnifiedResumeChoiceStartupHandler({
       ctx: createContext(requestDecision),
       sessionId: 'session-1',
@@ -301,24 +402,67 @@ describe('createClaudeUnifiedResumeChoiceStartupHandler', () => {
     await vi.waitFor(() => {
       expect(requestDecision).toHaveBeenCalledTimes(1);
     });
-    // Exactly-once: the same unknown dialog persisting must not republish or type anything.
-    expect(await handler.handle(parseClaudeScreenState(UNKNOWN_DIALOG))).toBe('unhandled');
-    expect(port.sentLiteral).toEqual([]);
+    await vi.waitFor(() => expect(port.sentLiteral).toEqual(['2']));
     expect(port.sentKeys).toEqual([]);
     expect(requestDecision).toHaveBeenCalledTimes(1);
     expect(requestDecision).toHaveBeenCalledWith(expect.objectContaining({
-      reason: 'claude_unified_terminal_unrecognized_dialog',
+      reason: 'claude_unified_terminal_generic_dialog',
       input: expect.objectContaining({
-        happierDialog: { kind: 'unrecognized', dialogId: 'unrecognized_confirmation', notice: 'open_terminal' },
+        happierDialog: expect.objectContaining({ kind: 'unrecognized', mode: 'generic' }),
+        questions: [expect.objectContaining({
+          question: 'This session is 18h 2m old and 560.4k tokens.',
+          options: [
+            expect.objectContaining({ label: 'Delete history' }),
+            expect.objectContaining({ label: 'Continue anyway' }),
+          ],
+        })],
       }),
     }), expect.anything());
+  });
+
+  it('publishes an ambiguous prompt as navigation-only fallback with no answer recipe', async () => {
+    let signal: AbortSignal | undefined;
+    const requestDecision = vi.fn((_request: unknown, options?: Readonly<{ signal?: AbortSignal }>) => {
+      signal = options?.signal;
+      return pendingDecisionUntilAbort<Readonly<{ decision: 'approved' }>>(signal);
+    });
+    const port = createFakeControlPort({ captures: [] });
+    const handler = createClaudeUnifiedResumeChoiceStartupHandler({
+      ctx: createContext(requestDecision),
+      sessionId: 'session-1',
+      policy: 'ask_every_time',
+      port,
+      settleMs: 0,
+      wait: async () => undefined,
+    });
+
+    expect(await handler.handle(parseClaudeScreenState(AMBIGUOUS_UNKNOWN_DIALOG))).toBe('waiting_for_user');
+    expect(requestDecision).toHaveBeenCalledWith(expect.objectContaining({
+      input: expect.objectContaining({
+        happierDialog: {
+          kind: 'unrecognized',
+          mode: 'notice',
+          dialogId: 'unrecognized_confirmation',
+          action: 'open_terminal',
+        },
+        questions: [expect.objectContaining({ options: [] })],
+      }),
+    }), expect.anything());
+    expect(port.sentLiteral).toEqual([]);
+    expect(port.sentKeys).toEqual([]);
+
+    expect(await handler.handle(parseClaudeScreenState(IDLE_COMPOSER))).toBe('unhandled');
+    expect(signal?.aborted).toBe(true);
   });
 
   it('cancels the pending request and republishes when the visible dialog changes (A→B)', async () => {
     const signals: Array<AbortSignal | null> = [];
     const requestDecision = vi.fn((_request: unknown, options?: Readonly<{ signal?: AbortSignal }>) => {
       signals.push(options?.signal ?? null);
-      return new Promise<Readonly<{ decision: 'approved'; answers: Readonly<Record<string, string>> }>>(() => undefined);
+      return pendingDecisionUntilAbort<Readonly<{
+        decision: 'approved';
+        answers: Readonly<Record<string, string>>;
+      }>>(options?.signal);
     });
     const port = createFakeControlPort({ captures: [SAFEGUARD_DIALOG, RESUME_CHOICE_DIALOG] });
     const handler = createClaudeUnifiedResumeChoiceStartupHandler({
@@ -337,24 +481,48 @@ describe('createClaudeUnifiedResumeChoiceStartupHandler', () => {
     expect(signals[1]?.aborted).toBe(false);
   });
 
+  it('cancels and republishes when context changes under the same generic dialog id', async () => {
+    const signals: AbortSignal[] = [];
+    const requestDecision = vi.fn((_request: unknown, options?: Readonly<{ signal?: AbortSignal }>) => {
+      if (options?.signal) signals.push(options.signal);
+      return pendingDecisionUntilAbort<Readonly<{ decision: 'approved' }>>(options?.signal);
+    });
+    const changed = UNKNOWN_DIALOG.replace('560.4k tokens', '561.0k tokens');
+    const handler = createClaudeUnifiedResumeChoiceStartupHandler({
+      ctx: createContext(requestDecision),
+      sessionId: 'session-1',
+      policy: 'ask_every_time',
+      port: createFakeControlPort({ captures: [] }),
+      settleMs: 0,
+      wait: async () => undefined,
+    });
+
+    expect(await handler.handle(parseClaudeScreenState(UNKNOWN_DIALOG))).toBe('waiting_for_user');
+    expect(await handler.handle(parseClaudeScreenState(changed))).toBe('waiting_for_user');
+    expect(signals).toHaveLength(2);
+    expect(signals[0]?.aborted).toBe(true);
+    expect(signals[1]?.aborted).toBe(false);
+    expect(requestDecision.mock.calls[0]?.[0]).not.toMatchObject(requestDecision.mock.calls[1]?.[0] as object);
+  });
+
   it('keeps the ask request pending while terminal control is answering', async () => {
     const requestDecision = vi.fn(async () => ({
       decision: 'approved' as const,
       answers: { [CLAUDE_UNIFIED_RESUME_CHOICE_QUESTION]: 'Resume full session' },
     }));
-    let enterStarted: (() => void) | null = null;
-    let releaseEnter: (() => void) | null = null;
-    const enterStartedPromise = new Promise<void>((resolve) => {
-      enterStarted = resolve;
+    let literalStarted: (() => void) | null = null;
+    let releaseLiteral: (() => void) | null = null;
+    const literalStartedPromise = new Promise<void>((resolve) => {
+      literalStarted = resolve;
     });
-    const enterBlockedPromise = new Promise<void>((resolve) => {
-      releaseEnter = resolve;
+    const literalBlockedPromise = new Promise<void>((resolve) => {
+      releaseLiteral = resolve;
     });
     const port = createFakeControlPort({
       captures: [RESUME_CHOICE_DIALOG, IDLE_COMPOSER],
-      onSendSpecialKey: async () => {
-        enterStarted?.();
-        await enterBlockedPromise;
+      onSendLiteralText: async () => {
+        literalStarted?.();
+        await literalBlockedPromise;
       },
     });
     const handler = createClaudeUnifiedResumeChoiceStartupHandler({
@@ -367,13 +535,13 @@ describe('createClaudeUnifiedResumeChoiceStartupHandler', () => {
     });
 
     expect(await handler.handle(parseClaudeScreenState(RESUME_CHOICE_DIALOG))).toBe('waiting_for_user');
-    await enterStartedPromise;
+    await literalStartedPromise;
 
     expect(port.sentLiteral).toEqual(['2']);
-    expect(port.sentKeys).toEqual(['Enter']);
+    expect(port.sentKeys).toEqual([]);
     expect(handler.hasPendingUserAction()).toBe(true);
 
-    releaseEnter?.();
+    releaseLiteral?.();
     await vi.waitFor(() => {
       expect(handler.hasPendingUserAction()).toBe(false);
     });

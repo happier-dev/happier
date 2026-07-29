@@ -1,16 +1,15 @@
-import type { ExternalSessionsSource } from '@happier-dev/plugin-sdk/sessions';
+import type { ExternalSessionsSource } from '@happier-dev/plugin-sdk/experimental/sessions';
+import {
+    readJsonlFileBackwardPage,
+    readJsonlFileForward,
+} from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
 
 import {
     projectClaudeJsonlLineToRawMessage,
     type RawJSONLines,
 } from '../../../transcripts/index.js';
 
-import { resolveClaudeJsonlSessionFile } from './files.js';
-import {
-    readClaudeJsonlFileBackwardPage,
-    readClaudeJsonlFileForward,
-    readClaudeJsonlFileSize,
-} from './jsonl.js';
+import { readClaudeJsonlFileSize, resolveClaudeJsonlSessionFile } from './files.js';
 
 const DEFAULT_MAX_BYTES = 1024 * 1024;
 const DEFAULT_MAX_ITEMS = 1000;
@@ -116,7 +115,7 @@ async function readFullRawHistory(params: Readonly<{
     let endOffsetBytes = fileSize;
 
     while (endOffsetBytes > 0) {
-        const page = await readClaudeJsonlFileBackwardPage({
+        const page = await readJsonlFileBackwardPage({
             filePath: params.sessionFilePath,
             endOffsetBytes,
             maxBytes: params.maxBytes,
@@ -179,7 +178,7 @@ export async function pageClaudeRawExternalSessionTranscript(params: Readonly<{
     }
 
     const maxItems = Math.max(1, Math.trunc(params.maxItems));
-    const page = await readClaudeJsonlFileBackwardPage({
+    const page = await readJsonlFileBackwardPage({
         filePath: resolved.filePath,
         endOffsetBytes,
         maxBytes: params.maxBytes,
@@ -250,7 +249,7 @@ export async function readClaudeRawJsonlSessionMessages(params: Readonly<{
         return { ...full, truncated: true };
     }
 
-    const read = await readClaudeJsonlFileForward({
+    const read = await readJsonlFileForward({
         filePath: params.sessionFilePath,
         offsetBytes: decoded.offsetBytes,
         maxBytes,

@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type {
-  ExecLaunchInputV1,
-  ExecRunOptionsV1,
-  ExecRuntimeServiceV1,
-} from '@happier-dev/plugin-sdk';
+  PluginExecService,
+  PluginExecSpawnRequest,
+} from '@happier-dev/plugin-sdk/runtime';
 
 import {
   ANTIGRAVITY_PREFLIGHT_SESSION_CONTROLS,
@@ -16,31 +15,33 @@ function createExecRunFixture(params: Readonly<{
   stderr?: string;
 }> = {}) {
   const runs: Array<Readonly<{
-    input: ExecLaunchInputV1;
-    options: ExecRunOptionsV1 | undefined;
+    input: PluginExecSpawnRequest & { timeoutMs?: number };
+    options: { signal?: AbortSignal } | undefined;
   }>> = [];
-  const exec: ExecRuntimeServiceV1 = {
+  const executable = { kind: 'systemTool' as const, id: 'antigravity-cli' };
+  const exec = {
     systemTools: {
-      resolve: async () => {
-        throw new Error('system tools should not be used for Antigravity model preflight');
-      },
+      resolve: async () => ({ executable, executablePath: '/managed/agy' }),
     },
     run: async (input, options) => {
       runs.push({ input, options });
       return {
-        exitCode: params.exitCode ?? 0,
-        signal: null,
-        stdout: params.stdout ?? '',
-        stderr: params.stderr ?? '',
+        termination: {
+          observed: { kind: 'exit' as const, exitCode: params.exitCode ?? 0 },
+          requestedBy: { kind: 'none' as const },
+        },
+        stdout: new TextEncoder().encode(params.stdout ?? ''),
+        stderr: new TextEncoder().encode(params.stderr ?? ''),
+        stdoutTruncated: false,
+        stderrTruncated: false,
       };
     },
     spawn: async () => {
       throw new Error('spawn should not be used for Antigravity model preflight');
     },
-    spawnClient: (async () => {
-      throw new Error('spawnClient should not be used for Antigravity model preflight');
-    }) as ExecRuntimeServiceV1['spawnClient'],
-  };
+    clients: { spawn: async () => { throw new Error('protocol clients should not be used'); } },
+    agentCli: { checkReadiness: async () => { throw new Error('agent CLI readiness should not be used'); } },
+  } satisfies PluginExecService;
   return { exec, runs };
 }
 
@@ -97,19 +98,15 @@ describe('Antigravity preflight model parsing', () => {
     ]);
     expect(fixture.runs).toEqual([{
       input: {
-        kind: 'agent-cli',
-        agentId: 'antigravity',
+        executable: { kind: 'systemTool', id: 'antigravity-cli' },
         args: ['models'],
-        cwd: '/workspace',
-        env: {
-          CI: '1',
-        },
-      },
-      options: {
+        cwd: { root: 'workspace', relativePath: '' },
+        env: { CI: '1' },
         maxStderrBytes: 262_144,
         maxStdoutBytes: 262_144,
         timeoutMs: 1_500,
       },
+      options: undefined,
     }]);
   });
 

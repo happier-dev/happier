@@ -11,7 +11,7 @@ import {
 import {
   type ActionDefinitionSummaryV1,
   type ActionDefinitionV1,
-} from '../extensions/actionDefinitionV1.js';
+} from './actionDefinitionV1.js';
 import { zodSchemaToJsonSchemaObject } from './actionInputJsonSchema.js';
 
 export type SerializedActionSpec = ActionDefinitionSummaryV1;

@@ -1,20 +1,9 @@
-# React Native Installed Artifact Plugin Example
+# React Native Installed Plugin Example
 
-Install with the public local-plugin install flow by pointing Happier at this
-directory. The example declares an installed React Native artifact with explicit
-`modulePath: "./PluginPanel"` and non-default `exportName: "PluginPanel"`.
+The strict `.happier-plugin/plugin.json` manifest demonstrates an installed React Native renderer with a
+declarative fallback. `pluginUiBuild.ts` and `ui/panel.native.tsx` are public
+build inputs. The checked-in Vite and Re.Pack configs emit the web, iOS, and
+Android siblings consumed by the managed `happier-plugin-build-ui` command.
 
-Manual QA path:
-
-- Install the plugin from this directory after placing the signed bundle at
-  `dist/native/ios.bundle.js`.
-- Open the example surface and verify `PluginPanel` renders.
-- Revoke the artifact digest and verify the RN unavailable state renders and the
-  materialized bundle is cleaned up.
-- Change the export name to an unknown value and verify a typed unavailable state.
-
-Expected screenshots:
-
-- `plugins-rn-installed-panel.png`
-- `plugins-rn-installed-bad-export.png`
-- `plugins-rn-installed-revoked.png`
+The example pins the React Native 0.83-compatible Community CLI 20.1.2 build
+closure used by Re.Pack 5.2.5. No hand-authored compiled bundle is checked in.

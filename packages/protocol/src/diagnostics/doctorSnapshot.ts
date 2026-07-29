@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { sanitizeBugReportUrl } from '../bugReports/sanitize.js';
+import { sanitizeBugReportUrl } from '../bugs/reports/sanitize.js';
 
 const NonEmptyString = z.string().trim().min(1);
 const PublicReleaseChannelLabelSchema = z.enum(['stable', 'preview', 'dev']);

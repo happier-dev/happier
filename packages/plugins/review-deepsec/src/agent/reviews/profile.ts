@@ -1,28 +1,16 @@
-import type { PluginManifestV2 } from '@happier-dev/plugin-sdk';
-
 export type DeepSecReviewProfileKind = 'review' | 'repository_security_audit';
-
-type ExecutionRunProfileContribution = NonNullable<
-  NonNullable<PluginManifestV2['contributes']>['executionRunProfiles']
->[number];
-
 export function createDeepSecReviewExecutionProfile(kind: DeepSecReviewProfileKind) {
-  if (kind === 'repository_security_audit') {
-    return {
-      id: 'deepsec.securityReview',
-      kind: 'executionRun.profile',
-      version: '1',
-      intent: 'review',
-      displayKey: 'plugins.deepsec.executionRuns.securityReview.label',
-      actionIds: ['review.start'],
-    } satisfies ExecutionRunProfileContribution;
-  }
+  const repositoryAudit = kind === 'repository_security_audit';
   return {
-    id: 'deepsec.review',
-    kind: 'executionRun.profile',
-    version: '1',
-    intent: 'review',
-    displayKey: 'plugins.deepsec.executionRuns.review.label',
-    actionIds: ['review.start'],
-  } satisfies ExecutionRunProfileContribution;
+    id: repositoryAudit ? 'repository-security-audit' : 'review',
+    intent: 'review' as const,
+    title: repositoryAudit ? 'DeepSec repository security audit' : 'DeepSec review',
+    description: repositoryAudit
+      ? 'Run a repository-wide DeepSec security audit.'
+      : 'Review the current change with DeepSec.',
+    promptAsset: repositoryAudit ? 'repository-security-audit-prompt' : 'review-prompt',
+    actions: [{ kind: 'hostAction' as const, actionId: 'reviews.comments.create' as const }],
+    defaults: { retention: 'ephemeral' as const, runClass: 'bounded' as const, io: 'streaming' as const },
+    compatibleAgents: ['deepsec'],
+  };
 }

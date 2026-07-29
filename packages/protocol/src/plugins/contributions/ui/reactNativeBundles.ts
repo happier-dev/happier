@@ -22,8 +22,6 @@ const PluginReactNativeBundlePlatformV1Schema = z.enum(['ios', 'android', 'web']
 
 export const PluginReactNativeBundleIntegrityV1Schema = z.object({
   digest: PluginUiArtifactDigestV1Schema,
-  signature: z.string().trim().min(1).optional(),
-  signingKeyId: z.string().trim().min(1).optional(),
 }).strict();
 export type PluginReactNativeBundleIntegrityV1 = z.infer<typeof PluginReactNativeBundleIntegrityV1Schema>;
 
@@ -109,3 +107,5 @@ export const PluginReactNativeBundleContributionV1Schema = z.object({
   }
 });
 export type PluginReactNativeBundleContributionV1 = z.infer<typeof PluginReactNativeBundleContributionV1Schema>;
+export type PluginReactNativeBundleContribution = z.infer<typeof PluginReactNativeBundleContributionV1Schema>;
+export type PluginReactNativeBundleContributionInput = z.input<typeof PluginReactNativeBundleContributionV1Schema>;

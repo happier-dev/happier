@@ -1,336 +1,243 @@
-import type { VoiceRealtimeJsonValue } from '@happier-dev/protocol';
+import type { PluginApi } from '@happier-dev/plugin-sdk';
+import type {
+  PluginVoiceHostedConversationService,
+  PluginVoiceProviderProtocol,
+  PluginVoiceProviderSettingsOperations,
+  PluginVoiceProviderRuntimeRegistration,
+  PluginVoiceRealtimeConnection,
+} from '@happier-dev/plugin-sdk/runtime';
+import {
+  listVoiceSdkSafeToolActionSpecs,
+  VoiceRealtimeJsonValueSchema,
+  type VoiceRealtimeJsonValue,
+} from '@happier-dev/protocol';
 
+import { PLUGIN_MANIFEST } from '../../../manifest.js';
+import {
+  DEFAULT_ELEVENLABS_VOICE_ID,
+  ElevenLabsAgentIdSchema,
+  ElevenLabsVoiceProviderSettingsSchema,
+} from '../../../protocol/voice/index.js';
+import { createElevenLabsAutoprovision } from '../autoprovision.js';
+import {
+  listElevenLabsVoicesWithAccountOperations,
+  provisionElevenLabsWithAccountOperations,
+} from '../providerOperations.js';
 import { createElevenLabsConversationHandle } from './createElevenLabsConversationHandle.js';
-import { createElevenLabsAttemptResources } from './elevenLabsAttemptResources.js';
-import { createElevenLabsConversationHandleRegistry } from './elevenLabsConversationHandleRegistry.js';
-import { createElevenLabsDiagnostics } from './elevenLabsDiagnostics.js';
 import { createElevenLabsEventMapper } from './elevenLabsEventMapper.js';
-import { createElevenLabsLiveness } from './elevenLabsLiveness.js';
 import { createElevenLabsProtocolAdapter } from './elevenLabsProtocolAdapter.js';
 import { createElevenLabsSdkConnection } from './elevenLabsSdkConnection.js';
 import { createElevenLabsSessionLifecycle } from './elevenLabsSessionLifecycle.js';
 import { createElevenLabsSessionPreparationService } from './elevenLabsSessionPreparation.js';
-import { resolveElevenLabsStartIdentity } from './elevenLabsStartIdentity.js';
-import { createRealtimeElevenLabsRuntime } from './realtimeElevenLabsRuntime.js';
-import type {
-  CreateConversationController,
-  ElevenLabsRuntimeContribution,
-  RealtimeConnection,
-  VoiceAdapterSnapshot,
-  VoiceToolResultRedactionPrefs,
-} from './types.js';
 
-export type ElevenLabsRuntimeHost = Readonly<{
-  globalVoiceSessionId: string;
-  getSettings: () => unknown;
-  projectVoiceSettings: Parameters<typeof createElevenLabsSessionPreparationService>[0]['projectVoiceSettings'];
-  createProviderClient: Parameters<typeof createElevenLabsSessionPreparationService>[0]['createProviderClient'];
-  getCredentials: Parameters<typeof createElevenLabsSessionPreparationService>[0]['getCredentials'];
-  fetchHostedVoiceToken: Parameters<typeof createElevenLabsSessionPreparationService>[0]['fetchHostedVoiceToken'];
-  completeHostedVoiceSession: Parameters<typeof createElevenLabsSessionLifecycle>[0]['completeSession'];
-  presentPaywall: Parameters<typeof createElevenLabsSessionPreparationService>[0]['presentPaywall'];
-  alert: Parameters<typeof createElevenLabsSessionPreparationService>[0]['alert'];
-  translate: Parameters<typeof createElevenLabsSessionLifecycle>[0]['translate'];
-  createMachineError: Parameters<typeof createElevenLabsSessionPreparationService>[0]['createMachineError'];
-  machine: Readonly<{
-    transitionToAcquiringMic(controlSessionId: string, adapterId: string): void;
-    transitionToConnecting(controlSessionId: string, adapterId: string): void;
-    transitionToConnected(controlSessionId: string, adapterId: string): void;
-    transitionToSpeaking(controlSessionId: string, adapterId: string): void;
-    transitionToEnding(controlSessionId: string, adapterId: string): void;
-    transitionToDisconnected(controlSessionId: string, adapterId: string, error: unknown | null): void;
-    setError(controlSessionId: string, adapterId: string, error: unknown): void;
-    setMuted(muted: boolean): void;
-    getSnapshot(): unknown;
-    projectSnapshot(adapterId: string, snapshot: unknown): VoiceAdapterSnapshot;
-    subscribe(listener: () => void): () => void;
-  }>;
-  createConversationController: CreateConversationController;
-  createSdkHandleConnection: Parameters<typeof createElevenLabsSdkConnection>[0]['createSdkHandleConnection'];
-  createMicSession(input: Readonly<{ onFailure: (failure: Readonly<{ kind: string; reason: string }>) => void }>): Readonly<{
-    ensureActive(): Promise<void>;
-    teardown(): Promise<void>;
-    setMuted(muted: boolean): void;
-  }>;
-  ensureBound(input: Readonly<{ adapterId: string; controlSessionId: string; requestedTargetSessionId: string | null }>): Promise<unknown>;
-  resolveConversationSessionId(controlSessionId: string, adapterId: string): string | null;
-  applyTargetSelection(input: Readonly<{ controlSessionId: string; targetSessionId: string; updateLastFocused: boolean }>): void;
-  enableAudioMode(): Promise<void>;
-  disableAudioMode(): Promise<void>;
-  createStorageMirror(input: Readonly<{
-    adapterId: string;
-    getSnapshot: () => unknown;
-    subscribe: (listener: () => void) => () => void;
-    projectSnapshot: (snapshot: unknown) => Readonly<{ status: 'disconnected' | 'connecting' | 'connected' | 'error'; mode: 'idle' | 'speaking' }>;
-  }>): () => void;
-  projectTranscript(input: Readonly<{ conversationSessionId: string; event: unknown }>): void;
-  appendConversationNote(input: Readonly<{ conversationSessionId: string; text: string }>): void;
-  createInboundWatchdog: Parameters<typeof createElevenLabsLiveness>[0]['createInboundWatchdog'];
-  runtimeConfig: Readonly<{
-    handleReadyTimeoutMs: number;
-    watchdogPollMs: number;
-    watchdogPlateauMs: number;
-    inboundStallMs: number;
-    awaitingResponseMs: number;
-  }>;
-  diagnostics: Readonly<{
-    appendSystem(message: string): void;
-    appendProviderPayload(payload: unknown): void;
-    appendError(reason: string): void;
-  }>;
-  voiceHooks: Readonly<{
-    onStarted(sessionId: string): string;
-    onStopped(): void;
-  }>;
-  realtimeClientTools: Readonly<Record<string, (parameters: unknown) => Promise<string>>>;
-  resolveRedactionPrefs(): VoiceToolResultRedactionPrefs;
-  redactToolResultValue(value: unknown, prefs: VoiceToolResultRedactionPrefs): unknown;
-}>;
+const PROVIDER_ID = 'realtime_elevenlabs' as const;
 
-const ADAPTER_ID = 'realtime_elevenlabs' as const;
+function readControlSessionId(config: unknown): string | null {
+  if (!config || typeof config !== 'object' || Array.isArray(config)) return null;
+  const dynamicVariables = (config as Readonly<{ dynamicVariables?: unknown }>).dynamicVariables;
+  if (!dynamicVariables || typeof dynamicVariables !== 'object' || Array.isArray(dynamicVariables)) return null;
+  const value = (dynamicVariables as Readonly<{ sessionId?: unknown }>).sessionId;
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
 
-export function createElevenLabsRuntimeContribution(host: ElevenLabsRuntimeHost): ElevenLabsRuntimeContribution {
-  const registry = createElevenLabsConversationHandleRegistry();
-  const handle = createElevenLabsConversationHandle({
-    clientTools: host.realtimeClientTools,
-    resolveRedactionPrefs: host.resolveRedactionPrefs,
-    redactToolResultValue: host.redactToolResultValue,
-  });
-  const unregisterVoice = registry.register('voice', handle);
-  const unregisterText = registry.register('text', handle);
-  const diagnostics = createElevenLabsDiagnostics(host.diagnostics);
+function readProvisionRequest(value: VoiceRealtimeJsonValue): Readonly<{
+  kind: 'list' | 'create' | 'update';
+  agentId?: string;
+}> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('invalid_parameters');
+  }
+  const record = value as Readonly<Record<string, VoiceRealtimeJsonValue>>;
+  if (record.kind === 'list' || record.kind === 'create') return Object.freeze({ kind: record.kind });
+  const agentId = ElevenLabsAgentIdSchema.safeParse(record.agentId);
+  if (record.kind !== 'update' || !agentId.success) throw new Error('invalid_parameters');
+  return Object.freeze({ kind: 'update', agentId: agentId.data });
+}
+
+/**
+ * Public ElevenLabs leaf. All app authority arrives through attempt-scoped
+ * Plugin SDK inputs; activation itself has no private host parameter.
+ */
+export function createElevenLabsVoiceProviderRuntimeRegistration():
+PluginVoiceProviderRuntimeRegistration {
   const preparation = createElevenLabsSessionPreparationService({
-    providerId: ADAPTER_ID,
-    projectVoiceSettings: host.projectVoiceSettings,
-    createProviderClient: host.createProviderClient,
-    getCredentials: host.getCredentials,
-    fetchHostedVoiceToken: host.fetchHostedVoiceToken,
-    presentPaywall: host.presentPaywall,
-    alert: host.alert,
-    createMachineError: host.createMachineError,
-  });
-  const lifecycle = createElevenLabsSessionLifecycle({
-    getCredentials: host.getCredentials,
-    completeSession: host.completeHostedVoiceSession,
-    appendNote(controlSessionId, text) {
-      const conversationSessionId = host.resolveConversationSessionId(controlSessionId, ADAPTER_ID)?.trim();
-      if (conversationSessionId) host.appendConversationNote({ conversationSessionId, text });
+    providerId: PROVIDER_ID,
+    projectVoiceSettings(settings) {
+      return Object.freeze({
+        providerId: PROVIDER_ID,
+        assistantLanguage: null,
+        welcome: Object.freeze({ enabled: false, mode: 'immediate' as const }),
+        providerConfig: settings,
+      });
     },
-    translate: host.translate,
+    // Subscription denial remains an explicit protocol result. A public leaf
+    // cannot invoke app-private modal or translation services.
+    presentPaywall: async () => Object.freeze({ purchased: false }),
+    alert() {},
+    createMachineError: (input) => Object.freeze({
+      ...input,
+      phase: 'runtime' as const,
+      retryPolicy: 'user_action' as const,
+      recoveryAction: input.kind === 'provider_auth_invalid'
+        ? 'review_credentials' as const
+        : 'retry' as const,
+      presentation: 'error' as const,
+      recoverable: true,
+    }),
   });
-  const protocol = createElevenLabsProtocolAdapter({
+  const hostedConversationsByLeaseId = new Map<
+    string,
+    Pick<PluginVoiceHostedConversationService, 'complete' | 'abort'>
+  >();
+  const lifecycle = createElevenLabsSessionLifecycle({
+    takeHostedConversation(leaseId) {
+      const service = hostedConversationsByLeaseId.get(leaseId) ?? null;
+      hostedConversationsByLeaseId.delete(leaseId);
+      return service;
+    },
+  });
+  const provider = createElevenLabsProtocolAdapter({
     preparation,
     lifecycle,
     eventMapper: createElevenLabsEventMapper(),
-    onDiagnosticError: diagnostics.error,
-    getSettings: host.getSettings,
-  });
-  let runtime: ReturnType<typeof createRealtimeElevenLabsRuntime> | null = null;
-
-  const surfaceLivenessFailure = (reason: string): void => {
-    if (!runtime?.getControlSessionId()) return;
-    diagnostics.error(reason);
-    void runtime.requestReconnect();
-  };
-  const liveness = createElevenLabsLiveness({
-    createInboundWatchdog: host.createInboundWatchdog,
-    now: () => Date.now(),
-    readOutboundBytes: async () => await (registry.current('voice')?.readOutboundAudioBytes() ?? null),
-    onInboundStall: () => surfaceLivenessFailure('realtime_inbound_stall'),
-    onOutboundPlateau: () => surfaceLivenessFailure('realtime_outbound_audio_plateau'),
-    pollMs: host.runtimeConfig.watchdogPollMs,
-    plateauMs: host.runtimeConfig.watchdogPlateauMs,
-    inboundStallMs: host.runtimeConfig.inboundStallMs,
-    awaitingResponseMs: host.runtimeConfig.awaitingResponseMs,
-  });
-  const mic = host.createMicSession({
-    onFailure(failure) {
-      if (!runtime?.getControlSessionId()) return;
-      const code = failure.kind === 'mic_permission_denied' ? 'mic_permission_revoked' : failure.kind;
-      diagnostics.error(failure.kind === 'mic_permission_denied' ? 'realtime_mic_permission_revoked' : failure.reason);
-      void runtime.fail(code);
+    onDiagnosticError() {},
+    rememberHostedConversation(leaseId, service) {
+      hostedConversationsByLeaseId.set(leaseId, service);
     },
   });
-  const resources = createElevenLabsAttemptResources({
-    mic,
-    transitionToAcquiringMic: (controlSessionId) => host.machine.transitionToAcquiringMic(controlSessionId, ADAPTER_ID),
-    ensureBound: host.ensureBound,
-    enableAudioMode: host.enableAudioMode,
-    disableAudioMode: host.disableAudioMode,
+  const protocol: PluginVoiceProviderProtocol = Object.freeze({
+    prepare: provider.adapter.prepare,
+    decodeControl: provider.adapter.decodeControl,
+    encodeTurnControl: provider.adapter.encodeTurnControl,
+    ...(provider.adapter.releasePrepared
+      ? { releasePrepared: provider.adapter.releasePrepared }
+      : {}),
   });
-
-  const unsubscribeMirror = host.createStorageMirror({
-    adapterId: ADAPTER_ID,
-    getSnapshot: host.machine.getSnapshot,
-    subscribe: host.machine.subscribe,
-    projectSnapshot(snapshot) {
-      const projected = host.machine.projectSnapshot(ADAPTER_ID, snapshot);
-      return { status: projected.status, mode: projected.mode === 'speaking' ? 'speaking' : 'idle' };
-    },
-  });
-
-  runtime = createRealtimeElevenLabsRuntime({
-    createConversationController: host.createConversationController,
-    protocol,
-    machine: {
-      connecting: ({ controlSessionId }) => host.machine.transitionToConnecting(controlSessionId, ADAPTER_ID),
-      connected: ({ controlSessionId }) => {
-        host.machine.transitionToConnected(controlSessionId, ADAPTER_ID);
-        diagnostics.connected();
-        liveness.connected();
-      },
-      ending: ({ controlSessionId }) => {
-        liveness.disconnected();
-        host.machine.transitionToEnding(controlSessionId, ADAPTER_ID);
-      },
-      disconnected: ({ controlSessionId, code }) => {
-        liveness.disconnected();
-        host.machine.transitionToDisconnected(
-          controlSessionId,
-          ADAPTER_ID,
-          code ? host.createMachineError({ kind: 'provider_error', reason: code }) : null,
-        );
-        diagnostics.disconnected();
-      },
-      failed: ({ controlSessionId, code }) => {
-        liveness.disconnected();
-        host.machine.setError(controlSessionId, ADAPTER_ID, host.createMachineError({
-          kind: code === 'reconnect_exhausted'
-            ? 'reconnect_exhausted'
-            : code === 'mic_permission_revoked'
-              ? 'mic_permission_revoked'
-              : 'provider_error',
-          reason: code,
-        }));
-        diagnostics.error(code);
-      },
-    },
-    resources: resources.port,
-    createConnection: async (session): Promise<RealtimeConnection> => {
-      const config = session.config && typeof session.config === 'object' && !Array.isArray(session.config)
-        ? session.config as Readonly<Record<string, unknown>>
-        : {};
-      return createElevenLabsSdkConnection({
-        createSdkHandleConnection: host.createSdkHandleConnection,
-        startConfig: session.config,
-        resolveHandle: async (signal) => registry.current(config.textOnly === true ? 'text' : 'voice')
-          ?? await registry.waitForCurrent(
-            config.textOnly === true ? 'text' : 'voice',
-            signal,
-            host.runtimeConfig.handleReadyTimeoutMs,
-          ),
-      });
-    },
-    isSelectionCurrent: () => preparation.isSelected(host.getSettings()),
-    projectTranscript: ({ controlSessionId, event }) => {
-      const conversationSessionId = host.resolveConversationSessionId(controlSessionId, ADAPTER_ID)?.trim();
-      if (conversationSessionId) host.projectTranscript({ conversationSessionId, event });
-    },
-    onProviderMode(mode, controlSessionId) {
-      liveness.modeChanged(mode);
-      if (mode === 'speaking') host.machine.transitionToSpeaking(controlSessionId, ADAPTER_ID);
-      else host.machine.transitionToConnected(controlSessionId, ADAPTER_ID);
-    },
-    onProviderEvent(event: VoiceRealtimeJsonValue) {
-      liveness.noteInboundEvent();
-      if (event && typeof event === 'object' && !Array.isArray(event)) {
-        const message = event as Readonly<Record<string, unknown>>;
-        if (message.role === 'user' || message.source === 'user') liveness.userTurnCommitted();
-      }
-      diagnostics.providerEvent(event);
-    },
-  });
-
-  const startRuntime = async (
-    sessionId: string,
-    initialContext?: string,
-    retryAfterPaywall = false,
-    options?: Readonly<{ textOnly?: boolean }>,
-  ) => {
-    const { controlSessionId, requestedTargetSessionId } = resolveElevenLabsStartIdentity(
-      sessionId,
-      host.globalVoiceSessionId,
-    );
-    if (requestedTargetSessionId) {
-      host.applyTargetSelection({ controlSessionId, targetSessionId: requestedTargetSessionId, updateLastFocused: true });
-    }
-    return await runtime!.start(controlSessionId, {
-      initialContext,
-      requestedTargetSessionId,
-      retryAfterPaywall,
-      textOnly: options?.textOnly === true,
-    });
-  };
-  const getSnapshot = (): VoiceAdapterSnapshot => host.machine.projectSnapshot(ADAPTER_ID, host.machine.getSnapshot());
+  let activeConnection: PluginVoiceRealtimeConnection | null = null;
+  let activeHandle: ReturnType<typeof createElevenLabsConversationHandle> | null = null;
   let disposed = false;
-  const adapter = Object.freeze({
-    id: ADAPTER_ID,
-    engineKind: 'realtime' as const,
-    async start(input: Readonly<{ sessionId: string; initialContext?: string; textOnly?: boolean }>) {
-      const initialContext = input.initialContext ?? host.voiceHooks.onStarted(input.sessionId);
-      await startRuntime(input.sessionId, initialContext, false, { textOnly: input.textOnly });
+  const settingsOperations: PluginVoiceProviderSettingsOperations = Object.freeze({
+    async listCatalog({ catalog, accountOperations, signal }) {
+      signal.throwIfAborted();
+      if (catalog !== 'voices') throw new Error('unsupported_voice_catalog');
+      const voices = await listElevenLabsVoicesWithAccountOperations({
+        accountOperations,
+        signal,
+      });
+      signal.throwIfAborted();
+      return Object.freeze(voices.map((voice) => VoiceRealtimeJsonValueSchema.parse(voice)));
     },
-    async stop(_input?: Readonly<{ sessionId: string }>) {
-      await runtime!.stop();
-      host.voiceHooks.onStopped();
-    },
-    async toggle(input: Readonly<{ sessionId: string; initialContext?: string }>) { await adapter.start(input); },
-    async interrupt(input: Readonly<{ sessionId: string }>) { await adapter.stop(input); },
-    async setMuted(input: Readonly<{ sessionId: string; muted: boolean }>) {
-      void input.sessionId;
-      resources.setMuted(input.muted);
-      host.machine.setMuted(input.muted);
-      await runtime!.setInputMuted(input.muted);
-    },
-    sendContextUpdate(input: Readonly<{ sessionId: string; update: string }>) {
-      void input.sessionId;
-      if (runtime!.isStarted()) void runtime!.sendContextUpdate(input.update);
-    },
-    sendContextText(input: Readonly<{ sessionId: string; text: string }>) {
-      void input.sessionId;
-      if (runtime!.isStarted()) void runtime!.sendText(input.text);
-    },
-    async sendTextTurn(input: Readonly<{ controlSessionId: string; conversationSessionId: string; text: string }>) {
-      void input.conversationSessionId;
-      if (!runtime!.isStarted()) await startRuntime(input.controlSessionId, undefined, false, { textOnly: true });
-      if (!runtime!.isStarted()) throw new Error('voice_service_unavailable');
-      const result = await runtime!.sendText(input.text);
-      if (result.status !== 'sent') throw new Error('voice_service_unavailable');
-    },
-    getSnapshot,
-    subscribe: host.machine.subscribe,
-    resolveBindingTranscriptMode: () => 'synthetic' as const,
-    resolveSurfaceCapabilities: (voiceSettings: unknown) => {
-      const projection = host.projectVoiceSettings({ voice: voiceSettings }, ADAPTER_ID);
-      if (projection?.providerId !== ADAPTER_ID || !projection.providerConfig) return null;
-      return {
-        allowsGlobalStart: true,
-        controlSessionScope: 'global' as const,
-        requiresVoiceAgentFeature: false,
-        bargeInEnabled: false,
-      };
-    },
-    resolveContextChannel: (voiceSettings: unknown) => {
-      const projection = host.projectVoiceSettings({ voice: voiceSettings }, ADAPTER_ID);
-      if (!projection?.providerConfig || !runtime!.isStarted()) return null;
-      return {
-        sendContextualUpdate: (update: string) => { void runtime!.sendContextUpdate(update); },
-        sendTextMessage: (text: string) => { void runtime!.sendText(text); },
-      };
+    async provision({
+      request,
+      providerConfig,
+      disabledActionIds,
+      extraSystemAppendBlocks,
+      accountOperations,
+      signal,
+    }) {
+      signal.throwIfAborted();
+      const config = ElevenLabsVoiceProviderSettingsSchema.safeParse(providerConfig);
+      if (!config.success) throw new Error('invalid_parameters');
+      const operation = readProvisionRequest(request);
+      const disabled = new Set(disabledActionIds);
+      const autoprovision = createElevenLabsAutoprovision({
+        defaultVoiceId: DEFAULT_ELEVENLABS_VOICE_ID,
+        client: Object.freeze({
+          async provision(provisionRequest, operationSignal) {
+            return await provisionElevenLabsWithAccountOperations({
+              accountOperations,
+              request: provisionRequest,
+              signal: operationSignal,
+            });
+          },
+        }),
+        async buildContext() {
+          signal.throwIfAborted();
+          return Object.freeze({
+            disabledActionIds,
+            extraSystemAppendBlocks,
+            actionSpecs: listVoiceSdkSafeToolActionSpecs().filter((spec) => !disabled.has(spec.id)),
+          });
+        },
+      });
+      const tts = config.data.tts;
+      if (operation.kind === 'list') {
+        return VoiceRealtimeJsonValueSchema.parse({
+          agents: await autoprovision.findExistingAgents(signal),
+        });
+      }
+      if (operation.kind === 'create') {
+        return VoiceRealtimeJsonValueSchema.parse(await autoprovision.createAgent({ tts }, signal));
+      }
+      await autoprovision.updateAgent({ agentId: operation.agentId!, tts }, signal);
+      return Object.freeze({ updated: true });
     },
   });
 
   return Object.freeze({
-    adapter,
+    protocol,
+    settingsOperations,
+    // The ElevenLabs SDK exclusively owns capture and playback. The host still
+    // owns the canonical audio-mode lease and the only Voice session lifecycle.
+    requiresMicForConnection: false,
+    outputLevelMeter: 'unavailable',
+    async createConnection({ session, mic, media, tools, execution }) {
+      if (disposed) throw new Error('elevenlabs_runtime_disposed');
+      if (execution.kind !== 'direct_media') {
+        throw new Error('elevenlabs_direct_media_authority_required');
+      }
+      const executableTools = tools.map((tool) => {
+        const executable = tool as typeof tool & Readonly<{
+          execute(parameters: import('@happier-dev/protocol').VoiceRealtimeJsonValue):
+            Promise<import('@happier-dev/protocol').VoiceRealtimeJsonValue>;
+        }>;
+        if (typeof executable.execute !== 'function') {
+          throw new Error(`elevenlabs_voice_tool_executor_missing:${tool.name}`);
+        }
+        return executable;
+      });
+      const handle = createElevenLabsConversationHandle({ tools: executableTools });
+      activeHandle?.dispose();
+      activeHandle = handle;
+      const controlSessionId = readControlSessionId(session.config);
+      const connection = createElevenLabsSdkConnection({
+        createSdkHandleConnection: media.createSdkHandleConnection,
+        handle,
+        startConfig: session.config,
+        initialMuted: mic.isMuted(),
+        onSessionIdentity(conversationId) {
+          if (controlSessionId) provider.handleSessionIdentity({ controlSessionId, conversationId });
+        },
+        onSessionEnded: provider.endSession,
+      });
+      activeConnection = connection;
+      return connection;
+    },
+    setInputMuted(muted) {
+      activeHandle?.setMicMuted(muted);
+    },
+    // ElevenLabs executes host-owned attempt tools inside the SDK handle and
+    // therefore never emits host tool-call events into this barrier path.
+    encodeToolResults: () => Object.freeze([]),
+    encodeToolContinuation: () => Object.freeze({ type: 'voice.provider_managed_tools' }),
+    encodeContextUpdate: (text) => Object.freeze([{ type: 'voice.context_update', text }]),
+    encodeTextTurn: (text) => Object.freeze([{ type: 'voice.user_text', text }]),
     async dispose() {
       if (disposed) return;
       disposed = true;
-      await runtime?.stop().catch(() => {});
-      unregisterVoice();
-      unregisterText();
-      handle.dispose();
-      unsubscribeMirror();
-      liveness.disconnected();
+      await activeConnection?.close({ code: 'replaced' }).catch(() => {});
+      activeConnection = null;
+      await provider.endSession();
+      hostedConversationsByLeaseId.clear();
+      activeHandle?.dispose();
+      activeHandle = null;
     },
   });
+}
+
+export function activate(api: Pick<PluginApi, 'voiceProviders'>): void {
+  api.voiceProviders.register(
+    PLUGIN_MANIFEST.contributes.voiceProviders[0].id,
+    createElevenLabsVoiceProviderRuntimeRegistration(),
+  );
 }

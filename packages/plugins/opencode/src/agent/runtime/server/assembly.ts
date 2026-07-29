@@ -1,80 +1,82 @@
-import { randomUUID } from 'node:crypto';
 import { createHash } from 'node:crypto';
 
-import type { ManagedServerHandleV1, PluginContextV1, SessionRuntimeV1 } from '@happier-dev/plugin-sdk';
+import type {
+  AgentSessionOpenRequest,
+  AgentSessionRuntime,
+  AgentSessionRuntimeContext,
+} from '@happier-dev/plugin-sdk/agent-runtime';
 
 import type { OpenCodeServerCredential, OpenCodeServerEndpoint } from './endpoint.js';
 import {
   createOpenCodeManagedServerCredential,
-  registerOpenCodeManagedServerCredential,
+  registerOpenCodeManagedServerEndpoint,
 } from './endpoint.js';
 import { buildOpenCodePermissionEnv } from '../../permissions/policy.js';
 import {
-  OPEN_CODE_BROKER_LOAD_NONCE_ENV,
-  OPEN_CODE_BROKER_PROVIDERS,
-  OPEN_CODE_BROKER_SELECTIONS_ENV,
-  parseOpenCodeBrokerSelections,
-  prepareOpenCodeBrokerForConnectedSession,
-  verifyOpenCodeBrokerLoadHandshakeForConnectedSession,
-} from '../../auth/services/broker/index.js';
+  OPENCODE_PROVIDER_OWNED_ENV_KEYS,
+} from '../../providerBinding/adapter.js';
+import { readOpenCodeProviderConfigContent } from '../../providerBinding/runtime.js';
+import {
+  OPEN_CODE_REQUEST_AUTH_CAPABILITY_PATH_ENV,
+} from '../../auth/services/requestAuth/env.js';
 import { scheduleOpenCodeMcpServerRegistration } from './mcpRegistration.js';
 import { createOpenCodeServerClient } from './openCodeServerClient.js';
+import { createOpenCodeServerTransport } from './transport.js';
 import { createOpenCodeServerRuntime } from './runtime.js';
-import { createOpenCodePublicSessionRuntime } from './sessionRuntime.js';
-import { createOpenCodeTranscriptSourceDefinition } from './transcript/source.js';
-import { resolveOpenCodeManagedServerStateFingerprintInput } from './managedServerState.js';
+import { createOpenCodeSessionRuntime } from './sessionRuntime.js';
+import {
+  OPENCODE_BINARY_IDENTITY_ENV,
+  OPENCODE_CONNECTED_SERVICE_SELECTION_IDENTITY_ENV,
+  resolveOpenCodeManagedServerStateFingerprintInput,
+} from './managedServerState.js';
+import type { OpenCodeActiveSkillsReaderRegistrar } from '../controls.js';
+import type {
+  OpenCodeManagedServerHandle,
+  OpenCodeRuntimeContext,
+} from './runtimeContext.js';
 
 type Disposable = Readonly<{ dispose?: () => void | Promise<void> }>;
 
 export type OpenCodeServerRuntimeAssembly = Readonly<{
-  runtime: SessionRuntimeV1;
+  runtime: AgentSessionRuntime;
   dispose(): Promise<void>;
 }>;
 
 type ResolvedOpenCodeServer = Readonly<{
   baseUrl: string;
+  instanceId: string;
   credential: OpenCodeServerCredential | null;
-  managedServer: ManagedServerHandleV1 | null;
+  managedServer: OpenCodeManagedServerHandle;
 }>;
 
-async function disposeBestEffort(ctx: PluginContextV1, label: string, disposable: Disposable | null): Promise<void> {
+const OPENCODE_CHILD_LAUNCH_ENV_KEYS = Object.freeze([
+  ...OPENCODE_PROVIDER_OWNED_ENV_KEYS,
+  'XDG_CONFIG_HOME',
+  OPEN_CODE_REQUEST_AUTH_CAPABILITY_PATH_ENV,
+] as const);
+
+async function disposeBestEffort(ctx: OpenCodeRuntimeContext, label: string, disposable: Disposable | null): Promise<void> {
   if (typeof disposable?.dispose !== 'function') return;
   await Promise.resolve(disposable.dispose()).catch((error: unknown) => {
     ctx.logger.debug(`[OpenCodeServer] failed to dispose ${label}`, { error });
   });
 }
 
-async function ensureExternalServerHealthy(params: Readonly<{
-  ctx: PluginContextV1;
-  baseUrl: string;
-  signal?: AbortSignal;
-}>): Promise<void> {
-  const response = await params.ctx.fetch({
-    url: `${params.baseUrl.replace(/\/+$/u, '')}/global/health`,
-    method: 'GET',
-    signal: params.signal,
-  });
-  if (!response.ok) {
-    throw new Error(`OpenCode external server health check failed: ${response.status} ${response.statusText ?? ''}`.trim());
-  }
-}
-
-function readManagedBaseUrl(handle: ManagedServerHandleV1): string {
-  const baseUrl = handle.snapshot().baseUrl;
+function readManagedServerIdentity(
+  snapshot: ReturnType<OpenCodeManagedServerHandle['snapshot']>,
+): Readonly<{ baseUrl: string; instanceId: string }> {
+  const baseUrl = snapshot.baseUrl;
   if (typeof baseUrl !== 'string' || baseUrl.trim().length === 0) {
     throw new Error('OpenCode managed server did not report a resolved base URL');
   }
-  return baseUrl.replace(/\/+$/u, '');
-}
-
-function withOpenCodeBrokerLoadNonceForSpawn(env: Readonly<Record<string, string>>): Record<string, string> {
-  const next = { ...env };
-  const selections = parseOpenCodeBrokerSelections(next[OPEN_CODE_BROKER_SELECTIONS_ENV]);
-  const hasBrokeredProvider = OPEN_CODE_BROKER_PROVIDERS.some((provider) => selections[provider]);
-  if (hasBrokeredProvider) {
-    next[OPEN_CODE_BROKER_LOAD_NONCE_ENV] = randomUUID();
+  const instanceId = snapshot.instanceId?.trim();
+  if (!instanceId) {
+    throw new Error('OpenCode managed server did not report a host-issued incarnation');
   }
-  return next;
+  return {
+    baseUrl: baseUrl.replace(/\/+$/u, ''),
+    instanceId,
+  };
 }
 
 function stableStringifyRecord(record: Readonly<Record<string, string>>): string {
@@ -92,44 +94,91 @@ function readOpenCodeExecutablePath(env: Readonly<Record<string, string>>): stri
   return explicitPath || 'opencode';
 }
 
+function buildOpenCodeManagedLaunchEnvironment(
+  env: Readonly<Record<string, string>> | undefined,
+  permissionMode: string | null | undefined,
+  providerConfigContent: string | undefined,
+): Readonly<Record<string, string>> {
+  return Object.freeze({
+    ...Object.fromEntries(OPENCODE_CHILD_LAUNCH_ENV_KEYS.flatMap((key) => (
+      typeof env?.[key] === 'string' ? [[key, env[key]]] : []
+    ))),
+    ...(providerConfigContent === undefined
+      ? {}
+      : { OPENCODE_CONFIG_CONTENT: providerConfigContent }),
+    ...buildOpenCodePermissionEnv(permissionMode),
+  });
+}
+
 async function resolveOpenCodeServer(params: Readonly<{
-  ctx: PluginContextV1;
+  ctx: OpenCodeRuntimeContext;
   directory: string;
   endpoint: OpenCodeServerEndpoint;
   env?: Readonly<Record<string, string>>;
+  providerConfigContent?: string;
   permissionMode?: string | null;
   signal?: AbortSignal;
 }>): Promise<ResolvedOpenCodeServer> {
   if (params.endpoint.mode === 'external-attach') {
-    await ensureExternalServerHealthy({
-      ctx: params.ctx,
-      baseUrl: params.endpoint.baseUrl,
+    if (params.providerConfigContent !== undefined) {
+      throw new Error('OpenCode Provider binding requires a managed server');
+    }
+    if (
+      typeof params.env?.[OPENCODE_CONNECTED_SERVICE_SELECTION_IDENTITY_ENV] === 'string'
+      && params.env[OPENCODE_CONNECTED_SERVICE_SELECTION_IDENTITY_ENV].trim().length > 0
+    ) {
+      throw new Error('OpenCode isolated authentication requires a managed server');
+    }
+    const managedServer = await params.ctx.managedServer.supervise({
+      id: 'opencode-server',
+      mode: {
+        kind: 'external-attach',
+        baseUrl: params.endpoint.baseUrl,
+      },
+      healthCheck: {
+        kind: 'http',
+        path: '/global/health',
+        timeoutMs: 5_000,
+      },
+      watchdog: {
+        intervalMs: 10_000,
+        missedIntervals: 3,
+      },
+      startupTimeoutMs: 30_000,
       signal: params.signal,
     });
-    return {
-      baseUrl: params.endpoint.baseUrl,
-      credential: null,
-      managedServer: null,
-    };
-  }
-
-  // Connected sessions auth via the Happier broker plugin: write its `.js` assets into the isolated
-  // config home the materializer redirected `XDG_CONFIG_HOME` to, then fail-closed preflight. No-op for
-  // native + direct-API-key sessions. The broker marker is itself non-functional without the plugin,
-  // so a failed preparation must fail the session rather than silently fall back to native/upstream auth.
-  const brokerEnv = withOpenCodeBrokerLoadNonceForSpawn(params.env ?? {});
-  const brokerPreparation = await prepareOpenCodeBrokerForConnectedSession(brokerEnv);
-  if (!brokerPreparation.ready) {
-    throw new Error(`OpenCode connected-service broker not ready: ${brokerPreparation.reason}`);
+    try {
+      const identity = readManagedServerIdentity(
+        await managedServer.waitUntilHealthy({ timeoutMs: 30_000, signal: params.signal }),
+      );
+      return {
+        ...identity,
+        credential: null,
+        managedServer,
+      };
+    } catch (error) {
+      await disposeBestEffort(params.ctx, 'external managed server after startup failure', managedServer);
+      throw error;
+    }
   }
 
   const credential = createOpenCodeManagedServerCredential();
-  const launchEnv = {
-    ...brokerEnv,
-    ...buildOpenCodePermissionEnv(params.permissionMode),
-  };
+  const launchEnv = buildOpenCodeManagedLaunchEnvironment(
+    params.env,
+    params.permissionMode,
+    params.providerConfigContent,
+  );
   const launchFingerprintEnv = {
     ...launchEnv,
+    ...(typeof params.env?.[OPENCODE_CONNECTED_SERVICE_SELECTION_IDENTITY_ENV] === 'string'
+      ? {
+          [OPENCODE_CONNECTED_SERVICE_SELECTION_IDENTITY_ENV]:
+            params.env[OPENCODE_CONNECTED_SERVICE_SELECTION_IDENTITY_ENV],
+        }
+      : {}),
+    ...(typeof params.env?.[OPENCODE_BINARY_IDENTITY_ENV] === 'string'
+      ? { [OPENCODE_BINARY_IDENTITY_ENV]: params.env[OPENCODE_BINARY_IDENTITY_ENV] }
+      : {}),
     [credential.envKey]: credential.value,
   };
   const managedServer = await params.ctx.managedServer.supervise({
@@ -138,7 +187,6 @@ async function resolveOpenCodeServer(params: Readonly<{
       kind: 'managed-spawn',
       host: '127.0.0.1',
       portArg: '--port',
-      baseUrlEnvKey: 'HAPPIER_OPENCODE_SERVER_URL',
       credential: {
         envKey: credential.envKey,
         value: credential.value,
@@ -182,65 +230,69 @@ async function resolveOpenCodeServer(params: Readonly<{
     // providers); the OpenCode plugin only opts in.
     durableLog: { enabled: true },
   });
-  await managedServer.waitUntilHealthy({ timeoutMs: 30_000, signal: params.signal });
-  // F4: now that the server is healthy, confirm the broker plugin actually LOADED (it pings the daemon on
-  // activation). This is the POST-spawn half of the fail-closed gate — the pre-spawn `prepare` above only
-  // proves the assets are on disk. No-op for native + direct-API-key sessions. A present-but-not-loaded
-  // plugin must fail the session rather than silently fall back to native/upstream auth.
-  const brokerLoadHandshake = await verifyOpenCodeBrokerLoadHandshakeForConnectedSession(brokerEnv);
-  if (!brokerLoadHandshake.ready) {
-    throw new Error(`OpenCode connected-service broker not loaded: ${brokerLoadHandshake.reason}`);
+  try {
+    const identity = readManagedServerIdentity(
+      await managedServer.waitUntilHealthy({ timeoutMs: 30_000, signal: params.signal }),
+    );
+    return {
+      ...identity,
+      credential,
+      managedServer,
+    };
+  } catch (error) {
+    await disposeBestEffort(params.ctx, 'managed server after startup failure', managedServer);
+    throw error;
   }
-  return {
-    baseUrl: readManagedBaseUrl(managedServer),
-    credential,
-    managedServer,
-  };
 }
 
 export async function createOpenCodeServerRuntimeAssembly(params: Readonly<{
-  ctx: PluginContextV1;
+  ctx: OpenCodeRuntimeContext;
   directory: string;
   happierSessionId: string;
   endpoint: OpenCodeServerEndpoint;
   env?: Readonly<Record<string, string>>;
   permissionMode?: string | null;
   mcpServers?: unknown;
-  setThinking?: (thinking: boolean) => void;
-  resumeSessionId?: string | null;
+  request: AgentSessionOpenRequest;
   signal?: AbortSignal;
+  models?: AgentSessionRuntimeContext['session']['services']['models'];
+  bindActiveSkillsReader?: OpenCodeActiveSkillsReaderRegistrar;
 }>): Promise<OpenCodeServerRuntimeAssembly> {
-  let managedServer: ManagedServerHandleV1 | null = null;
-  let managedServerCredential: Disposable | null = null;
-  let transcriptSource: Disposable | null = null;
+  let managedServer: OpenCodeManagedServerHandle | null = null;
+  let managedServerEndpoint: Disposable | null = null;
   let disposed = false;
   try {
+    const providerConfigContent = await readOpenCodeProviderConfigContent(params.request);
     const server = await resolveOpenCodeServer({
       ctx: params.ctx,
       directory: params.directory,
       endpoint: params.endpoint,
       env: params.env,
+      providerConfigContent,
       permissionMode: params.permissionMode,
       signal: params.signal,
     });
     managedServer = server.managedServer;
-    managedServerCredential = server.credential
-      ? registerOpenCodeManagedServerCredential({
-        baseUrl: server.baseUrl,
-        credential: server.credential,
-      })
-      : null;
-    const client = createOpenCodeServerClient({
-      fetch: params.ctx.fetch,
+    const transport = createOpenCodeServerTransport({
       baseUrl: server.baseUrl,
-      directory: params.directory,
+      instanceId: server.instanceId,
       ...(server.credential ? { headers: server.credential.headers } : {}),
+      signal: params.signal ?? params.ctx.abort.signal,
+      readManagedServerSnapshot: () => server.managedServer.snapshot(),
+    });
+    managedServerEndpoint = registerOpenCodeManagedServerEndpoint({
+      baseUrl: server.baseUrl,
+      credential: server.credential,
+      transport,
+    });
+    const client = createOpenCodeServerClient({
+      transport,
+      directory: params.directory,
     });
     scheduleOpenCodeMcpServerRegistration({
       ctx: params.ctx,
       client,
       directory: params.directory,
-      happierSessionId: params.happierSessionId,
       mcpServers: params.mcpServers,
     });
     const operations = createOpenCodeServerRuntime({
@@ -251,61 +303,63 @@ export async function createOpenCodeServerRuntimeAssembly(params: Readonly<{
       client,
       env: params.env,
       readManagedServerSnapshot: () => managedServer?.snapshot() ?? null,
-      setThinking: params.setThinking,
     });
-    await operations.startOrLoadSession({
-      ...(params.resumeSessionId ? { resumeId: params.resumeSessionId } : {}),
-    });
-    const runtime = createOpenCodePublicSessionRuntime(operations);
-    transcriptSource = await params.ctx.agentRuntime.transcripts.defineSource({
-      ...createOpenCodeTranscriptSourceDefinition({
-        id: `opencode:${params.happierSessionId}:http-sse`,
-        client: {
-          mcpAdd: async () => undefined,
-          sessionCreate: async () => {
-            throw new Error('Transcript source does not create OpenCode sessions.');
-          },
-          sessionPromptAsync: async () => undefined,
-          sessionAbort: async () => undefined,
-          sessionStatus: async () => ({}),
-          sessionMessages: async ({ sessionId }) => {
-            const identity = operations.readSessionIdentity().sessionId;
-            if (!identity || identity !== sessionId) return [];
-            return await client.sessionMessages({ sessionId });
-          },
-          sessionTodo: async () => [],
-          permissionReply: async () => undefined,
-          appSkills: async () => [],
-          subscribeGlobalEvents: async () => undefined,
-          globalConfigGet: async () => ({}),
-          providersList: async () => [],
-        },
-        readProviderSessionId: () => operations.readSessionIdentity().sessionId,
-        isHappierAuthoredProviderUserMessageId: (messageId) =>
-          operations.isHappierAuthoredProviderUserMessageId(messageId),
-      }),
-    });
-
+    await operations.openSession(
+      params.request.kind === 'create'
+        ? { kind: 'create' }
+        : params.request.kind === 'resume'
+          ? {
+              kind: 'resume',
+              providerSessionId: params.request.providerSessionId,
+            }
+          : {
+              kind: 'fork',
+              source: {
+                providerSessionId: params.request.source.providerSessionId,
+                ...(params.request.source.target?.providerCheckpoint === undefined
+                  ? {}
+                  : {
+                      providerCheckpoint:
+                        params.request.source.target.providerCheckpoint,
+                    }),
+              },
+            },
+    );
+    if (params.request.configuration) {
+      await operations.updateSessionRuntimeConfig({
+        modelId: params.request.configuration.model.value,
+        permissionMode: params.request.configuration.permissionIntent.value,
+        ...Object.fromEntries(
+          Object.entries(params.request.configuration.options).map(
+            ([key, value]) => [key, value.value],
+          ),
+        ),
+      });
+    }
     const dispose = async (): Promise<void> => {
       if (disposed) return;
       disposed = true;
       await operations.resetOrDisposeRuntime();
-      await disposeBestEffort(params.ctx, 'transcript source', transcriptSource);
       await disposeBestEffort(params.ctx, 'managed server', managedServer);
-      await disposeBestEffort(params.ctx, 'managed server credential', managedServerCredential);
+      await disposeBestEffort(params.ctx, 'managed server endpoint', managedServerEndpoint);
     };
+    const runtime = createOpenCodeSessionRuntime({
+      operations,
+      request: params.request,
+      disposeOperations: dispose,
+      ...(params.models ? { models: params.models } : {}),
+      ...(params.bindActiveSkillsReader
+        ? { bindActiveSkillsReader: params.bindActiveSkillsReader }
+        : {}),
+    });
 
     return {
-      runtime: {
-        ...runtime,
-        dispose,
-      },
+      runtime,
       dispose,
     };
   } catch (error) {
-    await disposeBestEffort(params.ctx, 'transcript source', transcriptSource);
     await disposeBestEffort(params.ctx, 'managed server', managedServer);
-    await disposeBestEffort(params.ctx, 'managed server credential', managedServerCredential);
+    await disposeBestEffort(params.ctx, 'managed server endpoint', managedServerEndpoint);
     throw error;
   }
 }

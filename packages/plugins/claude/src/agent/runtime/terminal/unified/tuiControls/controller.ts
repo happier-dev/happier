@@ -1,4 +1,3 @@
-import type { RuntimeConfigOutcomeChangeKeyV1, RuntimeConfigOutcomeTimingV1 } from '@happier-dev/plugin-sdk/experimental/runtime/session';
 import { sleep } from '@happier-dev/plugin-sdk/experimental/timeout';
 
 import { resolveClaudeDefaultEffortForKnownAliasOrModel } from '../../../reasoningEffort.js';
@@ -34,7 +33,9 @@ import {
   type ClaudeUnifiedVerifiedRuntimeConfig,
   type RuntimeConfigApplyOutcome,
   type RuntimeConfigChangeOutcome,
+  type RuntimeConfigOutcomeChangeKeyV1,
   type RuntimeConfigOutcomeScalar,
+  type RuntimeConfigOutcomeTimingV1,
   type RuntimeConfigScheduleOutcome,
 } from './types.js';
 import type { ClaudeTuiControlTelemetrySink } from './telemetry.js';

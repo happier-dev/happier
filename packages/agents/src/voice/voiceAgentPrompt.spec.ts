@@ -1,10 +1,73 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 
-import { listVoiceActionBlockSpecs, listVoiceToolActionSpecs } from '@happier-dev/protocol';
+import {
+  listVoiceActionBlockSpecs,
+  listVoiceSdkSafeToolActionSpecs,
+  listVoiceToolActionSpecs,
+  VOICE_ACTIONS_BLOCK,
+  VOICE_TOOL_RESULTS_JSON_PREFIX,
+  renderPromptPlanV1,
+} from '@happier-dev/protocol';
 
-import { buildElevenLabsVoiceAgentPrompt, buildLocalVoiceAgentSystemPrompt } from './voiceAgentPrompt.js';
+import {
+  GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_ID,
+  GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_REVISION,
+  buildElevenLabsVoiceAgentPrompt,
+  buildGlobalVoiceAgentStartupInstructionsPlanV1,
+  buildLocalVoiceAgentSystemPrompt,
+} from './voiceAgentPrompt.js';
 
 describe('voiceAgentPrompt', () => {
+  it('pins the global Voice Agent startup-instruction identity, block order, and rendered digest', () => {
+    const plan = buildGlobalVoiceAgentStartupInstructionsPlanV1();
+    const rendered = renderPromptPlanV1(plan).normalize('NFC').replace(/\r\n/g, '\n');
+
+    expect({
+      id: GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_ID,
+      revision: GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_REVISION,
+      blockIds: plan.blocks.map((block) => block.id),
+      digest: createHash('sha256').update(rendered, 'utf8').digest('hex'),
+    }).toEqual({
+      id: 'happier.global_voice_agent',
+      revision: 2,
+      blockIds: [
+        'voice.global_agent.identity',
+        'voice.global_agent.authority',
+        'voice.global_agent.custody',
+        'voice.global_agent.results',
+      ],
+      digest: '98800df793b847e96f53eb3c5b0f41dffb0877761986d1818fc5054a0a00696b',
+    });
+
+    expect(rendered).toContain("Happier's global Voice agent");
+    expect(rendered).toContain('canonical Happier tools');
+    expect(rendered).toContain('Never auto-approve');
+    expect(rendered).toContain('Never semantically retry a mutation');
+    expect(rendered).toContain('Do not claim completion before canonical results exist');
+    expect(rendered).not.toContain('sendSessionMessage');
+    expect(rendered).not.toContain(VOICE_ACTIONS_BLOCK.startTag);
+    expect(rendered).not.toContain('{{');
+  });
+
+  it('keeps true coding-permission decisions in the canonical session UI across Voice prompts', () => {
+    const prompts = [
+      renderPromptPlanV1(buildGlobalVoiceAgentStartupInstructionsPlanV1()),
+      buildLocalVoiceAgentSystemPrompt({ sessionId: 's1' }),
+      buildElevenLabsVoiceAgentPrompt({
+        initialConversationContextPlaceholder: '{{initialConversationContext}}',
+        sessionIdPlaceholder: '{{sessionId}}',
+      }),
+    ];
+
+    for (const prompt of prompts) {
+      expect(prompt).toContain('canonical session UI');
+      expect(prompt).toContain('spoken approval, denial, "yes," or equivalent does not decide');
+      expect(prompt).toContain('Only report the permission as approved, denied, or settled after canonical session state shows that outcome');
+      expect(prompt).not.toContain('Only approve/deny after the user explicitly answers');
+    }
+  });
+
   it('prioritizes discovery and hot-path tools in the ElevenLabs prompt instead of inlining the full catalog', () => {
     const prompt = buildElevenLabsVoiceAgentPrompt({
       initialConversationContextPlaceholder: '{{initialConversationContext}}',
@@ -14,9 +77,17 @@ describe('voiceAgentPrompt', () => {
     expect(prompt).toContain('searchActionSpecs');
     expect(prompt).toContain('getActionSpec');
     expect(prompt).toContain('resolveActionOptions');
-    expect(prompt).toContain('setSessionMode');
-    expect(prompt).toContain('startPlan');
-    expect(prompt).toContain('sendSessionMessage');
+    expect(prompt).toContain('listMachines');
+    const sdkSafeToolNames = new Set(listVoiceSdkSafeToolActionSpecs().map(
+      (spec) => spec.bindings?.voiceClientToolName,
+    ));
+    for (const spec of listVoiceSdkSafeToolActionSpecs()) {
+      expect(['none', 'read']).toContain(spec.sideEffectClass);
+    }
+    for (const spec of listVoiceToolActionSpecs()) {
+      const toolName = spec.bindings?.voiceClientToolName;
+      if (toolName && !sdkSafeToolNames.has(toolName)) expect(prompt).not.toContain(toolName);
+    }
     expect(prompt).not.toContain('- memoryGetWindow:');
   });
 
@@ -36,11 +107,11 @@ describe('voiceAgentPrompt', () => {
 
   it('prioritizes discovery and hot-path actions in the local voice system prompt instead of inlining the full catalog', () => {
     const prompt = buildLocalVoiceAgentSystemPrompt({
-      actionsTag: 'voice_actions',
       sessionId: 's1',
     });
 
-    expect(prompt).toContain('VOICE_TOOL_RESULTS_JSON:');
+    expect(prompt).toContain(VOICE_TOOL_RESULTS_JSON_PREFIX);
+    expect(prompt).toContain(`${VOICE_ACTIONS_BLOCK.startTag}...${VOICE_ACTIONS_BLOCK.endTag}`);
     expect(prompt).toContain('searchActionSpecs');
     expect(prompt).toContain('getActionSpec');
     expect(prompt).toContain('resolveActionOptions');
@@ -89,11 +160,12 @@ describe('voiceAgentPrompt', () => {
       sessionIdPlaceholder: '{{sessionId}}',
     });
 
-    expect(prompt).toContain('listReviewEngines');
-    expect(prompt).toContain('spawnSessionPicker');
+    expect(prompt).toContain('listMachines');
+    expect(prompt).not.toContain('listReviewEngines');
+    expect(prompt).not.toContain('spawnSessionPicker');
     expect(prompt).toContain('listAgentModels');
     expect(prompt).toContain('Use listExecutionRuns to discover runs by title or status before choosing runId internally');
-    expect(prompt).toContain('Use listSessions to discover sessions by title before choosing sessionId internally');
+    expect(prompt).toContain('Use listSessions before choosing sessionId internally');
   });
 
   it('keeps memory workflows discoverable without inlining every long-tail tool schema', () => {
@@ -163,7 +235,8 @@ describe('voiceAgentPrompt', () => {
 
     expect(elevenLabsPrompt).toContain('Do not ask the user for opaque internal ids when discovery tools can provide them');
     expect(elevenLabsPrompt).toContain('When an action accepts a human-readable session title, prefer that session title directly instead of forcing yourself to speak or remember a raw session id');
-    expect(elevenLabsPrompt).toContain('If the user already gave you an exact session title for openSession or setPrimaryActionSession, call that action with sessionTitle first before paging through listSessions');
+    expect(elevenLabsPrompt).not.toContain('openSession');
+    expect(elevenLabsPrompt).not.toContain('setPrimaryActionSession');
     expect(elevenLabsPrompt).toContain('Speak about session titles, machine labels, workspace names, backend names, model labels, and other human-readable labels instead of raw ids');
     expect(elevenLabsPrompt).toContain('When you know a session title, workspace name, backend name, machine label, or model label, say that explicit human-readable label instead of saying "the current session"');
   });
@@ -183,11 +256,11 @@ describe('voiceAgentPrompt', () => {
     expect(localPrompt).toContain('Do not add greeting filler like "Hi there"');
     expect(localPrompt).toContain('Do not claim a permission request exists unless a real pending permission or user-action request is present in the current session updates');
     expect(localPrompt).toContain('answerUserActionRequest');
-    expect(elevenLabsPrompt).toContain('use sendSessionMessage');
+    expect(elevenLabsPrompt).not.toContain('sendSessionMessage');
     expect(elevenLabsPrompt).toContain('Do not repeatedly narrate that you are waiting');
     expect(elevenLabsPrompt).toContain('Do not add greeting filler like "Hi there"');
     expect(elevenLabsPrompt).toContain('Do not claim a permission request exists unless a real pending permission or user-action request is present in the current session updates');
-    expect(elevenLabsPrompt).toContain('answerUserActionRequest');
+    expect(elevenLabsPrompt).not.toContain('answerUserActionRequest');
   });
 
   it('tells voice agents to pause tool use while a permission or user-action request is pending', () => {
@@ -273,7 +346,7 @@ describe('voiceAgentPrompt', () => {
 
     expect(elevenLabsPrompt).toContain('Discovery checklist:');
     expect(elevenLabsPrompt).toContain('- Use listExecutionRuns before choosing runId internally');
-    expect(elevenLabsPrompt).toContain('- If the exact session title is not in the first listSessions page, continue with its next cursor or use spawnSessionPicker');
+    expect(elevenLabsPrompt).not.toContain('spawnSessionPicker');
   });
 
   it('keeps internal ids out of the headline prompt wording', () => {

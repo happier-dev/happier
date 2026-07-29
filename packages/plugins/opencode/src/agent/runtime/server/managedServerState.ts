@@ -8,7 +8,7 @@ export const OPENCODE_MANAGED_SERVER_STATE_PATH_ENV_KEY = 'HAPPIER_OPENCODE_SERV
  * Env var carrying the STABLE connected-service selection identity that the managed-server launch
  * fingerprint keys on. Populated by the connected-services materializer alongside
  * `OPENCODE_AUTH_CONTENT`. It must encode the account/profile selection (provider id + connected
- * mode + service/profile/group/selection id + broker plugin version/path/config) and NOT rotating
+ * mode + service/account-or-group intent + request-auth plugin/config) and NOT rotating
  * access/refresh token bytes, so that a token refresh for the same account does NOT change the
  * fingerprint (and therefore does not churn the managed server). See
  * `resolveOpenCodeManagedServerStateFingerprintInput`.
@@ -41,12 +41,12 @@ function normalizeIdentityValue(value: unknown): string {
  * whether a connected (or native) session may REUSE an existing managed `opencode serve` process.
  *
  * The fingerprint keys on a STABLE selection identity (provider/connected-mode/account/profile +
- * broker plugin + config isolation + XDG root + binary + server auth) and EXCLUDES rotating
+ * request-auth plugin + config isolation + XDG root + binary + server auth) and EXCLUDES rotating
  * access/refresh token values:
  * - `OPENCODE_CONNECTED_SERVICE_SELECTION_IDENTITY_ENV`: the stable per-account identity emitted by
  *   the materializer. When present it REPLACES the rotating auth-content hash, so a same-account
  *   token rotation keeps the fingerprint unchanged.
- * - When NO selection identity is present (native sessions, or the pre-broker transition), the
+ * - When NO selection identity is present (native sessions), the
  *   fingerprint falls back to hashing `OPENCODE_AUTH_CONTENT` so distinct stored credentials never
  *   collide. Native sessions have no `OPENCODE_AUTH_CONTENT`, so their auth-identity class is empty
  *   and never collides with connected sessions.

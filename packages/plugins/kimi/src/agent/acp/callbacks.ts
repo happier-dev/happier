@@ -1,15 +1,18 @@
 import type {
-  AcpTier2ArgvBuilderV1,
-  AcpTier2EnvBuilderV1,
-} from '@happier-dev/plugin-sdk/experimental/acp';
-import { normalizeAcpPermissionIntent } from '@happier-dev/plugin-sdk/experimental/acp';
+  AgentLaunchEnvironment,
+  AgentPermissionIntent,
+} from '@happier-dev/plugin-sdk/agent-runtime';
 
 import { ensureKimiReadOnlyAgentFile } from '../bootstrap/readonlyAgentFile.js';
 import { HAPPIER_KIMI_ACP_SELECTOR_ENV } from '../preferences/pythonSelector.js';
 import { resolveKimiAcpPythonSelectorChildEnv } from './pythonSelectorEnv.js';
 
-export const buildKimiAcpArgv: AcpTier2ArgvBuilderV1 = (params) => {
-  const intent = normalizeAcpPermissionIntent(params.permissionMode);
+export function buildKimiAcpArgv(params: Readonly<{
+  baseArgs: readonly string[];
+  cwd: string;
+  permissionIntent: AgentPermissionIntent | null;
+}>): string[] {
+  const intent = params.permissionIntent;
   const args: string[] = ['--work-dir', params.cwd];
 
   if (intent === 'yolo') {
@@ -22,10 +25,15 @@ export const buildKimiAcpArgv: AcpTier2ArgvBuilderV1 = (params) => {
 
   args.push(...params.baseArgs);
   return args;
-};
+}
 
-export const buildKimiAcpEnv: AcpTier2EnvBuilderV1 = (params) => resolveKimiAcpPythonSelectorChildEnv({
-  selector: params.env[HAPPIER_KIMI_ACP_SELECTOR_ENV],
-  env: params.env,
-  inheritedEnv: params.env,
-});
+export function buildKimiAcpEnv(params: Readonly<{
+  launchEnvironment?: AgentLaunchEnvironment;
+}>): Record<string, string> {
+  const env = params.launchEnvironment?.values ?? {};
+  return resolveKimiAcpPythonSelectorChildEnv({
+    selector: env[HAPPIER_KIMI_ACP_SELECTOR_ENV],
+    env,
+    inheritedEnv: env,
+  });
+}

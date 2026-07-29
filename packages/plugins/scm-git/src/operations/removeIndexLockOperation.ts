@@ -7,7 +7,7 @@ import {
   type ScmRepositoryRemoveIndexLockRequest,
   type ScmRepositoryRemoveIndexLockResponse,
   type ScmWorkingSnapshot,
-} from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm';
 
 import { runScmCommand } from '../runtime.js';
 import type { ScmBackendContext } from '../types.js';

@@ -62,7 +62,8 @@ describe('FeatureGatesSchema', () => {
       },
     });
 
-    expect(readServerEnabledBit(parsed, 'connectedServices')).toBe(true);
+    // Compatibility-only wire bit for clients released before Connected Accounts became core.
+    expect(parsed.features.connectedServices.enabled).toBe(true);
     expect(readServerEnabledBit(parsed, 'connectedServices.quotas')).toBe(true);
     expect(parsed.capabilities.bugReports).toEqual(DEFAULT_BUG_REPORTS_CAPABILITIES);
     expect((parsed as any).features.futureBridge).toBeUndefined();
@@ -217,7 +218,6 @@ describe('FeatureGatesSchema', () => {
           ui: {
             enabled: true,
             hostedWeb: { enabled: true },
-            embeddedWebBundles: { enabled: true },
             structuredMessages: { enabled: true },
             reactNativeBundles: {
               enabled: true,
@@ -232,7 +232,6 @@ describe('FeatureGatesSchema', () => {
     expect(readServerEnabledBit(parsed, 'plugins' as never)).toBe(true);
     expect(readServerEnabledBit(parsed, 'plugins.ui' as never)).toBe(true);
     expect(readServerEnabledBit(parsed, 'plugins.ui.hostedWeb' as never)).toBe(true);
-    expect(readServerEnabledBit(parsed, 'plugins.ui.embeddedWebBundles' as never)).toBe(true);
     expect(readServerEnabledBit(parsed, 'plugins.ui.structuredMessages' as never)).toBe(true);
     expect(readServerEnabledBit(parsed, 'plugins.ui.reactNativeBundles' as never)).toBe(true);
     expect(readServerEnabledBit(parsed, 'plugins.ui.reactNativeBundles.devHotReload' as never)).toBe(true);
@@ -248,7 +247,6 @@ describe('FeatureGatesSchema', () => {
     });
     // Fail-closed: a payload that omits the tier bits reads as disabled.
     expect(readServerEnabledBit(defaulted, 'plugins.ui.hostedWeb' as never)).toBe(false);
-    expect(readServerEnabledBit(defaulted, 'plugins.ui.embeddedWebBundles' as never)).toBe(false);
     expect(readServerEnabledBit(defaulted, 'plugins.ui.structuredMessages' as never)).toBe(false);
     expect(readServerEnabledBit(defaulted, 'plugins.ui.reactNativeBundles' as never)).toBe(false);
     expect(readServerEnabledBit(defaulted, 'plugins.ui.reactNativeBundles.devHotReload' as never)).toBe(false);

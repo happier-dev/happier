@@ -23,6 +23,8 @@ describe('classifyCodexConnectedServiceAuthFailure', () => {
         providerAccountId: 'acct_source',
         accountLabel: 'source@example.test',
         groupGeneration: 42,
+        credentialRevision: 'csr_abcdefghijklmnopqrstuv',
+        credentialFingerprint: 'sha256:1234abcd',
       },
     });
 
@@ -41,7 +43,30 @@ describe('classifyCodexConnectedServiceAuthFailure', () => {
       sourceProviderAccountId: 'acct_source',
       sourceAccountLabel: 'source@example.test',
       groupGeneration: 42,
+      expectedCredentialRevision: 'csr_abcdefghijklmnopqrstuv',
+      failingAccessTokenFingerprint: 'sha256:1234abcd',
     });
+  });
+
+  it('drops malformed credential fingerprints from connected-service failure evidence', () => {
+    const result = classifyCodexConnectedServiceAuthFailure({
+      providerErrorPath: true,
+      error: {
+        error: {
+          message: 'Usage limit reached',
+          codexErrorInfo: 'UsageLimitExceeded',
+        },
+      },
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      groupId: 'pool',
+      sourceAccountIdentity: {
+        providerAccountId: 'acct_source',
+        credentialFingerprint: 'token-secret',
+      },
+    });
+
+    expect(result).not.toHaveProperty('failingAccessTokenFingerprint');
   });
 
   it('recognizes structured Codex usage-limit code variants', () => {
@@ -291,5 +316,62 @@ describe('classifyCodexConnectedServiceAuthFailure', () => {
       groupId: 'happier',
       source: 'structured_provider_error',
     });
+  });
+
+  it.each([
+    [
+      'JSON-RPC data envelope',
+      {
+        code: -32603,
+        message: 'request rejected: Bearer sk-private-json-rpc',
+        data: {
+          error: {
+            code: 'token_revoked',
+            codexErrorInfo: 'Unauthorized',
+            message: 'access token revoked: sk-private-json-rpc',
+          },
+        },
+      },
+      'sk-private-json-rpc',
+    ],
+    [
+      'unauthenticated application error',
+      Object.assign(new Error('Unauthenticated: Bearer sk-private-unauthenticated'), {
+        code: 'unauthenticated',
+      }),
+      'sk-private-unauthenticated',
+    ],
+    [
+      'JSON-RPC data message envelope',
+      Object.assign(new Error('request rejected before admission'), {
+        code: -32603,
+        data: {
+          error: {
+            message: 'Encountered invalidated oauth token for user: sk-private-data-message',
+          },
+        },
+      }),
+      'sk-private-data-message',
+    ],
+  ] as const)('classifies the canonical app-server auth input %s without retaining raw error material', (
+    _label,
+    error,
+    secret,
+  ) => {
+    const result = classifyCodexConnectedServiceAuthFailure({
+      providerErrorPath: true,
+      error,
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      groupId: 'pool',
+    });
+
+    expect(result).toMatchObject({
+      kind: 'auth_expired',
+      limitCategory: 'auth_invalid',
+      source: 'structured_provider_error',
+    });
+    expect(JSON.stringify(result)).not.toContain(secret);
+    expect(JSON.stringify(result)).not.toContain('Bearer');
   });
 });

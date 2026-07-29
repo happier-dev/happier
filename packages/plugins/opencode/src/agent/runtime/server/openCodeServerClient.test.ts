@@ -1,10 +1,47 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { FetchRuntimeRequestV1, FetchRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
+import {
+  createOpenCodeServerClient as createOpenCodeServerClientUnderTest,
+  OpenCodeServerHttpError,
+  type OpenCodeRuntimeFetch as FetchRuntimeServiceV1,
+  type OpenCodeRuntimeFetchResponse,
+} from './openCodeServerClient.js';
+import { createOpenCodeServerTransport } from './transport.js';
 
-import { createOpenCodeServerClient, OpenCodeServerHttpError } from './openCodeServerClient.js';
+type FetchRuntimeRequestV1 = Parameters<FetchRuntimeServiceV1>[0];
 
-function createJsonResponse(body: unknown): Awaited<ReturnType<FetchRuntimeServiceV1>> {
+function createOpenCodeServerClient(params: Readonly<{
+  fetch: FetchRuntimeServiceV1;
+  baseUrl: string;
+  headers?: Readonly<Record<string, string>>;
+  directory?: string | null;
+}>) {
+  return createOpenCodeServerClientUnderTest({
+    transport: {
+      baseUrl: params.baseUrl.replace(/\/+$/u, ''),
+      request: async (request) => await params.fetch({
+        ...request,
+        headers: {
+          ...(params.headers ?? {}),
+          ...(request.headers ?? {}),
+        },
+      }),
+      fetch: async (input, init) => {
+        const headers = new Headers(init?.headers);
+        for (const [name, value] of Object.entries(params.headers ?? {})) {
+          headers.set(name, value);
+        }
+        return await globalThis.fetch(input, {
+          ...init,
+          headers,
+        });
+      },
+    },
+    directory: params.directory,
+  });
+}
+
+function createJsonResponse(body: unknown): OpenCodeRuntimeFetchResponse {
   return {
     ok: true,
     status: 200,
@@ -20,7 +57,7 @@ function createErrorResponse(
   status: number,
   statusText: string,
   body = '',
-): Awaited<ReturnType<FetchRuntimeServiceV1>> {
+): OpenCodeRuntimeFetchResponse {
   return {
     ok: false,
     status,
@@ -51,6 +88,58 @@ describe('createOpenCodeServerClient', () => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
     vi.useRealTimers();
+  });
+
+  it('uses the endpoint-bound transport for both JSON and global SSE requests', async () => {
+    const controller = new AbortController();
+    const encoder = new TextEncoder();
+    const fetchImpl = vi.fn(async (url: string | URL, _init?: RequestInit) => {
+      if (String(url).endsWith('/provider')) {
+        return new Response(JSON.stringify({ all: [], connected: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return new Response(new ReadableStream<Uint8Array>({
+        start(streamController) {
+          streamController.enqueue(encoder.encode(
+            'data: {"payload":{"type":"server.connected","properties":{}}}\n\n',
+          ));
+          streamController.close();
+        },
+      }), {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      });
+    });
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new Error('primary OpenCode transport bypassed its injected fetch');
+    }));
+    const transport = createOpenCodeServerTransport({
+      baseUrl: 'http://127.0.0.1:49196',
+      instanceId: 'instance-1',
+      headers: { authorization: 'Basic current-boot' },
+      readManagedServerSnapshot: () => ({
+        instanceId: 'instance-1',
+        state: 'healthy',
+        baseUrl: 'http://127.0.0.1:49196',
+      }),
+      fetchImpl,
+    });
+    const client = createOpenCodeServerClientUnderTest({ transport });
+
+    await client.providersList();
+    await client.subscribeGlobalEvents({
+      signal: controller.signal,
+      onEvent: () => controller.abort(),
+    });
+
+    expect(fetchImpl.mock.calls.map(([url]) => String(url))).toEqual([
+      'http://127.0.0.1:49196/provider',
+      'http://127.0.0.1:49196/global/event',
+    ]);
+    expect(new Headers(fetchImpl.mock.calls[1]?.[1]?.headers).get('authorization'))
+      .toBe('Basic current-boot');
   });
 
   it('filters providers to the connected provider ids when the OpenCode server reports them', async () => {
@@ -192,6 +281,33 @@ describe('createOpenCodeServerClient', () => {
     expect(JSON.parse(String(requests.at(0)?.body ?? '{}'))).not.toHaveProperty('directory');
   });
 
+  it('forks an OpenCode session at an exact provider message checkpoint', async () => {
+    const requests: FetchRuntimeRequestV1[] = [];
+    const fetch = vi.fn<FetchRuntimeServiceV1>(async (request) => {
+      requests.push(request);
+      return createJsonResponse({ id: 'ses-child' });
+    });
+    const client = createOpenCodeServerClient({
+      fetch,
+      baseUrl: 'http://127.0.0.1:49196/',
+      directory: '/tmp/opencode-project',
+    });
+
+    await expect(client.sessionFork({
+      sessionId: 'ses-parent',
+      messageId: 'msg-checkpoint',
+    })).resolves.toEqual({ id: 'ses-child' });
+
+    expect(requests).toHaveLength(1);
+    expect(requests.at(0)).toMatchObject({
+      method: 'POST',
+      url: 'http://127.0.0.1:49196/session/ses-parent/fork?directory=%2Ftmp%2Fopencode-project',
+    });
+    expect(JSON.parse(String(requests.at(0)?.body ?? '{}'))).toEqual({
+      messageID: 'msg-checkpoint',
+    });
+  });
+
   it('reads a single session status from the directory-scoped OpenCode status list', async () => {
     const requests: FetchRuntimeRequestV1[] = [];
     const fetch = vi.fn<FetchRuntimeServiceV1>(async (request) => {
@@ -313,6 +429,26 @@ describe('createOpenCodeServerClient', () => {
       'http://127.0.0.1:49196/session/session-1/message?directory=%2Ftmp%2Fopencode-project',
       'http://127.0.0.1:49196/session/session-1/abort?directory=%2Ftmp%2Fopencode-project',
     ]);
+  });
+
+  it('rejects non-empty malformed prompt responses instead of confirming endpoint success', async () => {
+    const fetch = vi.fn<FetchRuntimeServiceV1>(async () => ({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      text: async () => '{not-json',
+      json: async () => {
+        throw new SyntaxError('Unexpected token');
+      },
+      arrayBuffer: async () => new ArrayBuffer(0),
+    }));
+    const client = createOpenCodeServerClient({ fetch, baseUrl: 'http://127.0.0.1:49196/' });
+
+    await expect(client.sessionPromptAsync({
+      sessionId: 'session-1',
+      text: 'hello',
+    })).rejects.toThrow();
   });
 
   it('returns successful prompt response bodies as provider evidence', async () => {
@@ -496,8 +632,11 @@ describe('createOpenCodeServerClient', () => {
 
   it('reconnects the global event stream after a read-idle timeout', async () => {
     vi.useFakeTimers();
+    const controller = new AbortController();
     const encoder = new TextEncoder();
     const firstChunks = [
+      encoder.encode('id: evt-pre-boundary\ndata: {"payload":{"type":"message.part.updated","properties":{"time":1,"part":{"type":"tool","sessionID":"ses-1","callID":"history-1","tool":"bash","state":{"status":"running"}}}}}\n\n'),
+      encoder.encode('id: evt-boundary-1\ndata: {"payload":{"type":"server.connected","properties":{}}}\n\n'),
       encoder.encode('id: evt-1\ndata: {"payload":{"type":"session.updated","properties":{"sessionID":"ses-1"}}}\n\n'),
     ];
     const firstReader = {
@@ -510,6 +649,7 @@ describe('createOpenCodeServerClient', () => {
       cancel: vi.fn(async () => undefined),
     };
     const secondChunks = [
+      encoder.encode('id: evt-boundary-2\ndata: {"payload":{"type":"server.connected","properties":{}}}\n\n'),
       encoder.encode('id: evt-2\ndata: {"payload":{"type":"session.idle","properties":{"sessionID":"ses-1"}}}\n\n'),
     ];
     const fetch = vi.fn(async () => {
@@ -541,34 +681,234 @@ describe('createOpenCodeServerClient', () => {
       fetch: vi.fn<FetchRuntimeServiceV1>(),
       baseUrl: 'http://127.0.0.1:49196',
     });
-    const events: unknown[] = [];
+    const events: Array<Readonly<{ event: unknown; delivery: unknown }>> = [];
 
     const done = client.subscribeGlobalEvents({
-      signal: new AbortController().signal,
-      onEvent: (event) => {
-        events.push(event);
+      signal: controller.signal,
+      onEvent: (event, delivery?: unknown) => {
+        events.push({ event, delivery });
+        if (event.payload?.type === 'session.idle') controller.abort();
       },
     });
-    await vi.advanceTimersByTimeAsync(30_001);
+    await vi.advanceTimersByTimeAsync(30_051);
     await done;
 
     expect(fetch).toHaveBeenCalledTimes(2);
     expect(fetch.mock.calls[0]?.[1]?.headers).not.toMatchObject({ 'Last-Event-ID': expect.any(String) });
-    expect(fetch.mock.calls[1]?.[1]?.headers).toMatchObject({ 'Last-Event-ID': 'evt-1' });
+    expect(fetch.mock.calls[1]?.[1]?.headers).not.toMatchObject({ 'Last-Event-ID': expect.any(String) });
     expect(firstReader.cancel).toHaveBeenCalled();
     expect(events).toEqual([
       {
-        payload: {
-          type: 'session.updated',
-          properties: { sessionID: 'ses-1' },
+        event: {
+          payload: {
+            type: 'server.connected',
+            properties: {},
+          },
         },
+        delivery: expect.objectContaining({ provenance: 'connection-boundary' }),
       },
       {
-        payload: {
-          type: 'session.idle',
-          properties: { sessionID: 'ses-1' },
+        event: {
+          payload: {
+            type: 'session.updated',
+            properties: { sessionID: 'ses-1' },
+          },
         },
+        delivery: expect.objectContaining({ provenance: 'untrusted-observation' }),
+      },
+      {
+        event: {
+          payload: {
+            type: 'server.connected',
+            properties: {},
+          },
+        },
+        delivery: expect.objectContaining({ provenance: 'connection-boundary' }),
+      },
+      {
+        event: {
+          payload: {
+            type: 'session.idle',
+            properties: { sessionID: 'ses-1' },
+          },
+        },
+        delivery: expect.objectContaining({ provenance: 'untrusted-observation' }),
       },
     ]);
+  });
+
+  it('reconnects with bounded backoff after a transient global event fetch failure', async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const encoder = new TextEncoder();
+    const secondChunks = [
+      encoder.encode('data: {"payload":{"type":"server.connected","properties":{}}}\n\n'),
+    ];
+    const fetch = vi.fn(async () => {
+      if (fetch.mock.calls.length === 1) {
+        throw new TypeError('temporary network failure');
+      }
+      return {
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        body: {
+          getReader: () => ({
+            read: async () => {
+              const chunk = secondChunks.shift();
+              return chunk
+                ? { done: false as const, value: chunk }
+                : { done: true as const };
+            },
+            cancel: vi.fn(async () => undefined),
+          }),
+        },
+      } as unknown as Response;
+    });
+    vi.stubGlobal('fetch', fetch);
+    const client = createOpenCodeServerClient({
+      fetch: vi.fn<FetchRuntimeServiceV1>(),
+      baseUrl: 'http://127.0.0.1:49196',
+    });
+    const boundaries: unknown[] = [];
+    const onUnavailable = vi.fn();
+    const done = client.subscribeGlobalEvents({
+      signal: controller.signal,
+      onUnavailable,
+      onEvent: (event, delivery) => {
+        boundaries.push({ event, delivery });
+        controller.abort();
+      },
+    });
+    const doneExpectation = expect(done).resolves.toBeUndefined();
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(49);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await doneExpectation;
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(onUnavailable).toHaveBeenCalledOnce();
+    expect(onUnavailable).toHaveBeenCalledWith(expect.objectContaining({
+      message: 'temporary network failure',
+    }));
+    expect(boundaries).toEqual([{
+      event: {
+        payload: {
+          type: 'server.connected',
+          properties: {},
+        },
+      },
+      delivery: {
+        provenance: 'connection-boundary',
+        connectionGeneration: 2,
+      },
+    }]);
+  });
+
+  it('reconnects after clean stream completion instead of leaving a dead observer', async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const encoder = new TextEncoder();
+    const secondChunks = [
+      encoder.encode('data: {"payload":{"type":"server.connected","properties":{}}}\n\n'),
+    ];
+    const fetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      body: {
+        getReader: () => ({
+          read: async () => {
+            if (fetch.mock.calls.length === 1) return { done: true as const };
+            const chunk = secondChunks.shift();
+            return chunk
+              ? { done: false as const, value: chunk }
+              : { done: true as const };
+          },
+          cancel: vi.fn(async () => undefined),
+        }),
+      },
+    } as unknown as Response));
+    vi.stubGlobal('fetch', fetch);
+    const client = createOpenCodeServerClient({
+      fetch: vi.fn<FetchRuntimeServiceV1>(),
+      baseUrl: 'http://127.0.0.1:49196',
+    });
+    const onUnavailable = vi.fn();
+    const done = client.subscribeGlobalEvents({
+      signal: controller.signal,
+      onUnavailable,
+      onEvent: (_event, delivery) => {
+        if (delivery.provenance === 'connection-boundary') controller.abort();
+      },
+    });
+    const doneExpectation = expect(done).resolves.toBeUndefined();
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(49);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await doneExpectation;
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(onUnavailable).toHaveBeenCalledOnce();
+    expect(onUnavailable).toHaveBeenCalledWith(expect.objectContaining({
+      message: 'OpenCode global event stream ended',
+    }));
+  });
+
+  it('cancels a pending reconnect backoff when the observer aborts', async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const fetch = vi.fn(async () => {
+      throw new TypeError('temporary network failure');
+    });
+    vi.stubGlobal('fetch', fetch);
+    const client = createOpenCodeServerClient({
+      fetch: vi.fn<FetchRuntimeServiceV1>(),
+      baseUrl: 'http://127.0.0.1:49196',
+    });
+    const done = client.subscribeGlobalEvents({
+      signal: controller.signal,
+      onEvent() {},
+    });
+    const doneExpectation = expect(done).resolves.toBeUndefined();
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    controller.abort();
+    await vi.advanceTimersByTimeAsync(5_000);
+    await doneExpectation;
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails closed without reconnecting when the global event endpoint rejects authentication', async () => {
+    vi.useFakeTimers();
+    const fetch = vi.fn(async () => ({
+      ok: false,
+      status: 401,
+      statusText: 'Unauthorized',
+      body: null,
+    } as unknown as Response));
+    vi.stubGlobal('fetch', fetch);
+    const client = createOpenCodeServerClient({
+      fetch: vi.fn<FetchRuntimeServiceV1>(),
+      baseUrl: 'http://127.0.0.1:49196',
+    });
+    const done = client.subscribeGlobalEvents({
+      signal: new AbortController().signal,
+      onEvent() {},
+    });
+    const doneExpectation = expect(done).rejects.toMatchObject({
+      name: 'OpenCodeSseHttpError',
+      status: 401,
+    });
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    await doneExpectation;
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 });

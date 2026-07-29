@@ -19,6 +19,16 @@ function ready(screen: string): boolean {
 }
 
 describe('parseClaudeScreenState readiness', () => {
+  it('recognizes the provenance-pinned Claude 2.1.205 Fable safeguard chooser', () => {
+    const capture = readFileSync(join(fixturesDir, 'claude-2.1.205-safeguard-pause.ansi'), 'utf8');
+    const state = parseClaudeScreenState(capture);
+
+    expect(state.safeguardPauseDialogVisible).toBe(true);
+    expect(state.safeguardPauseDialogOptions).toEqual([
+      { choice: 'switch_model', label: 'Switch to Opus 4.8', modelLabel: 'Opus 4.8' },
+      { choice: 'edit_prompt_and_retry', label: 'Edit prompt and retry with Fable 5', modelLabel: 'Fable 5' },
+    ]);
+  });
   it('recognizes the boxed composer the real TUI renders', () => {
     const screen = [
       '╭──────────────────────────────╮',
@@ -425,7 +435,7 @@ describe('parseClaudeScreenState — unrecognized confirmation dialogs (P-B fail
   ].join('\n');
 
   it('detects an unrecognized ❯-numbered confirmation dialog and blocks every safe window', () => {
-    const state = parseClaudeScreenState(unrecognizedDialog);
+    const state = parseClaudeScreenState(unrecognizedDialog, { cursor: { x: 3, y: 3 } });
     expect(state.unrecognizedConfirmationDialogVisible).toBe(true);
     expect(state.inputBoxInteractive).toBe(false);
     expect(isSafeWindowForSlashControl(state)).toBe(false);
@@ -455,6 +465,32 @@ describe('parseClaudeScreenState — unrecognized confirmation dialogs (P-B fail
       '❯ ',
       '──────────────────────────────',
     ].join('\n')).unrecognizedConfirmationDialogVisible).toBe(false);
+  });
+
+  it('does not let stale incomplete selection-shaped output override a cursor-proven idle DIM suggestion', () => {
+    // Semantic port of Remote runner pid 57509 evidence. Dev keeps its plugin-native screen owner:
+    // a prior incomplete selection-shaped row cannot turn the exact active composer into a dialog.
+    const screen = [
+      '❯ 1. completed transcript output, not a chooser',
+      '',
+      '\x1b[38;2;255;255;255m⏺\x1b[39m QA_SWIFT_DIALOG_TRIGGER_DONE',
+      '',
+      '\x1b[38;2;153;153;153m✻\x1b[39m \x1b[38;2;153;153;153mChurned for 24s\x1b[39m',
+      '',
+      '\x1b[38;2;136;136;136m────────────────────────────────────────────────',
+      '\x1b[39m❯ \x1b[2mrun it\x1b[0m',
+      '\x1b[38;2;136;136;136m────────────────────────────────────────────────',
+      '\x1b[39m',
+      '  \x1b[38;2;255;193;7m⏵⏵ auto mode on\x1b[38;2;153;153;153m (shift+tab to cycle) · ← for agents\x1b[39m',
+    ].join('\n');
+    const state = parseClaudeScreenState(screen, { cursor: { x: 2, y: 7 } });
+
+    expect(state.composerContent).toBe('');
+    expect(state.userDraftPresent).toBe(false);
+    expect(state.unrecognizedConfirmationDialog).toBeNull();
+    expect(state.unrecognizedConfirmationDialogVisible).toBe(false);
+    expect(isClaudeScreenReadyForInput(state)).toBe(true);
+    expect(resolveClaudeScreenInFlightSteerVeto(state)).toBeNull();
   });
 
   it('vetoes in-flight steering on an unrecognized confirmation dialog (typed text would answer it)', () => {
@@ -693,6 +729,49 @@ describe('parseClaudeScreenState — dim contextual suggestion placeholder (port
       `${ESC}[2m${ESC}[22mcheck the output`,
     );
     const state = parseClaudeScreenState(cancelled);
+    expect(state.userDraftPresent).toBe(true);
+  });
+});
+
+// Remote-first live tmux evidence from Claude Code 2.1.217. Dev keeps the provider-native screen
+// parser as its owner and ports the semantic discriminator, not Remote's host/runtime topology.
+const CLAUDE_2_1_217_CURSOR_HIGHLIGHTED_SUGGESTION = readFileSync(
+  join(fixturesDir, 'incident-98095-contextual-suggestion.ansi'),
+  'utf8',
+);
+
+describe('parseClaudeScreenState — cursor-highlighted contextual suggestion (2.1.217, tmux)', () => {
+  it('treats the mixed inverse-cursor plus dim suggestion as an EMPTY composer', () => {
+    const state = parseClaudeScreenState(CLAUDE_2_1_217_CURSOR_HIGHLIGHTED_SUGGESTION, {
+      cursor: { x: 2, y: 3 },
+    });
+
+    expect(state.composerContent).toBe('');
+    expect(state.userDraftPresent).toBe(false);
+    expect(isClaudeScreenReadyForInput(state)).toBe(true);
+    expect(resolveClaudeScreenInFlightSteerVeto(state)).toBeNull();
+  });
+
+  it('keeps the same visible text as a real draft when it is normal intensity and the cursor is after it', () => {
+    const typed = CLAUDE_2_1_217_CURSOR_HIGHLIGHTED_SUGGESTION.replace(
+      `${ESC}[7mc${ESC}[0;2mommit this${ESC}[0m`,
+      `${ESC}[38;2;255;255;255mcommit this${ESC}[0m`,
+    );
+    const state = parseClaudeScreenState(typed, { cursor: { x: 13, y: 3 } });
+
+    expect(state.composerContent).toBe('commit this');
+    expect(state.userDraftPresent).toBe(true);
+    expect(resolveClaudeScreenInFlightSteerVeto(state)).toBe('user_draft');
+  });
+
+  it('does not treat inverse cursor position alone as placeholder evidence when the remaining text is normal', () => {
+    const typedAtStart = CLAUDE_2_1_217_CURSOR_HIGHLIGHTED_SUGGESTION.replace(
+      `${ESC}[0;2mommit this`,
+      `${ESC}[0mommit this`,
+    );
+    const state = parseClaudeScreenState(typedAtStart, { cursor: { x: 2, y: 3 } });
+
+    expect(state.composerContent).toBe('commit this');
     expect(state.userDraftPresent).toBe(true);
   });
 });

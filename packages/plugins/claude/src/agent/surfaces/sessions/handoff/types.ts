@@ -1,4 +1,4 @@
-import type { ExternalSessionsSource, SessionHandoffResumePlan } from '@happier-dev/plugin-sdk/sessions';
+import type { ExternalSessionsSource, SessionHandoffResumePlan } from '@happier-dev/plugin-sdk/experimental/sessions';
 import { z } from 'zod';
 
 export const ClaudeSessionBundleSchema = z.object({

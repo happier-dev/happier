@@ -6,13 +6,13 @@ import type {
   ScmHostingProviderPullRequestCreateInput,
   ScmHostingProviderPullRequestGetInput,
   ScmHostingProviderPullRequestListInput,
-} from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/experimental/scm/hostingProvider';
 import type {
   ScmOperationErrorCode,
   ScmHostingProviderRef,
   ScmPullRequestSummary,
-} from '@happier-dev/plugin-sdk/scm';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/experimental/scm';
 
 import { githubHostingProviderAdapter } from '../adapter.js';
 import { createGithubCliAdapter, type GithubCliPullRequestAdapter } from './cliAdapter.js';

@@ -1,29 +1,26 @@
-import type {
-  RuntimeConfigOutcomeChangeKeyV1,
-  RuntimeConfigOutcomeStatusV1,
-  RuntimeConfigOutcomeTimingV1,
-  RuntimeConfigUpdateOutcomeV1,
-} from '@happier-dev/plugin-sdk/experimental/runtime/session';
-
 import { isClaudeUltracodeSupportedModelId } from '../../reasoningEffort.js';
+import type { ClaudeProviderConfigurationOutcome } from '../../providerOperations.js';
 import { CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID } from './constants.js';
 import type {
   ClaudeDesiredRuntimeConfig,
   RuntimeConfigApplyOutcome,
   RuntimeConfigChangeOutcome,
+  RuntimeConfigOutcomeChangeKeyV1,
   RuntimeConfigOutcomeScalar,
+  RuntimeConfigOutcomeStatusV1,
+  RuntimeConfigOutcomeTimingV1,
 } from './tuiControls/index.js';
 
 /**
  * Runtime-control integration bridge for the Claude Unified terminal.
  *
- * Connects the host's `updateSessionRuntimeConfig` updates (the override-synchronizer surface) to
+ * Connects the host's `updateProviderConfiguration` updates (the override-synchronizer surface) to
  * the TUI runtime-control controller and owns the `runtime-config-outcome` session-event emission:
  *
  * - Map a {@link RuntimeTurnConfigUpdate}-shaped record onto {@link ClaudeDesiredRuntimeConfig}.
  *   Directives the controller cannot own (fallback model, model reset-to-default, unknown keys)
  *   resolve to `not_controllable` so the caller keeps the legacy non-applied outcome.
- * - Map controller apply outcomes back onto the typed `RuntimeConfigUpdateOutcomeV1` the
+ * - Map controller apply outcomes back onto the typed provider-configuration outcome the
  *   synchronizer consumes (still-pending deferrals keep the override pending and re-attempted).
  * - Emit protocol `runtime-config-outcome` transcript events grouped by per-change public status
  *   with (status,timing,reason)-transition dedup so a re-attempted blocked apply does not spam
@@ -145,12 +142,14 @@ export function mapRuntimeConfigUpdateToDesired(
 }
 
 /**
- * Project a controller apply outcome onto the typed `updateSessionRuntimeConfig` return the
+ * Project a controller apply outcome onto the typed `updateProviderConfiguration` return the
  * override-synchronizer consumes. Still-pending deferral timings keep the override pending
  * (`isRuntimeConfigUpdateOutcomeApplied` treats them as not-applied), so the synchronizer
  * re-attempts at the next boundary instead of marking the override swallowed-but-applied.
  */
-export function mapApplyOutcomeToUpdateOutcome(outcome: RuntimeConfigApplyOutcome): RuntimeConfigUpdateOutcomeV1 {
+export function mapApplyOutcomeToUpdateOutcome(
+  outcome: RuntimeConfigApplyOutcome,
+): ClaudeProviderConfigurationOutcome {
   const reason = outcome.changes.find((change) => change.reason !== undefined)?.reason;
   return Object.freeze({
     status: outcome.status,

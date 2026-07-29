@@ -26,6 +26,20 @@ describe('parseRawJsonLines', () => {
         expect((parsed as { extra_field?: unknown })?.extra_field).toEqual({ nested: true });
     });
 
+    it('accepts a message-less assistant row for durable fail-soft forwarding', () => {
+        const parsed = parseRawJsonLinesObject({
+            type: 'assistant',
+            uuid: 'assistant-api-error',
+            isApiErrorMessage: true,
+        });
+
+        expect(parsed).toMatchObject({
+            type: 'assistant',
+            uuid: 'assistant-api-error',
+            isApiErrorMessage: true,
+        });
+    });
+
     it('parses a valid user message', () => {
         const parsed = parseRawJsonLinesObject({
             type: 'user',

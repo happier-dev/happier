@@ -1,7 +1,7 @@
 import {
     ACP_HAPPIER_MCP_BRIDGE_STATIC_APPROVAL_TOOL_NAMES,
     resolveAcpToolPermissionPolicy,
-} from '@happier-dev/plugin-sdk/experimental/acp';
+} from '@happier-dev/agents';
 
 import {
     createCodexInjectedMcpServerKey,

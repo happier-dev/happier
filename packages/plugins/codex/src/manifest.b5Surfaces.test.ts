@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
 
-import { BackendSurfaceOperationCatalogV1 } from '@happier-dev/plugin-sdk/manifest';
-
-import * as pluginModule from './index.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
 
 function getCodexBackend() {
@@ -14,110 +11,30 @@ function getCodexBackend() {
 }
 
 describe('Codex B.5 surface declarations', () => {
-  it('declares daemon-exported surface handlers only when the bundled plugin entrypoint exports them', () => {
+  it('uses only native Agent surface capabilities instead of legacy daemon handler declarations', () => {
     const backend = getCodexBackend();
-    const handlers = backend.surfaceHandlers ?? [];
-    const engineOwnedOperations = new Set([
-      `fork:${BackendSurfaceOperationCatalogV1.fork.fork}`,
-    ]);
-
-    for (const handler of handlers) {
-      if (engineOwnedOperations.has(`${handler.kind}:${handler.operation}`)) continue;
-      const exportName = handler.handler.exportName;
-      if (!exportName) continue;
-
-      expect(pluginModule).toHaveProperty(exportName);
-      expect((pluginModule as Record<string, unknown>)[exportName]).toEqual(expect.any(Function));
-    }
-  });
-
-  it('declares plugin-owned handoff and engine-owned external-session handlers', () => {
-    const backend = getCodexBackend();
-    const handlers = backend.surfaceHandlers ?? [];
-
-    expect(handlers).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        kind: 'handoff',
-        operation: 'exportBundle',
-        handler: expect.objectContaining({
-          target: 'daemon',
-          exportName: 'exportCodexSessionBundle',
-        }),
-      }),
-      expect.objectContaining({
-        kind: 'handoff',
-        operation: 'importBundle',
-        handler: expect.objectContaining({
-          target: 'daemon',
-          exportName: 'importCodexSessionBundle',
-        }),
-      }),
-    ]));
-    expect(handlers).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        kind: 'externalSession',
-        operation: BackendSurfaceOperationCatalogV1.externalSession.resolveSource,
-      }),
-      expect.objectContaining({
-        kind: 'externalSession',
-        operation: BackendSurfaceOperationCatalogV1.externalSession.listCandidates,
-      }),
-      expect.objectContaining({
-        kind: 'externalSession',
-        operation: BackendSurfaceOperationCatalogV1.externalSession.pageTranscript,
-      }),
-      expect.objectContaining({
-        kind: 'externalSession',
-        operation: BackendSurfaceOperationCatalogV1.externalSession.readAfterTranscript,
-      }),
-      expect.objectContaining({
-        kind: 'externalSession',
-        operation: BackendSurfaceOperationCatalogV1.externalSession.resolveFollowTranscriptPath,
-      }),
-      expect.objectContaining({
-        kind: 'externalSession',
-        operation: BackendSurfaceOperationCatalogV1.externalSession.acquireFollowLease,
-      }),
-      expect.objectContaining({
-        kind: 'externalSession',
-        operation: BackendSurfaceOperationCatalogV1.externalSession.resolveLinkIdentity,
-      }),
-      expect.objectContaining({
-        kind: 'externalSession',
-        operation: BackendSurfaceOperationCatalogV1.externalSession.resolveLinkedIdentity,
-      }),
-      expect.objectContaining({
-        kind: 'externalSession',
-        operation: BackendSurfaceOperationCatalogV1.externalSession.resolveTakeoverLaunch,
-      }),
-    ]));
-  });
-
-  it('declares Codex fork through the plugin engine surface only', () => {
-    const backend = getCodexBackend();
-    const handlers = backend.surfaceHandlers ?? [];
-
-    expect(handlers).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        kind: 'fork',
-        operation: BackendSurfaceOperationCatalogV1.fork.fork,
-      }),
-    ]));
-  });
-
-  it('declares Codex terminal launch through the plugin engine surface', () => {
-    const backend = getCodexBackend();
-    const handlers = backend.surfaceHandlers ?? [];
-
-    expect(handlers).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        kind: 'terminalRuntime',
-        operation: BackendSurfaceOperationCatalogV1.terminalRuntime.launch,
-        handler: expect.objectContaining({
-          target: 'daemon',
-        }),
-      }),
-    ]));
+    expect(backend).not.toHaveProperty('surfaceHandlers');
+    expect(backend.capabilities.surfaces).toEqual(['terminal', 'externalSessions']);
+    expect(backend.capabilities.sessions.open).toEqual(['create', 'resume', 'fork']);
+    expect(backend.capabilities.executionRuns).toMatchObject({
+      open: ['create', 'resume'],
+      checkpoint: true,
+      stop: true,
+    });
+    expect(backend.capabilities.sessions).toMatchObject({
+      goals: {
+        inactive: {
+          get: true,
+          clear: true,
+          set: {
+            fields: ['objective', 'status', 'tokenBudget'],
+            writableStatuses: ['active', 'paused', 'complete'],
+          },
+        },
+      },
+      catalog: { inactive: ['vendorPlugins', 'skills'] },
+      usageLimitRecovery: { inactive: ['checkNow'] },
+    });
   });
 
   it('declares the Codex external-session source schema and source-key rules in the backend manifest surface', () => {
@@ -165,6 +82,15 @@ describe('Codex B.5 surface declarations', () => {
             { kind: 'field', field: 'homePath' },
           ],
         },
+        instances: [
+          { kind: 'default', constants: { home: 'user' } },
+          {
+            kind: 'connectedServiceProfiles',
+            serviceId: 'openai-codex',
+            constants: { home: 'connectedService' },
+            fields: { serviceId: 'connectedServiceId', profileId: 'connectedServiceProfileId' },
+          },
+        ],
       },
     ]);
   });

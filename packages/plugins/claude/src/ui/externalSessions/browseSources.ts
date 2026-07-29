@@ -1,4 +1,4 @@
-import type { ExternalSessionsSource } from '@happier-dev/plugin-sdk/sessions';
+import type { ExternalSessionsSource } from '@happier-dev/plugin-sdk/experimental/sessions';
 
 export type ClaudeBrowseSourceTranslationKey = 'externalSessions.browseSourceClaudeDefault';
 

@@ -2,8 +2,8 @@ import type {
   TerminalHostHandle,
   TerminalInputReadinessV1,
   TerminalPromptInput,
-} from '@happier-dev/plugin-sdk/experimental/runtime/session';
-import { resolveTerminalPromptWriteTimeoutMs } from '@happier-dev/plugin-sdk/experimental/runtime/session';
+} from '@happier-dev/agents';
+import { resolveTerminalPromptWriteTimeoutMs } from '@happier-dev/agents';
 
 export const CLAUDE_UNIFIED_TERMINAL_INPUT_QUIET_PERIOD_MS = 800;
 

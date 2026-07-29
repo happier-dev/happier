@@ -1,57 +1,69 @@
-import type { AcpBackendSpecV1 } from '@happier-dev/plugin-sdk/experimental/acp';
-import type { AgentRuntimeV1 } from '@happier-dev/plugin-sdk';
-import { createAcpBackendEngine, readAcpBackendSpec } from '@happier-dev/plugin-sdk/experimental/acp';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import type {
+  AgentAcpRuntimeOptions,
+  AgentSessionOpenRequest,
+  AgentSessionRuntime,
+  AgentSessionRuntimeContext,
+} from '@happier-dev/plugin-sdk/agent-runtime';
 import { describe, expect, it, vi } from 'vitest';
 
 import { activate } from './activate.js';
+import { PLUGIN_MANIFEST } from './manifest.js';
 
-type CopilotBackendRegistration = Readonly<{
-  agentId: string;
-  create: (ctx: Readonly<{
-    agentRuntime: Readonly<{
-      acp: Readonly<{
-        defineAcpBackend: (spec: AcpBackendSpecV1) => AgentRuntimeV1;
-      }>;
-    }>;
-  }>) => AgentRuntimeV1 | Promise<AgentRuntimeV1>;
-}>;
+describe('Copilot activation', () => {
+  it('registers its runtime through the public Agent activation API', async () => {
+    const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    expect(activation.registrations()).toContainEqual({ family: 'agents', localId: 'copilot' });
+    expect(activation.registration('agents', 'copilot')?.factory).toEqual(expect.any(Function));
+    await activation.dispose();
+  });
 
-function readRegisteredBackend(registerAgentRuntime: ReturnType<typeof vi.fn>): CopilotBackendRegistration {
-  const registration = registerAgentRuntime.mock.calls[0]?.[0];
-  if (!registration || typeof registration !== 'object') {
-    throw new Error('Expected Copilot activation to register a backend engine');
-  }
-  return registration as CopilotBackendRegistration;
-}
-
-describe('Copilot activate', () => {
-  it('registers the Copilot ACP backend through the plugin API', async () => {
-    const registerAgentRuntime = vi.fn();
-
-    activate({ registerAgentRuntime });
-
-    const registration = readRegisteredBackend(registerAgentRuntime);
-    expect(registration.agentId).toBe('copilot');
-
-    const engine = await registration.create({
-      agentRuntime: {
-        acp: {
-          defineAcpBackend: createAcpBackendEngine,
-        },
-      },
+  it('opens Copilot through the native ACP composer with canonical VB4 permissions', async () => {
+    const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    const factory = activation.registration('agents', 'copilot')?.factory;
+    if (!factory) throw new Error('Expected Copilot Agent factory');
+    const runtime = await factory({
+      plugin: { id: 'happier.agent.copilot', version: '0.0.0' },
+      agent: { id: 'copilot' },
+      signal: new AbortController().signal,
     });
-    expect(readAcpBackendSpec(engine)).toMatchObject({
-      backendId: 'copilot',
+    const session = {
+      send: vi.fn(async () => ({ status: 'admitted' as const })),
+      watch: () => ({ dispose: () => undefined }),
+      dispose: vi.fn(),
+    } satisfies AgentSessionRuntime;
+    const open = vi.fn(async (
+      _request: AgentSessionOpenRequest,
+      _options: AgentAcpRuntimeOptions,
+    ) => session);
+    const request: AgentSessionOpenRequest = {
+      kind: 'create',
+      sessionId: 'session-copilot',
+      cwd: '/workspace',
+      configuration: {
+        mode: { value: null, updatedAtMs: 10 },
+        model: { value: null, updatedAtMs: 11 },
+        permissionIntent: { value: 'yolo', updatedAtMs: 12 },
+        options: {},
+      },
+    };
+
+    await expect(runtime.sessions.open(request, {
+      protocols: { acp: { open } },
+    } as AgentSessionRuntimeContext)).resolves.toBe(session);
+    expect(open).toHaveBeenCalledWith(request, {
       transport: {
         kind: 'stdio',
-        launch: {
-          kind: 'agent-cli',
-          agentId: 'copilot',
-          args: ['--acp'],
-        },
+        executable: { kind: 'systemTool', id: 'copilot-cli' },
+        args: ['--acp', '--yolo'],
       },
-      sessionIdHeaderName: 'copilotSessionId',
-      mcp: { policy: 'pass_through' },
+      definition: expect.objectContaining({
+        mcp: { policy: 'pass_through' },
+        timeouts: expect.any(Object),
+        stderrRules: expect.any(Object),
+        toolNameInference: expect.any(Object),
+      }),
     });
+    await activation.dispose();
   });
 });

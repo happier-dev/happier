@@ -1,9 +1,8 @@
-import type { RuntimeEventV1 } from '@happier-dev/plugin-sdk/experimental/runtime/session';
-
-import type { OpenCodeToolPart } from './providerActivity/createOpenCodeProviderActivityTracker.js';
-import { isTerminalOpenCodeToolPartStatus } from './providerActivity/createOpenCodeProviderActivityTracker.js';
+import type { OpenCodeToolPart } from './foregroundToolTracker.js';
+import { isTerminalOpenCodeToolPartStatus } from './foregroundToolTracker.js';
 import { asRecord, normalizeString } from './openCodeParsing.js';
 import { readOpenCodeToolCallKey, type OpenCodeServerRuntimeState } from './state.js';
+import type { OpenCodeRuntimeEvent } from './runtimeEvents.js';
 
 function buildOpenCodeToolResultOutput(part: OpenCodeToolPart): unknown {
   const title = normalizeString(part.state.title);
@@ -30,7 +29,7 @@ export function publishOpenCodeToolPartRuntimeEvents(params: Readonly<{
   part: OpenCodeToolPart;
   state: OpenCodeServerRuntimeState;
   happierSessionId: string;
-  publishRuntimeEvent: (event: RuntimeEventV1) => void;
+  publishRuntimeEvent: (event: OpenCodeRuntimeEvent) => void;
   nowMs?: () => number;
 }>): void {
   const turnId = params.state.activeTurnId;

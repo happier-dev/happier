@@ -111,7 +111,22 @@ async function resolveWorkspaceTrustProjection(params: Readonly<{
             return null;
         }
     }
-    return { hasTrustDialogAccepted: true };
+    return null;
+}
+
+async function resolveClaudeCompletedOnboardingProjection(params: Readonly<{
+    sourceEnv: NodeJS.ProcessEnv;
+    targetDir: string;
+}>): Promise<true | null> {
+    const targetRoot = resolve(params.targetDir);
+    const candidates = resolveClaudeRootConfigPathCandidates(params.sourceEnv)
+        .filter((candidate) => resolve(candidate.rootDir) !== targetRoot);
+    for (const candidate of candidates) {
+        const rootConfig = await readClaudeRootConfigFile(candidate.path);
+        if (!rootConfig || typeof rootConfig.hasCompletedOnboarding !== 'boolean') continue;
+        return rootConfig.hasCompletedOnboarding === true ? true : null;
+    }
+    return null;
 }
 
 async function writeClaudeRootConfig(params: Readonly<{
@@ -140,13 +155,12 @@ async function writeClaudeRootConfig(params: Readonly<{
  * Projects the workspace-trust decision for the session directory into a
  * materialized connected-service home.
  *
- * Without this, Claude spawned into a freshly materialized `CLAUDE_CONFIG_DIR`
- * re-prompts the interactive workspace-trust dialog, which hangs remote/headless
- * sessions. A Happier-managed session creation is treated as trust for fresh
- * directories with no source trust state. Explicit declined source trust remains
- * authoritative. Only the trust projection (`hasTrustDialogAccepted` plus the
- * project-onboarding marker) is carried; no other project config and no account
- * identity is copied into the materialized home.
+ * Only an explicit accepted source decision is projected. Missing or declined
+ * trust remains owned by Claude's normal Trust/Exit flow. The project trust
+ * projection and the exact non-secret top-level onboarding-completion boolean
+ * are resolved independently, so onboarding can be carried without synthesizing
+ * workspace trust. No other project config or account identity is copied from
+ * the source into the materialized home.
  */
 export async function projectClaudeWorkspaceTrust(params: Readonly<{
     sourceEnv: NodeJS.ProcessEnv;
@@ -161,17 +175,68 @@ export async function projectClaudeWorkspaceTrust(params: Readonly<{
         sessionDirectory,
         targetDir: params.targetDir,
     });
-    if (!projection) return;
+    const hasCompletedOnboarding = await resolveClaudeCompletedOnboardingProjection({
+        sourceEnv: params.sourceEnv,
+        targetDir: params.targetDir,
+    });
+    if (!projection && !hasCompletedOnboarding) return;
+
     const existingRoot = await readClaudeRootConfigFile(join(params.targetDir, '.claude.json')) ?? {};
-    const existingProjects = readObject(existingRoot.projects) ?? {};
+    const existingProjects = projection ? (readObject(existingRoot.projects) ?? {}) : null;
+    const existingProjectEntry = projection && existingProjects
+        ? (readObject(existingProjects[sessionDirectory]) ?? {})
+        : null;
     await writeClaudeRootConfig({
         targetDir: params.targetDir,
         rootConfig: {
             ...existingRoot,
-            projects: {
-                ...existingProjects,
-                [sessionDirectory]: projection,
-            },
+            ...(hasCompletedOnboarding ? { hasCompletedOnboarding } : {}),
+            ...(projection && existingProjects && existingProjectEntry
+                ? {
+                    projects: {
+                        ...existingProjects,
+                        [sessionDirectory]: {
+                            ...existingProjectEntry,
+                            ...projection,
+                        },
+                    },
+                }
+                : {}),
         },
+    });
+}
+
+const CLAUDE_ACCOUNT_SCOPED_ROOT_KEYS = [
+    'oauthAccount',
+    'modelAccessCache',
+    'additionalModelOptionsCache',
+    'cachedExtraUsageDisabledReason',
+] as const;
+
+export async function reconcileClaudeAccountScopedRootConfig(params: Readonly<{
+    targetDir: string;
+    preserveExistingAccountState: boolean;
+    providerAccountId: string | null;
+    providerEmail: string | null;
+}>): Promise<void> {
+    // This owner is invoked only after exact native credential materialization succeeds.
+    // Provider onboarding readiness is distinct from workspace trust, which remains unsynthesized.
+    const existingRoot = await readClaudeRootConfigFile(join(params.targetDir, '.claude.json')) ?? {};
+    const next: JsonObject = {
+        ...existingRoot,
+        hasCompletedOnboarding: true,
+    };
+    if (!params.preserveExistingAccountState) {
+        for (const key of CLAUDE_ACCOUNT_SCOPED_ROOT_KEYS) delete next[key];
+    }
+    const oauthAccount = {
+        ...(params.providerAccountId ? { accountUuid: params.providerAccountId } : {}),
+        ...(params.providerEmail ? { emailAddress: params.providerEmail } : {}),
+    };
+    await writeClaudeRootConfig({
+        targetDir: params.targetDir,
+        rootConfig: !params.preserveExistingAccountState && Object.keys(oauthAccount).length > 0
+            ? { ...next, oauthAccount }
+            : next,
     });
 }

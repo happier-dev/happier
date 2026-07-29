@@ -30,7 +30,7 @@ export const ApprovalRequestOriginV1Schema = z.object({
 export type ApprovalRequestOriginV1 = z.infer<typeof ApprovalRequestOriginV1Schema>;
 
 export const ApprovalRequestCreatedBySchema = z.object({
-  surface: z.enum(['voice', 'session_agent', 'mcp', 'cli', 'system']),
+  surface: z.enum(['voice', 'agent', 'mcp', 'cli', 'system']),
   agentId: z.string().min(1).optional(),
   sessionId: z.string().min(1).optional(),
 }).strict();

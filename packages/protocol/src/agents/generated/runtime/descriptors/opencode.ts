@@ -52,6 +52,13 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function hasOnlyKeys(
+  value: Readonly<Record<string, unknown>>,
+  allowedKeys: ReadonlySet<string>,
+): boolean {
+  return Object.keys(value).every((key) => allowedKeys.has(key));
+}
+
 function normalizeTrimmedString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
@@ -238,4 +245,72 @@ export function readCanonicalOpenCodeAgentRuntimeDescriptorV1(
     serverBaseUrl,
     serverBaseUrlExplicit,
   };
+}
+
+export function readStrictCanonicalOpenCodeAgentRuntimeDescriptorV1(
+  value: unknown,
+): CanonicalOpenCodeAgentRuntimeDescriptorV1 | null {
+  const descriptor = asRecord(value);
+  if (
+    !descriptor
+    || !hasOnlyKeys(
+      descriptor,
+      new Set(['v', 'agentId', 'providerId', 'agent', 'provider']),
+    )
+  ) {
+    return null;
+  }
+  const payload = asRecord(descriptor.agent) ?? asRecord(descriptor.provider);
+  if (
+    !payload
+    || !hasOnlyKeys(
+      payload,
+      new Set([
+        'backendMode',
+        'providerSessionId',
+        'vendorSessionId',
+        'serverBaseUrl',
+        'serverBaseUrlExplicit',
+        'agentExtra',
+        'providerExtra',
+      ]),
+    )
+  ) {
+    return null;
+  }
+  const extraInput = payload.agentExtra ?? payload.providerExtra;
+  if (extraInput !== undefined) {
+    const extra = asRecord(extraInput);
+    if (
+      !extra
+      || !hasOnlyKeys(
+        extra,
+        new Set(['owner', 'schemaId', 'v', 'runtimeHandle']),
+      )
+      || extra.owner !== 'opencode'
+      || extra.schemaId !== 'opencode.agentRuntimeDescriptorExtra'
+      || extra.v !== 1
+    ) {
+      return null;
+    }
+    if (extra.runtimeHandle !== undefined) {
+      const carrier = asRecord(extra.runtimeHandle);
+      if (
+        !carrier
+        || !hasOnlyKeys(
+          carrier,
+          new Set([
+            'backendMode',
+            'providerSessionId',
+            'vendorSessionId',
+            'serverBaseUrl',
+            'serverBaseUrlExplicit',
+          ]),
+        )
+      ) {
+        return null;
+      }
+    }
+  }
+  return readCanonicalOpenCodeAgentRuntimeDescriptorV1(value);
 }

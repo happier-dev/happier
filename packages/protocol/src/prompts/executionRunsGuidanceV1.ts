@@ -1,4 +1,4 @@
-import { buildBackendTargetKey, type BackendTargetRefV1 } from '../backendTargets/backendTargetRef.js';
+import { buildBackendTargetKey, type BackendTargetRefV1 } from '../backends/targets/backendTargetRef.js';
 
 export const EXECUTION_RUNS_GUIDANCE_INTENTS_V1 = ['review', 'plan', 'delegate'] as const;
 export type ExecutionRunsGuidanceIntentV1 = (typeof EXECUTION_RUNS_GUIDANCE_INTENTS_V1)[number];

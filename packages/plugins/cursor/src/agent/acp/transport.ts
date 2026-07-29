@@ -1,13 +1,37 @@
-import type {
-  AcpCustomTransportHandlerDecisionV1,
-  AcpCustomTransportHandlerSpecV1,
-} from '@happier-dev/plugin-sdk';
-
 const OLD_FILE_HEADER = /^-{2,3} (?:\/dev\/null|[ab]\/[^\n]*|\/[^\n]*)(?:\n|$)/;
 const NEW_FILE_HEADER = /^\+{2,3} (?:\/dev\/null|[ab]\/[^\n]*|\/[^\n]*)(?:\n|$)/;
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function readTrimmedString(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+export function resolveCursorAcpToolName(request: Readonly<{
+  toolName: string;
+  input: Readonly<Record<string, unknown>>;
+}>): string {
+  const proprietaryToolName = readTrimmedString(request.input._toolName);
+  if (proprietaryToolName === 'task') return 'Task';
+  if (proprietaryToolName === 'createPlan') return 'ExitPlanMode';
+  if (proprietaryToolName !== null) return request.toolName;
+
+  const acp = isRecord(request.input._acp) ? request.input._acp : null;
+  const title = readTrimmedString(request.input.title)
+    ?? readTrimmedString(request.input.description)
+    ?? readTrimmedString(acp?.title);
+  const normalizedTitle = title?.toLocaleLowerCase('en-US');
+  if (
+    normalizedTitle === 'task'
+    || normalizedTitle?.startsWith('task ')
+    || normalizedTitle?.startsWith('task:')
+  ) return 'Task';
+  if (normalizedTitle === 'create plan') return 'ExitPlanMode';
+  return request.toolName;
 }
 
 function stripUnifiedDiffHeaderLine(text: string, headerRe: RegExp): string {
@@ -41,41 +65,4 @@ export function sanitizeCursorDiffContent<T extends { content?: unknown }>(updat
   });
 
   return changed ? { ...update, content: nextContent } : update;
-}
-
-function handleCursorSessionUpdateMessage(message: unknown): AcpCustomTransportHandlerDecisionV1 {
-  if (!isRecord(message) || message.method !== 'session/update' || !isRecord(message.params)) {
-    return 'pass';
-  }
-  const update = message.params.update;
-  if (!isRecord(update)) {
-    return 'pass';
-  }
-  if (update.sessionUpdate === 'plan') {
-    return 'suppress';
-  }
-
-  const sanitized = sanitizeCursorDiffContent(update);
-  if (sanitized === update) {
-    return 'pass';
-  }
-
-  return Object.freeze({
-    kind: 'replace',
-    message: Object.freeze({
-      ...message,
-      params: Object.freeze({
-        ...message.params,
-        update: sanitized,
-      }),
-    }),
-  });
-}
-
-export function createCursorAcpTransportCustomHandler(): AcpCustomTransportHandlerSpecV1 {
-  return Object.freeze({
-    onMessage: (message, context) => context.phase === 'incoming'
-      ? handleCursorSessionUpdateMessage(message)
-      : 'pass',
-  });
 }

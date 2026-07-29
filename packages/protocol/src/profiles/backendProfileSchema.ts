@@ -1,8 +1,8 @@
 import { z } from 'zod';
 
-import { BackendTargetKeySchema } from '../backendTargets/backendTargetRef.js';
+import { BackendTargetKeyV2InputSchema } from '../backends/targets/backendTargetRefV2.js';
 import { SecretStringV1Schema } from '../crypto/settingsSecretStringsV1.js';
-import { SESSION_PERMISSION_MODES } from '../sessionMetadata/sessionPermissionModes.js';
+import { SESSION_PERMISSION_MODES } from '../sessions/metadata/sessionPermissionModes.js';
 
 const ENV_VAR_NAME_REGEX = /^[A-Z_][A-Z0-9_]*$/;
 
@@ -31,10 +31,10 @@ export const EnvVarRequirementSchema = z.object({
 export type EnvVarRequirement = z.infer<typeof EnvVarRequirementSchema>;
 
 const RequiresMachineLoginSchema = z.string().min(1);
-const RequiresMachineLoginTargetKeySchema = BackendTargetKeySchema;
+const RequiresMachineLoginTargetKeySchema = BackendTargetKeyV2InputSchema;
 
 const ProfileCompatibilitySchema = z.record(z.string(), z.boolean()).default({});
-const ProfileCompatibilityByTargetKeySchema = z.record(BackendTargetKeySchema, z.boolean()).default({});
+const ProfileCompatibilityByTargetKeySchema = z.record(BackendTargetKeyV2InputSchema, z.boolean()).default({});
 const SessionTranscriptStorageModeSchema = z.enum(['persisted', 'direct']);
 
 export const AIBackendProfileSchema = z.object({
@@ -51,13 +51,13 @@ export const AIBackendProfileSchema = z.object({
   defaultPermissionMode: z.enum(SESSION_PERMISSION_MODES).optional(),
 
   // Canonical per-target default permission mode overrides for new sessions when this profile is selected.
-  defaultPermissionModeByTargetKey: z.record(BackendTargetKeySchema, z.enum(SESSION_PERMISSION_MODES)).default({}),
+  defaultPermissionModeByTargetKey: z.record(BackendTargetKeyV2InputSchema, z.enum(SESSION_PERMISSION_MODES)).default({}),
 
   // Deprecated per-agent default permission mode overrides. Kept temporarily while UI/CLI call sites migrate.
   defaultPermissionModeByAgent: z.record(z.string(), z.enum(SESSION_PERMISSION_MODES)).default({}),
 
   // Canonical per-target transcript storage mode overrides for new sessions when this profile is selected.
-  defaultPersistenceModeByTargetKey: z.record(BackendTargetKeySchema, SessionTranscriptStorageModeSchema).default({}),
+  defaultPersistenceModeByTargetKey: z.record(BackendTargetKeyV2InputSchema, SessionTranscriptStorageModeSchema).default({}),
 
   // Deprecated per-agent transcript storage mode overrides. Kept temporarily while UI/CLI call sites migrate.
   defaultPersistenceModeByAgent: z.record(z.string(), SessionTranscriptStorageModeSchema).default({}),

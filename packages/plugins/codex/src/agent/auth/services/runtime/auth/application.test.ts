@@ -4,86 +4,9 @@ import { buildConnectedServiceCredentialRecord } from '@happier-dev/plugin-sdk/e
 
 import {
     applyCodexConnectedServiceAuthGeneration,
-    applyCodexConnectedServiceAuthTransportRecycle,
 } from './application.js';
 
 describe('Codex connected-service runtime auth application', () => {
-    it('reports transport recycle fallback separately when transport invalidation fails after login/start', async () => {
-        const candidate = buildConnectedServiceCredentialRecord({
-            now: 1000,
-            serviceId: 'openai-codex',
-            profileId: 'work',
-            kind: 'oauth',
-            expiresAt: 2000,
-            oauth: {
-                accessToken: 'access',
-                refreshToken: 'refresh',
-                idToken: 'id',
-                scope: null,
-                tokenType: null,
-                providerAccountId: 'workspace-work',
-                providerEmail: null,
-            },
-        });
-        const client = { request: vi.fn(async () => ({ ok: true })) };
-        const invalidateTransports = vi.fn(async () => {
-            throw new Error('transport is gone');
-        });
-
-        await expect(applyCodexConnectedServiceAuthTransportRecycle({
-            client,
-            candidate,
-            forcedWorkspaceId: 'workspace-work',
-            invalidateTransports,
-        })).resolves.toEqual({
-            applied: false,
-            reason: 'transport_invalidation_failed',
-            recovery: 'restart_resume',
-        });
-
-        expect(client.request).toHaveBeenCalledOnce();
-        expect(invalidateTransports).toHaveBeenCalledOnce();
-    });
-
-    it('labels retained login/start plus transport invalidation as transport recycle', async () => {
-        const candidate = buildConnectedServiceCredentialRecord({
-            now: 1000,
-            serviceId: 'openai-codex',
-            profileId: 'work',
-            kind: 'oauth',
-            expiresAt: 2000,
-            oauth: {
-                accessToken: 'access',
-                refreshToken: 'refresh',
-                idToken: 'id',
-                scope: null,
-                tokenType: null,
-                providerAccountId: 'workspace-work',
-                providerEmail: null,
-            },
-        });
-        const client = { request: vi.fn(async () => ({ ok: true })) };
-        const invalidateTransports = vi.fn(async () => undefined);
-
-        await expect(applyCodexConnectedServiceAuthTransportRecycle({
-            client,
-            candidate,
-            forcedWorkspaceId: 'workspace-work',
-            invalidateTransports,
-        })).resolves.toEqual({
-            applied: true,
-            via: 'transport_recycle',
-            appliedVia: 'transport_recycle',
-        });
-
-        expect(client.request).toHaveBeenCalledWith('account/login/start', {
-            type: 'chatgptAuthTokens',
-            accessToken: 'access',
-            chatgptAccountId: 'workspace-work',
-        });
-        expect(invalidateTransports).toHaveBeenCalledOnce();
-    });
-
     it('applies direct live auth through account/login/start without transport invalidation', async () => {
         const candidate = buildConnectedServiceCredentialRecord({
             now: 1000,
@@ -108,7 +31,6 @@ describe('Codex connected-service runtime auth application', () => {
                 return { ok: true };
             }),
         };
-        const invalidateTransports = vi.fn(async () => undefined);
         const persistAuthStore = vi.fn(async () => undefined);
         const updateRefreshSelection = vi.fn(async () => {
             order.push('refresh-selection');
@@ -131,7 +53,6 @@ describe('Codex connected-service runtime auth application', () => {
                 generation: 2,
             },
             updateRefreshSelection,
-            invalidateTransports,
         })).resolves.toEqual({
             applied: true,
             appliedVia: 'direct_live_hot_auth',
@@ -154,7 +75,6 @@ describe('Codex connected-service runtime auth application', () => {
         });
         expect(order).toEqual(['refresh-selection', 'login']);
         expect(persistAuthStore).toHaveBeenCalledOnce();
-        expect(invalidateTransports).not.toHaveBeenCalled();
     });
 
     it('rolls back an armed refresh bridge selection when live login fails before mutation', async () => {

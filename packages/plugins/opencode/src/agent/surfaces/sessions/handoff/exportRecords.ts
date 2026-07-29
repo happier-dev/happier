@@ -4,6 +4,72 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function normalizeJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(normalizeJsonValue);
+  }
+
+  const record = asRecord(value);
+  if (!record) return value;
+
+  return Object.fromEntries(
+    Object.keys(record)
+      .sort()
+      .map((key) => [key, normalizeJsonValue(record[key])]),
+  );
+}
+
+export function normalizeOpenCodeSessionExportForHandoffComparison(
+  text: string,
+  expectedSessionId: string,
+): string | null {
+  try {
+    const parsed = asRecord(JSON.parse(text) as unknown);
+    const info = asRecord(parsed?.info);
+    const messages = parsed?.messages;
+    if (!parsed || !info || info.id !== expectedSessionId || !Array.isArray(messages)) {
+      return null;
+    }
+
+    for (const messageValue of messages) {
+      const message = asRecord(messageValue);
+      const messageInfo = asRecord(message?.info);
+      const parts = message?.parts;
+      if (
+        !message
+        || !messageInfo
+        || typeof messageInfo.id !== 'string'
+        || messageInfo.sessionID !== expectedSessionId
+        || !Array.isArray(parts)
+      ) {
+        return null;
+      }
+      for (const partValue of parts) {
+        const part = asRecord(partValue);
+        if (
+          !part
+          || typeof part.id !== 'string'
+          || part.sessionID !== expectedSessionId
+          || part.messageID !== messageInfo.id
+        ) {
+          return null;
+        }
+      }
+    }
+
+    const {
+      projectID: _projectID,
+      ...portableInfo
+    } = info;
+    return JSON.stringify(normalizeJsonValue({
+      info: portableInfo,
+      messages,
+    }));
+  } catch {
+    return null;
+  }
+}
+
 export function parseOpenCodeSessionExportRecords(text: string): readonly unknown[] {
   try {
     const parsed = JSON.parse(text) as unknown;

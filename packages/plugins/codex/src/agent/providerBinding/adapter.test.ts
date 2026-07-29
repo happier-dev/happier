@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
 import type {
-  AgentProviderBindingMaterializeInputV1,
-  AgentProviderBindingPrepareInputV1,
-} from '@happier-dev/plugin-sdk';
+  AgentProviderBindingMaterializeInput,
+  AgentProviderBindingPrepareInput,
+} from '@happier-dev/plugin-sdk/agent-runtime';
 
+import { PLUGIN_MANIFEST } from '../../manifest.js';
 import {
   CODEX_PROVIDER_BINDING_ADAPTER_V1,
   CODEX_PROVIDER_BINDING_ENGINE_CONFIG_FIELDS_V1,
@@ -13,8 +14,8 @@ import {
 const connectionId = ProviderConnectionIdSchema.parse('pc_openrouter_personal');
 
 function prepareInput(
-  overrides: Partial<AgentProviderBindingPrepareInputV1> = {},
-): AgentProviderBindingPrepareInputV1 {
+  overrides: Partial<AgentProviderBindingPrepareInput> = {},
+): AgentProviderBindingPrepareInput {
   return {
     v: 1,
     agentTargetKey: 'backend:codex:built_in',
@@ -31,16 +32,23 @@ const bearerTransport = {
 } as const;
 
 function materializeInput(
-  overrides: Partial<AgentProviderBindingMaterializeInputV1> = {},
-): AgentProviderBindingMaterializeInputV1 {
+  overrides: Partial<AgentProviderBindingMaterializeInput> = {},
+): AgentProviderBindingMaterializeInput {
   const prepared = CODEX_PROVIDER_BINDING_ADAPTER_V1.prepare(prepareInput());
   return {
     v: 1,
     binding: {
       v: 1,
       agentTargetKey: 'backend:codex:built_in',
-      selection: { connectionId, modelId: 'vendor/model' },
-      contributionKey: 'happier.provider.openrouter:providers:openrouter',
+      selection: {
+        connectionId,
+        model: {
+          id: 'vendor/model',
+          name: 'Vendor Model',
+          capabilities: {},
+        },
+      },
+      contributionKey: 'happier.provider.openrouter/openrouter',
       endpoint: {
         endpointTemplateId: 'openrouter-openai-responses',
         normalizedUrl: 'https://openrouter.ai/api/v1',
@@ -57,6 +65,32 @@ function materializeInput(
 }
 
 describe('Codex provider-binding adapter V1', () => {
+  it('declares exact Responses support that agrees with the executable adapter', () => {
+    const requirements = PLUGIN_MANIFEST.contributes.agents[0]?.providerRequirements;
+
+    expect(requirements).toEqual({
+      acceptsProtocols: ['openai-responses'],
+      required: { streaming: true, toolRoundTrips: true },
+      credentialSupport: {
+        supportsNoAuth: true,
+        apiKeyTransports: [{
+          protocol: 'openai-responses',
+          destination: { kind: 'httpHeader', names: 'anyValidated', formats: ['raw', 'bearer'] },
+        }],
+      },
+      authIsolation: {
+        suppressConnectedServiceIds: ['openai-codex', 'openai'],
+        ownedEnvKeys: ['HAPPIER_CODEX_PROVIDER_API_KEY', 'OPENAI_API_KEY', 'CODEX_API_KEY'],
+      },
+      materialization: 'engineConfig',
+      applyPolicy: 'restart_session',
+      supportsFreeformModelIds: true,
+    });
+    expect(CODEX_PROVIDER_BINDING_ADAPTER_V1.prepare(prepareInput())).toMatchObject({
+      materialization: requirements?.materialization,
+    });
+  });
+
   it('derives a stable collision-resistant custom key from only the allowed prepare inputs', () => {
     const first = CODEX_PROVIDER_BINDING_ADAPTER_V1.prepare(prepareInput());
     const repeated = CODEX_PROVIDER_BINDING_ADAPTER_V1.prepare(prepareInput());
@@ -74,32 +108,42 @@ describe('Codex provider-binding adapter V1', () => {
   });
 
   it('uses reserved Codex ids only for exact audited built-in candidates', () => {
-    expect(CODEX_PROVIDER_BINDING_ADAPTER_V1.prepare(prepareInput({
-      reservedBindingCandidate: {
-        contributionKey: 'happier.provider.ollama:providers:ollama',
-        endpointTemplateId: 'ollama-openai-responses',
-        protocol: 'openai-responses',
-        normalizedUrl: 'http://localhost:11434/v1',
-      },
-    })).adapterBindingKey).toBe('ollama');
-    expect(CODEX_PROVIDER_BINDING_ADAPTER_V1.prepare(prepareInput({
-      reservedBindingCandidate: {
-        contributionKey: 'happier.provider.lmstudio:providers:lmstudio',
-        endpointTemplateId: 'lmstudio-openai-responses',
-        protocol: 'openai-responses',
-        normalizedUrl: 'http://localhost:1234/v1',
-      },
-    })).adapterBindingKey).toBe('lmstudio');
+    for (const contributionKey of [
+      'happier.provider.ollama/ollama',
+      'happier.provider.ollama/ollama',
+    ]) {
+      expect(CODEX_PROVIDER_BINDING_ADAPTER_V1.prepare(prepareInput({
+        reservedBindingCandidate: {
+          contributionKey,
+          endpointTemplateId: 'ollama-openai-responses',
+          protocol: 'openai-responses',
+          normalizedUrl: 'http://localhost:11434/v1',
+        },
+      })).adapterBindingKey).toBe('ollama');
+    }
+    for (const contributionKey of [
+      'happier.provider.lmstudio/lmstudio',
+      'happier.provider.lmstudio/lmstudio',
+    ]) {
+      expect(CODEX_PROVIDER_BINDING_ADAPTER_V1.prepare(prepareInput({
+        reservedBindingCandidate: {
+          contributionKey,
+          endpointTemplateId: 'lmstudio-openai-responses',
+          protocol: 'openai-responses',
+          normalizedUrl: 'http://localhost:1234/v1',
+        },
+      })).adapterBindingKey).toBe('lmstudio');
+    }
 
     for (const reservedBindingCandidate of [
       {
-        contributionKey: 'user.custom:providers:ollama',
+        contributionKey: 'user.custom/ollama',
         endpointTemplateId: 'ollama-openai-responses',
         protocol: 'openai-responses' as const,
         normalizedUrl: 'http://localhost:11434/v1',
       },
       {
-        contributionKey: 'happier.provider.ollama:providers:ollama',
+        contributionKey: 'happier.provider.ollama/ollama',
         endpointTemplateId: 'ollama-openai-responses',
         protocol: 'openai-responses' as const,
         normalizedUrl: 'http://localhost:11435/v1',
@@ -134,6 +178,51 @@ describe('Codex provider-binding adapter V1', () => {
             supports_websockets: false,
           },
         },
+      },
+    });
+  });
+
+  it('disables Codex reasoning only for explicit non-reasoning capability evidence', async () => {
+    const base = materializeInput();
+    const output = await CODEX_PROVIDER_BINDING_ADAPTER_V1.materialize(materializeInput({
+      binding: {
+        ...base.binding,
+        selection: {
+          ...base.binding.selection,
+          model: {
+            ...base.binding.selection.model,
+            capabilities: {
+              reasoningControls: 'unsupported',
+            },
+          },
+        },
+      },
+    }));
+
+    expect(output).toMatchObject({
+      kind: 'engineConfig',
+      engineConfig: {
+        config: { model_reasoning_effort: 'none' },
+      },
+    });
+
+    const supported = await CODEX_PROVIDER_BINDING_ADAPTER_V1.materialize(materializeInput({
+      binding: {
+        ...base.binding,
+        selection: {
+          ...base.binding.selection,
+          model: {
+            ...base.binding.selection.model,
+            capabilities: {
+              reasoningControls: 'supported',
+            },
+          },
+        },
+      },
+    }));
+    expect(supported).not.toMatchObject({
+      engineConfig: {
+        config: { model_reasoning_effort: expect.anything() },
       },
     });
   });
@@ -233,7 +322,7 @@ describe('Codex provider-binding adapter V1', () => {
   it('does not override reserved built-ins and rejects credentials they cannot represent', async () => {
     const prepared = CODEX_PROVIDER_BINDING_ADAPTER_V1.prepare(prepareInput({
       reservedBindingCandidate: {
-        contributionKey: 'happier.provider.ollama:providers:ollama',
+        contributionKey: 'happier.provider.ollama/ollama',
         endpointTemplateId: 'ollama-openai-responses',
         protocol: 'openai-responses',
         normalizedUrl: 'http://localhost:11434/v1',
@@ -243,7 +332,7 @@ describe('Codex provider-binding adapter V1', () => {
       prepared,
       binding: {
         ...materializeInput().binding,
-        contributionKey: 'happier.provider.ollama:providers:ollama',
+        contributionKey: 'happier.provider.ollama/ollama',
         endpoint: {
           endpointTemplateId: 'ollama-openai-responses',
           normalizedUrl: 'http://localhost:11434/v1',
@@ -281,7 +370,7 @@ describe('Codex provider-binding adapter V1', () => {
       await expect(CODEX_PROVIDER_BINDING_ADAPTER_V1.materialize(materializeInput({
         binding: { ...base.binding, runtimeCredentialTransport: transport },
         credential: { kind: 'apiKey', transport, value: 'secret' },
-      } as Partial<AgentProviderBindingMaterializeInputV1>))).rejects.toThrow();
+      } as Partial<AgentProviderBindingMaterializeInput>))).rejects.toThrow();
     }
   });
 

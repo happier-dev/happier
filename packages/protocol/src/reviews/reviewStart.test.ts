@@ -47,6 +47,36 @@ describe('ReviewStartInputSchema', () => {
     expect(parsed.engines).toEqual({});
   });
 
+  it('preserves a qualified execution profile and its committed generation', () => {
+    const parsed = reviewStart.ReviewStartInputSchema.parse({
+      engineIds: ['acme.review'],
+      instructions: 'Review.',
+      profileId: 'acme.plugin/review',
+      profileGenerationId: 'generation-7',
+    });
+
+    expect(parsed.profileId).toBe('acme.plugin/review');
+    expect(parsed.profileGenerationId).toBe('generation-7');
+  });
+
+  it('rejects a review profile without its committed generation', () => {
+    expect(reviewStart.ReviewStartInputSchema.safeParse({
+      engineIds: ['acme.review'],
+      instructions: 'Review.',
+      profileId: 'acme.plugin/review',
+    }).success).toBe(false);
+  });
+
+  it('rejects execution-run profiles on the inline current-session path', () => {
+    expect(reviewStart.ReviewStartInputSchema.safeParse({
+      engineIds: ['acme.review'],
+      instructions: 'Review.',
+      runLocation: 'current_session',
+      profileId: 'acme.plugin/review',
+      profileGenerationId: 'generation-7',
+    }).success).toBe(false);
+  });
+
   it('rejects malformed host-resolved SCM review scope', () => {
     expect(() => reviewStart.ReviewStartInputSchema.parse({
       engineIds: ['acme.review'],

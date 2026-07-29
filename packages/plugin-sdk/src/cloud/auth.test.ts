@@ -4,7 +4,6 @@ import * as cloudAuth from './auth.js';
 import {
   buildConnectedServiceOauthAuthEntry,
   buildConnectedServiceCredentialRecord,
-  classifyProviderLimitEvidence,
   defineConnectedServiceAuthMaterialization,
   readConnectedServiceCredentialRecord,
   requireConnectedServiceOauthCredentialRecordWithExpiry,
@@ -113,40 +112,5 @@ describe('connected-service auth materialization helpers', () => {
       expires: now + 60_000,
       accountId: 'account-id',
     });
-  });
-});
-
-describe('provider limit evidence classification', () => {
-  it('classifies nested provider capacity payloads and Error instances through one SDK owner', () => {
-    expect(classifyProviderLimitEvidence({
-      turn: {
-        error: {
-          message: 'Selected model is at capacity. Please try a different model.',
-          codexErrorInfo: 'other',
-        },
-      },
-    })).toBe('capacity');
-    expect(classifyProviderLimitEvidence(
-      new Error('Selected model is at capacity. Please try a different model.'),
-    )).toBe('capacity');
-  });
-
-  it('preserves structured status and provider-code classifications', () => {
-    expect(classifyProviderLimitEvidence({ error: { data: { status: 429 } } })).toBe('rate_limit');
-    expect(classifyProviderLimitEvidence({ code: 'usage_limit_reached' })).toBe('usage_limit');
-    expect(classifyProviderLimitEvidence({ message: 'account disabled' })).toBe('disabled');
-    expect(classifyProviderLimitEvidence({ message: 'quota limit: 100 remaining: 95' })).toBe('unknown');
-  });
-
-  it('does not infer provider capacity from unrelated unavailable metadata', () => {
-    expect(classifyProviderLimitEvidence({
-      status: 400,
-      request: { status: 429 },
-    })).toBe('validation_failed');
-    expect(classifyProviderLimitEvidence({
-      status: 400,
-      request: { note: 'Provider unavailable translation key' },
-    })).toBe('validation_failed');
-    expect(classifyProviderLimitEvidence({ message: 'Provider unavailable' })).toBe('capacity');
   });
 });

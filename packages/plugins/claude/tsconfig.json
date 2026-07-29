@@ -20,5 +20,11 @@
     "src/agent/**/*.ts",
     "src/ui/**/*.ts"
   ],
-  "exclude": ["node_modules", "dist", "src/**/*.spec.ts", "src/**/*.test.ts"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src/**/*.spec.ts",
+    "src/**/*.test.ts",
+    "src/**/*.test-support.ts"
+  ]
 }

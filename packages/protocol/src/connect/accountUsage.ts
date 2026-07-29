@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import {
     openAccountScopedBlobCiphertext,
+    resealAccountScopedHistoricalAliasCiphertext,
     sealAccountScopedBlobCiphertext,
     type AccountScopedCryptoMaterial,
     type AccountScopedOpenResult,
@@ -213,6 +214,84 @@ export const SealedProviderAccountUsageSnapshotV1Schema = z.object({
 });
 export type SealedProviderAccountUsageSnapshotV1 = z.infer<typeof SealedProviderAccountUsageSnapshotV1Schema>;
 
+export const ProviderAccountUsagePayloadModeV1Schema = z.enum([
+    'plain_json_v1',
+    'sealed_account_scoped_v1',
+]);
+
+export const ProviderAccountUsageWriteStatusV1Schema = z.enum([
+    'ok',
+    'unavailable',
+    'estimated',
+    'error',
+    'refresh_requested',
+]);
+
+export const ProviderAccountUsageRecordMetadataV1Schema = z.object({
+    materialFingerprint: z.string().trim().min(1).max(256).optional(),
+}).strict();
+
+export const ProviderAccountUsageRecordWriteFieldsV1Schema = z.object({
+    recordId: ProviderAccountUsageRecordIdSchema,
+    recordKey: ProviderAccountUsageRecordKeyV1Schema,
+    payloadMode: ProviderAccountUsagePayloadModeV1Schema,
+    status: ProviderAccountUsageWriteStatusV1Schema,
+    snapshot: ProviderAccountUsageSnapshotV1Schema.optional(),
+    sealedPayload: SealedProviderAccountUsageSnapshotV1Schema.optional(),
+    fetchedAt: z.number().int().nonnegative().optional(),
+    staleAfterMs: z.number().int().nonnegative().optional(),
+    refreshRequestedAt: z.number().int().nonnegative().optional(),
+    metadata: ProviderAccountUsageRecordMetadataV1Schema.optional(),
+}).strict();
+
+export const ProviderAccountUsageRecordWriteV1Schema =
+    ProviderAccountUsageRecordWriteFieldsV1Schema.superRefine((write, context) => {
+        if (write.recordId !== buildProviderAccountUsageRecordId(write.recordKey)) {
+            context.addIssue({
+                code: 'custom',
+                path: ['recordId'],
+                message: 'Provider account usage recordId must match recordKey',
+            });
+        }
+        if (write.status === 'refresh_requested') {
+            if (write.snapshot !== undefined || write.sealedPayload !== undefined) {
+                context.addIssue({
+                    code: 'custom',
+                    path: ['status'],
+                    message: 'Refresh-requested provider account usage records must not carry snapshot payload',
+                });
+            }
+            return;
+        }
+        if (write.payloadMode === 'plain_json_v1') {
+            if (write.snapshot === undefined || write.sealedPayload !== undefined) {
+                context.addIssue({
+                    code: 'custom',
+                    path: ['payloadMode'],
+                    message: 'Plain provider account usage records require exactly one plain snapshot payload',
+                });
+            } else if (write.snapshot.recordId !== write.recordId) {
+                context.addIssue({
+                    code: 'custom',
+                    path: ['snapshot', 'recordId'],
+                    message: 'Provider account usage snapshot recordId must match the write recordId',
+                });
+            }
+        } else if (
+            write.sealedPayload === undefined
+            || write.snapshot !== undefined
+        ) {
+            context.addIssue({
+                code: 'custom',
+                path: ['payloadMode'],
+                message: 'Sealed provider account usage records require exactly one sealed payload',
+            });
+        }
+    });
+export type ProviderAccountUsageRecordWriteV1 = z.infer<
+    typeof ProviderAccountUsageRecordWriteV1Schema
+>;
+
 function canonicalRecordKeyJson(key: ProviderAccountUsageRecordKeyV1): string {
     return JSON.stringify({
         providerId: key.providerId,
@@ -251,19 +330,18 @@ function mapUsageConfidenceToQuotaConfidence(confidence: ProviderAccountUsageCon
     return ConnectedServiceQuotaConfidenceV1Schema.parse(mapped[confidence]);
 }
 
-export function projectProviderAccountUsageToConnectedServiceQuotaSnapshot(
+export type ProviderAccountUsageQuotaSnapshotFieldsV1 = Omit<
+    ConnectedServiceQuotaSnapshotV1,
+    'serviceId' | 'profileId'
+>;
+
+export function projectProviderAccountUsageSnapshotToQuotaFieldsV1(
     snapshot: ProviderAccountUsageSnapshotV1,
-    source: ConnectedServiceUsageSourceV1,
-): ConnectedServiceQuotaSnapshotV1 | null {
+): ProviderAccountUsageQuotaSnapshotFieldsV1 {
     const parsed = ProviderAccountUsageSnapshotV1Schema.parse(snapshot);
-    const parsedSource = ConnectedServiceUsageSourceV1Schema.parse(source);
-    const serviceId = parsedSource.serviceId;
-    const profileId = parsedSource.profileId;
 
     return {
         v: 1,
-        serviceId,
-        profileId,
         fetchedAt: parsed.fetchedAtMs,
         staleAfterMs: parsed.staleAfterMs,
         planLabel: parsed.planLabel ?? null,
@@ -276,6 +354,18 @@ export function projectProviderAccountUsageToConnectedServiceQuotaSnapshot(
         confidence: mapUsageConfidenceToQuotaConfidence(parsed.confidence),
         ...(parsed.recoveryCredits ? { recoveryCredits: parsed.recoveryCredits satisfies ConnectedServiceQuotaRecoveryCreditsV1 } : {}),
         meters: parsed.meters,
+    };
+}
+
+export function projectProviderAccountUsageToConnectedServiceQuotaSnapshot(
+    snapshot: ProviderAccountUsageSnapshotV1,
+    source: ConnectedServiceUsageSourceV1,
+): ConnectedServiceQuotaSnapshotV1 | null {
+    const parsedSource = ConnectedServiceUsageSourceV1Schema.parse(source);
+    return {
+        ...projectProviderAccountUsageSnapshotToQuotaFieldsV1(snapshot),
+        serviceId: parsedSource.serviceId,
+        profileId: parsedSource.profileId,
     };
 }
 
@@ -308,4 +398,36 @@ export function openProviderAccountUsageSnapshotCiphertext(params: Readonly<{
         material: params.material,
         ciphertext: params.ciphertext,
     });
+}
+
+export function resealProviderAccountUsageSnapshotCiphertextIfHistoricalAlias(
+    params: Readonly<{
+        material: AccountScopedCryptoMaterial;
+        ciphertext: string;
+        randomBytes: (length: number) => Uint8Array;
+    }>,
+): Readonly<{
+    ciphertext: string;
+    snapshot: ProviderAccountUsageSnapshotV1;
+    resealed: boolean;
+}> | null {
+    const result = resealAccountScopedHistoricalAliasCiphertext({
+        kind: 'provider_account_usage_snapshot',
+        material: params.material,
+        ciphertext: params.ciphertext,
+        randomBytes: params.randomBytes,
+        validatePayload: (value) => {
+            const parsed =
+                ProviderAccountUsageSnapshotV1Schema.safeParse(value);
+            return parsed.success ? parsed.data : null;
+        },
+    });
+    if (!result) return null;
+    return {
+        ciphertext: result.ciphertext,
+        snapshot: ProviderAccountUsageSnapshotV1Schema.parse(
+            result.opened.value,
+        ),
+        resealed: result.resealed,
+    };
 }

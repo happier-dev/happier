@@ -18,86 +18,86 @@
       "browser": "./dist/index.browser.js",
       "default": "./dist/index.js"
     },
-    "./api": {
-      "types": "./dist/api.d.ts",
-      "default": "./dist/api.js"
-    },
-    "./hooks": {
-      "types": "./dist/hooks.d.ts",
-      "default": "./dist/hooks.js"
+    "./runtime": {
+      "types": "./dist/runtime/index.d.ts",
+      "default": "./dist/runtime/index.js"
     },
     "./agent-runtime": {
       "types": "./dist/agent-runtime.d.ts",
       "default": "./dist/agent-runtime.js"
-    },
-    "./account-usage": {
-      "types": "./dist/accountUsage.d.ts",
-      "default": "./dist/accountUsage.js"
     },
     "./manifest": {
       "types": "./dist/manifest.d.ts",
       "browser": "./dist/manifest.browser.js",
       "default": "./dist/manifest.js"
     },
-    "./events": {
-      "types": "./dist/events.d.ts",
-      "default": "./dist/events.js"
-    },
-    "./sessions": {
-      "types": "./dist/sessions/index.d.ts",
-      "default": "./dist/sessions/index.js"
-    },
-    "./mcp": {
-      "types": "./dist/mcp.d.ts",
-      "default": "./dist/mcp.js"
-    },
     "./testing": {
       "types": "./dist/testing/index.d.ts",
       "default": "./dist/testing/index.js"
     },
-    "./reviews": {
-      "types": "./dist/reviews/index.d.ts",
-      "default": "./dist/reviews/index.js"
-    },
-    "./scm": {
+    "./experimental/scm": {
       "types": "./dist/scm/index.d.ts",
       "default": "./dist/scm/index.js"
-    },
-    "./experimental/acp": {
-      "types": "./dist/acp/index.d.ts",
-      "default": "./dist/acp/index.js"
     },
     "./experimental/agents": {
       "types": "./dist/agents.d.ts",
       "default": "./dist/agents.js"
     },
-    "./experimental/artifacts": {
-      "types": "./dist/artifacts.d.ts",
-      "default": "./dist/artifacts.js"
+    "./experimental/agent-runtime/realtime": {
+      "types": "./dist/experimental/agentRuntime/realtime.d.ts",
+      "default": "./dist/experimental/agentRuntime/realtime.js"
+    },
+    "./experimental/account-usage": {
+      "types": "./dist/accountUsage.d.ts",
+      "default": "./dist/accountUsage.js"
     },
     "./experimental/cloud/auth": {
       "types": "./dist/cloud/auth.d.ts",
       "default": "./dist/cloud/auth.js"
     },
-    "./experimental/cloud/broker": {
-      "types": "./dist/cloud/broker/index.d.ts",
-      "default": "./dist/cloud/broker/index.js"
+    "./experimental/cloud/request-auth": {
+      "types": "./dist/cloud/requestAuth/index.d.ts",
+      "default": "./dist/cloud/requestAuth/index.js"
     },
     "./experimental/cloud/usage": {
       "types": "./dist/cloud/usage.d.ts",
       "default": "./dist/cloud/usage.js"
     },
     "./experimental/diagnostics": {
-      "types": "./dist/diagnostics.d.ts",
-      "default": "./dist/diagnostics.js"
+      "types": "./dist/experimental/diagnostics.d.ts",
+      "default": "./dist/experimental/diagnostics.js"
+    },
+    "./experimental/hooks": {
+      "types": "./dist/hooks.d.ts",
+      "default": "./dist/hooks.js"
+    },
+    "./experimental/mcp": {
+      "types": "./dist/mcp.d.ts",
+      "default": "./dist/mcp.js"
+    },
+    "./experimental/providers": {
+      "types": "./dist/providers.d.ts",
+      "default": "./dist/providers.js"
+    },
+    "./experimental/reviews": {
+      "types": "./dist/reviews/index.d.ts",
+      "default": "./dist/reviews/index.js"
+    },
+    "./experimental/sessions": {
+      "types": "./dist/sessions/index.d.ts",
+      "default": "./dist/sessions/index.js"
     },
     "./experimental/manifest/connectedAccountDescriptors": {
       "types": "./dist/manifest/connectedAccountDescriptors.d.ts",
       "default": "./dist/manifest/connectedAccountDescriptors.js"
     },
-    "./experimental/manifest/agentSettings": {
-      "types": "./dist/manifest/agentSettings.d.ts",
-      "default": "./dist/manifest/agentSettings.js"
+    "./experimental/manifest/agents": {
+      "types": "./dist/manifest/agents.d.ts",
+      "default": "./dist/manifest/agents.js"
+    },
+    "./experimental/manifest/voiceModelPacks": {
+      "types": "./dist/manifest/voiceModelPacks.d.ts",
+      "default": "./dist/manifest/voiceModelPacks.js"
     },
     "./experimental/manifest/scmBackends": {
       "types": "./dist/manifest/scmBackends.d.ts",
@@ -107,21 +107,17 @@
       "types": "./dist/envConstants.d.ts",
       "default": "./dist/envConstants.js"
     },
-    "./experimental/executionRuns/singleShot": {
-      "types": "./dist/executionRuns/singleShot.d.ts",
-      "default": "./dist/executionRuns/singleShot.js"
-    },
     "./experimental/fs": {
       "types": "./dist/fs.d.ts",
       "default": "./dist/fs.js"
     },
+    "./internal/fs/json-owner-file-lock": {
+      "types": "./dist/internal/fs/jsonOwnerFileLock.d.ts",
+      "default": "./dist/internal/fs/jsonOwnerFileLock.js"
+    },
     "./experimental/timeout": {
       "types": "./dist/timeout.d.ts",
       "default": "./dist/timeout.js"
-    },
-    "./experimental/runtime/session": {
-      "types": "./dist/runtime/session.d.ts",
-      "default": "./dist/runtime/session.js"
     },
     "./experimental/runtime/coalescedScheduler": {
       "types": "./dist/runtime/coalescedScheduler.d.ts",
@@ -130,6 +126,14 @@
     "./experimental/runtime/catalog": {
       "types": "./dist/runtime/catalog.d.ts",
       "default": "./dist/runtime/catalog.js"
+    },
+    "./experimental/ui/hosted-web-bridge-v1": {
+      "types": "./dist/experimental/uiHostedWebBridgeV1.d.ts",
+      "default": "./dist/experimental/uiHostedWebBridgeV1.js"
+    },
+    "./experimental/testing/registration-scope": {
+      "types": "./dist/experimental/testingRegistrationScope.d.ts",
+      "default": "./dist/experimental/testingRegistrationScope.js"
     },
     "./experimental/sessions/subagents": {
       "types": "./dist/sessions/subagents.d.ts",
@@ -147,17 +151,9 @@
       "types": "./dist/testing/adapterHarness.d.ts",
       "default": "./dist/testing/adapterHarness.js"
     },
-    "./experimental/telemetry": {
-      "types": "./dist/telemetry.d.ts",
-      "default": "./dist/telemetry.js"
-    },
     "./experimental/usage": {
       "types": "./dist/experimental/usage.d.ts",
       "default": "./dist/experimental/usage.js"
-    },
-    "./usage": {
-      "types": "./dist/usage.d.ts",
-      "default": "./dist/usage.js"
     },
     "./ui": {
       "types": "./dist/ui.d.ts",
@@ -167,61 +163,9 @@
       "types": "./dist/ui/build/index.d.ts",
       "default": "./dist/ui/build/index.js"
     },
-    "./ui/artifacts": {
-      "types": "./dist/ui/artifacts.d.ts",
-      "default": "./dist/ui/artifacts.js"
-    },
-    "./ui/artifactIntegrity": {
-      "types": "./dist/ui/artifactIntegrity.d.ts",
-      "default": "./dist/ui/artifactIntegrity.js"
-    },
-    "./ui/bridgeClient": {
-      "types": "./dist/ui/bridgeClient.d.ts",
-      "default": "./dist/ui/bridgeClient.js"
-    },
-    "./ui/hostedWeb": {
-      "types": "./dist/ui/hostedWeb.d.ts",
-      "default": "./dist/ui/hostedWeb.js"
-    },
-    "./ui/hostedWebBuild": {
-      "types": "./dist/ui/hostedWebBuild.d.ts",
-      "default": "./dist/ui/hostedWebBuild.js"
-    },
-    "./ui/hostedWebDevServer": {
-      "types": "./dist/ui/hostedWebDevServer.d.ts",
-      "default": "./dist/ui/hostedWebDevServer.js"
-    },
-    "./ui/hostApiClient": {
-      "types": "./dist/ui/hostApiClient.d.ts",
-      "default": "./dist/ui/hostApiClient.js"
-    },
-    "./ui/hostedWebRuntime": {
-      "types": "./dist/ui/hostedWebRuntime.d.ts",
-      "default": "./dist/ui/hostedWebRuntime.js"
-    },
-    "./ui/reactNativeBuild": {
-      "types": "./dist/ui/reactNativeBuild.d.ts",
-      "default": "./dist/ui/reactNativeBuild.js"
-    },
-    "./ui/reactNativeBundles": {
-      "types": "./dist/ui/reactNativeBundles.d.ts",
-      "default": "./dist/ui/reactNativeBundles.js"
-    },
-    "./ui/reactNativeDevServer": {
-      "types": "./dist/ui/reactNativeDevServer.d.ts",
-      "default": "./dist/ui/reactNativeDevServer.js"
-    },
-    "./ui/reactNativeWebBuild": {
-      "types": "./dist/ui/reactNativeWebBuild.d.ts",
-      "default": "./dist/ui/reactNativeWebBuild.js"
-    },
-    "./ui/hostRuntimeExternalsBuildPlugin": {
-      "types": "./dist/ui/hostRuntimeExternalsBuildPlugin.d.ts",
-      "default": "./dist/ui/hostRuntimeExternalsBuildPlugin.js"
-    },
-    "./ui/reactNativeRepackStrictSafety": {
-      "types": "./dist/ui/reactNativeRepackStrictSafety.d.ts",
-      "default": "./dist/ui/reactNativeRepackStrictSafety.js"
+    "./ui/client": {
+      "types": "./dist/ui/client.d.ts",
+      "default": "./dist/ui/client.js"
     },
     "./experimental/runtime/tempTextFile": {
       "types": "./dist/runtime/tempTextFile.d.ts",
@@ -255,7 +199,7 @@
     "publicSdkRelease": {
       "posture": "prepublish_hold",
       "supportPolicy": "README.md#public-sdk-release-posture",
-      "canonicalAuthoringDocs": "../../apps/docs/content/docs/development/extensions.mdx",
+      "canonicalAuthoringDocs": "../../apps/docs/content/docs/plugins/quickstart.mdx",
       "exampleFixtures": "../../apps/cli/src/plugins/testkit/fixtures/authoring-examples",
       "publicExamples": "examples/public-authoring",
       "externalPublicationRequiresApproval": true
@@ -263,17 +207,34 @@
   },
   "scripts": {
     "tsc": "node ../../scripts/workspaces/runTypeScriptCli.mjs",
-    "prebuild": "node ./scripts/bundleWorkspaceDeps.mjs",
+    "prepare:declarations": "node ./scripts/bundleWorkspaceDeps.mjs --declarations",
+    "prebuild": "yarn -s prepare:declarations",
     "prepack": "yarn -s build && node ./scripts/bundleWorkspaceDeps.mjs --artifact",
-    "pretypecheck": "node ./scripts/bundleWorkspaceDeps.mjs",
+    "pretest": "yarn -s prepare:declarations",
+    "pretypecheck": "yarn -s prepare:declarations",
+    "pretypecheck:source": "yarn -s prepare:declarations",
+    "pretypecheck:tests": "yarn -s prepare:declarations",
     "build": "node ../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
     "postinstall:real": "yarn -s build",
     "postinstall": "node -e \"const fs=require('fs');const cp=require('child_process');if(/(^|[\\\\/])node_modules([\\\\/]|$)/i.test(process.cwd()))process.exit(0);try{const gate=require('../../scripts/postinstall/shouldRunPostinstall.cjs');if(!gate.shouldRunPostinstall({workspace:'plugin-sdk',scope:process.env.HAPPIER_INSTALL_SCOPE||''}))process.exit(0);}catch{}if(!fs.existsSync('tsconfig.json'))process.exit(0);const run=(cmd,args)=>cp.spawnSync(cmd,args,{stdio:'inherit'});const npmExec=process.env.npm_execpath;let r;if(npmExec){r=run(process.execPath,[npmExec,'run','-s','postinstall:real']);}else{r=run(process.platform==='win32'?'yarn.cmd':'yarn',['-s','postinstall:real']);if(r.error&&process.platform==='win32'){r=run('yarn',['-s','postinstall:real']);}}if(r.error){console.error(r.error.message);process.exit(1);}process.exit(r.status??1);\"",
     "test": "vitest run --exclude scripts/**/*.test.mjs && node --test scripts/bundleWorkspaceDeps.test.mjs",
-    "typecheck": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
+    "typecheck": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json && node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.tests.json",
+    "typecheck:source": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json",
+    "typecheck:tests": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.tests.json"
   },
   "devDependencies": {
+    "@babel/core": "^7.25.2",
+    "@callstack/repack": "5.2.5",
+    "@react-native-community/cli": "20.1.2",
+    "@react-native-community/cli-platform-android": "20.1.2",
+    "@react-native-community/cli-platform-ios": "20.1.2",
+    "@rspack/core": "2.1.3",
+    "@types/react": "19.2.0",
+    "react": "19.2.0",
+    "react-native": "0.83.4",
+    "react-native-web": "0.21.2",
     "typescript": "^5.9.2",
+    "vite": "7.3.1",
     "vitest": "^3.2.4"
   },
   "bundledDependencies": [

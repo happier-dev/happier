@@ -2,7 +2,7 @@ import {
     LEGACY_ACP_CONFIG_OPTION_OVERRIDES_KEY,
     readMetadataAliasValue,
     SESSION_CONFIG_OPTION_OVERRIDES_KEY,
-} from '@happier-dev/plugin-sdk/sessions';
+} from '@happier-dev/plugin-sdk/experimental/sessions';
 
 function normalizeReasoningEffort(raw: unknown): string | null {
     if (typeof raw !== 'string') return null;

@@ -13,10 +13,13 @@ export type ProviderFingerprintDomainV1 =
   | 'compatibility'
   | 'catalog'
   | 'observation-authorization'
+  | 'probe-observation'
   | 'account-grant'
   | 'machine-grant'
   | 'saved-secret-record'
   | 'credential-destination'
+  | 'discovery-candidate'
+  | 'authoring-review'
   | 'legacy-profile-migration-source'
   | 'legacy-profile-migration-conflict';
 
@@ -38,6 +41,9 @@ export type ProviderCatalogFingerprintV1 = z.infer<typeof ProviderCatalogFingerp
 export const ProviderObservationAuthorizationFingerprintV1Schema = canonicalFingerprintSchema('observation-authorization:v1:')
   .brand<'ProviderObservationAuthorizationFingerprintV1'>();
 export type ProviderObservationAuthorizationFingerprintV1 = z.infer<typeof ProviderObservationAuthorizationFingerprintV1Schema>;
+export const ProviderProbeObservationIdentityV1Schema = canonicalFingerprintSchema('probe-observation:v1:')
+  .brand<'ProviderProbeObservationIdentityV1'>();
+export type ProviderProbeObservationIdentityV1 = z.infer<typeof ProviderProbeObservationIdentityV1Schema>;
 
 type CanonicalJson = null | boolean | number | string | readonly CanonicalJson[] | Readonly<{ [key: string]: CanonicalJson }>;
 

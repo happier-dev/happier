@@ -1,4 +1,7 @@
 import { Conversation } from '@elevenlabs/client';
+import {
+    VoiceRealtimeJsonValueSchema,
+} from '@happier-dev/protocol';
 import type {
     Callbacks,
     Conversation as ElevenLabsConversation,
@@ -6,13 +9,6 @@ import type {
     PartialOptions,
     Status,
 } from '@elevenlabs/client';
-
-import {
-    redactRealtimeClientToolResults,
-    type RealtimeClientToolMap,
-    type VoiceToolResultRedactionPrefs,
-    type VoiceToolResultRedactor,
-} from './redactRealtimeClientToolResults.js';
 
 type MessagePayload = Parameters<NonNullable<Callbacks['onMessage']>>[0];
 
@@ -116,9 +112,11 @@ async function endConversationQuietly(conversation: ElevenLabsConversation): Pro
 }
 
 export function createElevenLabsConversationHandle(params: Readonly<{
-    clientTools: PartialOptions['clientTools'];
-    resolveRedactionPrefs: () => VoiceToolResultRedactionPrefs;
-    redactToolResultValue: VoiceToolResultRedactor;
+    tools: readonly Readonly<{
+        name: string;
+        execute(parameters: import('@happier-dev/protocol').VoiceRealtimeJsonValue):
+            Promise<import('@happier-dev/protocol').VoiceRealtimeJsonValue>;
+    }>[];
 }>): ElevenLabsConversationHandle {
     let activeConversation: ElevenLabsConversation | null = null;
     let latestStartSequence = 0;
@@ -135,19 +133,12 @@ export function createElevenLabsConversationHandle(params: Readonly<{
         }
     };
 
-    // Route every realtime tool result through the canonical provider-bound
-    // redaction chokepoint before it reaches the provider. Without this the raw
-    // tool result (which can carry session summaries/paths) bypasses the voice
-    // privacy prefs that the local follow-up channel already honors.
-    const redactedClientTools = (
-        params.clientTools && typeof params.clientTools === 'object'
-            ? redactRealtimeClientToolResults(
-                params.clientTools as RealtimeClientToolMap,
-                params.resolveRedactionPrefs,
-                params.redactToolResultValue,
-            )
-            : params.clientTools
-    ) as PartialOptions['clientTools'];
+    const clientTools = Object.freeze(Object.fromEntries(params.tools.map((tool) => [
+        tool.name,
+        async (parameters: unknown) => await tool.execute(
+            VoiceRealtimeJsonValueSchema.parse(parameters),
+        ),
+    ]))) as PartialOptions['clientTools'];
 
     const isCurrentStartSequence = (startSequence: number): boolean =>
         !disposed && startSequence === latestStartSequence;
@@ -199,7 +190,7 @@ export function createElevenLabsConversationHandle(params: Readonly<{
             const conversation = await Conversation.startSession({
                 ...readRecord(config),
                 ...buildCallbackOptions(startSequence),
-                clientTools: redactedClientTools,
+                clientTools,
             } as PartialOptions);
 
             if (!isCurrentStartSequence(startSequence)) {

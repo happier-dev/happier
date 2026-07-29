@@ -44,9 +44,9 @@ describe('AUGGIE_UI_DESCRIPTOR', () => {
         connectedService: { serviceId: null, labelKey: 'agentInput.agent.auggie', connectRoute: null },
         icon: { assetId: 'auggie' },
       },
-      settings: { descriptorId: 'auggie.agentSettings.v1' },
       behavior: { descriptorId: 'auggie.uiBehavior.v1' },
     });
+    expect(AUGGIE_UI_DESCRIPTOR).not.toHaveProperty('settings');
   });
 
   it('is a data-only no-execute descriptor', () => {

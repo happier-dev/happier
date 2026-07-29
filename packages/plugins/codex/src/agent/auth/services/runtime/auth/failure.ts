@@ -1,5 +1,6 @@
 import {
   classifyProviderLimitEvidence,
+  ConnectedServiceCredentialRevisionV1Schema,
   type ConnectedServiceId,
   type ConnectedServiceLimitCategoryV1,
   type ConnectedServiceProfileId,
@@ -29,7 +30,9 @@ export type CodexConnectedServiceRuntimeFailureClassification = Readonly<{
   planType: string | null;
   sourceProviderAccountId?: string | null;
   sourceAccountLabel?: string | null;
+  failingAccessTokenFingerprint?: string | null;
   groupGeneration?: number | null;
+  expectedCredentialRevision?: string | null;
   rateLimits: unknown | null;
   source: 'structured_provider_error' | 'stable_provider_message' | 'provider_runtime_marker';
   recoveryAction?: CodexConnectedServiceRecoveryAction | null;
@@ -57,7 +60,9 @@ export type ClassifyCodexConnectedServiceAuthFailureInput = Readonly<{
   sourceAccountIdentity?: Readonly<{
     providerAccountId?: string | null;
     accountLabel?: string | null;
+    credentialFingerprint?: string | null;
     groupGeneration?: string | number | null;
+    credentialRevision?: string | null;
   }> | null;
 }>;
 
@@ -72,20 +77,37 @@ function readString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
+function readCredentialFingerprint(value: unknown): string | null {
+  const fingerprint = readString(value);
+  return fingerprint && /^sha256:[a-f0-9]{8}$/u.test(fingerprint) ? fingerprint : null;
+}
+
 function readErrorRecord(value: unknown): Record<string, unknown> | null {
   const root = isRecord(value) ? value : null;
   const direct = isRecord(root?.error) ? root.error : null;
   const turn = isRecord(root?.turn) ? root.turn : null;
   const turnError = isRecord(turn?.error) ? turn.error : null;
-  return direct ?? turnError ?? root;
+  const data = isRecord(root?.data) ? root.data : null;
+  const dataDirect = isRecord(data?.error) ? data.error : null;
+  const dataTurn = isRecord(data?.turn) ? data.turn : null;
+  const dataTurnError = isRecord(dataTurn?.error) ? dataTurn.error : null;
+  return direct ?? turnError ?? dataDirect ?? dataTurnError ?? data ?? root;
 }
 
 function readErrorText(value: unknown): string {
   if (typeof value === 'string') return value;
-  if (value instanceof Error) return value.message;
   const record = readErrorRecord(value);
-  if (!record) return '';
-  return [record.message, record.additionalDetails, record.additional_details, record.error, record.code, record.codexErrorInfo, record.codex_error_info]
+  if (!record) return value instanceof Error ? value.message : '';
+  return [
+    value instanceof Error ? value.message : null,
+    record.message,
+    record.additionalDetails,
+    record.additional_details,
+    record.error,
+    record.code,
+    record.codexErrorInfo,
+    record.codex_error_info,
+  ]
     .filter((part): part is string => typeof part === 'string')
     .join(' ');
 }
@@ -99,10 +121,14 @@ function isStructuredUsageLimitCode(value: string | null): boolean {
 }
 
 function isStructuredAuthExpiredCode(value: string | null): boolean {
-  return value === 'token_invalidated'
-    || value === 'token_revoked'
-    || value === 'invalid_grant'
-    || value === 'refresh_token_expired';
+  const normalized = value?.replace(/[_\-\s]/gu, '').toLowerCase() ?? null;
+  return normalized === 'tokeninvalidated'
+    || normalized === 'tokenrevoked'
+    || normalized === 'invalidgrant'
+    || normalized === 'refreshtokenexpired'
+    || normalized === 'unauthenticated'
+    || normalized === 'unauthorized'
+    || normalized === 'authenticationrequired';
 }
 
 function isStructuredRefreshFailureCode(value: string | null): boolean {
@@ -201,7 +227,14 @@ function buildClassification(
   const sourceAccountLabel = sourceProviderAccountId
     ? readString(input.sourceAccountIdentity?.accountLabel)
     : null;
+  const failingAccessTokenFingerprint = sourceProviderAccountId
+    ? readCredentialFingerprint(input.sourceAccountIdentity?.credentialFingerprint)
+    : null;
   const groupGeneration = readNonNegativeInteger(input.sourceAccountIdentity?.groupGeneration);
+  const parsedCredentialRevision = ConnectedServiceCredentialRevisionV1Schema.safeParse(
+    input.sourceAccountIdentity?.credentialRevision,
+  );
+  const expectedCredentialRevision = parsedCredentialRevision.success ? parsedCredentialRevision.data : null;
   return {
     kind: params.kind,
     ...(params.limitCategory ? { limitCategory: params.limitCategory } : {}),
@@ -215,7 +248,9 @@ function buildClassification(
     planType: params.planType ?? null,
     ...(sourceProviderAccountId ? { sourceProviderAccountId } : {}),
     ...(sourceProviderAccountId && sourceAccountLabel ? { sourceAccountLabel } : {}),
+    ...(failingAccessTokenFingerprint ? { failingAccessTokenFingerprint } : {}),
     ...(groupGeneration === null ? {} : { groupGeneration }),
+    ...(expectedCredentialRevision === null ? {} : { expectedCredentialRevision }),
     rateLimits: params.rateLimits ?? null,
     source: params.source,
     ...(params.recoveryAction ? { recoveryAction: params.recoveryAction } : {}),
@@ -256,7 +291,7 @@ export function classifyCodexConnectedServiceAuthFailure(
     });
   }
 
-  if (input.providerErrorPath && classifyProviderLimitEvidence(input.error) === 'capacity') {
+  if (input.providerErrorPath && classifyProviderLimitEvidence(input.error).category === 'capacity') {
     return buildClassification(input, {
       kind: 'capacity',
       limitCategory: 'capacity',
@@ -284,17 +319,17 @@ export function classifyCodexConnectedServiceAuthFailure(
     });
   }
 
-  if (isStructuredAuthExpiredCode(codexErrorInfo) || isStructuredAuthExpiredCode(structuredCode) || containsOauthTokenInvalidatedMessage(text)) {
+  if (text.includes(CODEX_ACCOUNT_CHANGED_MESSAGE)) {
     return buildClassification(input, {
-      kind: 'auth_expired',
+      kind: 'account_changed',
       limitCategory: 'auth_invalid',
       source: record ? 'structured_provider_error' : 'stable_provider_message',
     });
   }
 
-  if (text.includes(CODEX_ACCOUNT_CHANGED_MESSAGE)) {
+  if (isStructuredAuthExpiredCode(codexErrorInfo) || isStructuredAuthExpiredCode(structuredCode) || containsOauthTokenInvalidatedMessage(text)) {
     return buildClassification(input, {
-      kind: 'account_changed',
+      kind: 'auth_expired',
       limitCategory: 'auth_invalid',
       source: record ? 'structured_provider_error' : 'stable_provider_message',
     });

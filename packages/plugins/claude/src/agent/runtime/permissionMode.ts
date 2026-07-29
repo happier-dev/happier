@@ -1,4 +1,4 @@
-import { parsePermissionIntentAlias } from '@happier-dev/plugin-sdk/experimental/acp';
+import { parsePermissionIntentAlias } from '@happier-dev/agents';
 
 export type ClaudeProviderPermissionMode =
     | 'default'

@@ -3,61 +3,25 @@
   "id": "examples.descriptor-only",
   "version": "0.1.0",
   "displayName": "Descriptor-Only Example",
-  "description": "Pure manifest descriptor plugin with settings and permission review states.",
-  "engines": {
-    "happier": "^0.2.0"
-  },
-  "uses": [
-    "uiDescriptors"
-  ],
-  "entrypoints": {
-    "main": "./dist/index.js"
-  },
-  "permissions": {
-    "required": [
-      {
-        "capability": "filesystem.read",
-        "reason": "Read project metadata for the descriptor preview."
-      }
-    ],
-    "optional": [
-      {
-        "capability": "network",
-        "reason": "Optionally validate links shown in the descriptor preview."
-      }
-    ]
+  "description": "A host-rendered settings view with no executable UI artifact.",
+  "engines": { "happier": "^0.2.0" },
+  "runtime": { "apiVersion": 1 },
+  "hostAccess": {
+    "required": [{ "id": "project-metadata", "capability": "filesystem", "reason": "Read project metadata for the descriptor preview.", "scope": { "locations": [{ "root": "workspace" }], "access": ["read"] } }],
+    "optional": []
   },
   "contributes": {
-    "uiDescriptors": [
-      {
-        "id": "examples.descriptorOnly.settings",
-        "surface": "settings",
-        "title": "Descriptor-only settings",
-        "description": "Host-rendered settings declared in plugin.json.",
-        "tone": "info",
-        "fields": [
-          {
-            "id": "enabled",
-            "type": "boolean",
-            "title": "Enabled"
-          },
-          {
-            "id": "mode",
-            "type": "select",
-            "title": "Mode",
-            "options": [
-              {
-                "value": "quiet",
-                "label": "Quiet"
-              },
-              {
-                "value": "verbose",
-                "label": "Verbose"
-              }
-            ]
-          }
-        ]
-      }
-    ]
+    "settings": [{ "id": "preferences", "title": "Descriptor preferences", "target": { "kind": "plugin" }, "scope": "local", "fields": [
+      { "id": "enabled", "title": "Enabled", "schema": { "type": "boolean" }, "default": true },
+      { "id": "mode", "title": "Mode", "schema": { "type": "string", "enum": ["quiet", "verbose"] }, "default": "quiet" }
+    ] }],
+    "ui": {
+      "views": [{ "id": "settings", "placement": "app.settingsPage", "renderer": "settings-form", "title": "Descriptor-only settings" }],
+      "renderers": [{ "id": "settings-form", "kind": "declarative", "root": { "kind": "stack", "children": [
+        { "kind": "field", "label": "Enabled", "control": { "kind": "toggle", "settingId": "enabled" } },
+        { "kind": "field", "label": "Mode", "control": { "kind": "select", "settingId": "mode", "options": [{ "value": "quiet", "label": "Quiet" }, { "value": "verbose", "label": "Verbose" }] } }
+      ] } }],
+      "translations": []
+    }
   }
 }

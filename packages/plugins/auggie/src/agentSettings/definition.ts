@@ -1,25 +1,15 @@
-import {
-  buildAgentSettingsDefaults,
-  defineAgentSettingsContribution,
-  agentSettingsContributionToUiDescriptor,
-} from '@happier-dev/plugin-sdk/experimental/manifest/agentSettings';
+import type { PluginSettingsContribution } from '@happier-dev/plugin-sdk/manifest';
 
-export const AUGGIE_AGENT_SETTINGS_CONTRIBUTION = defineAgentSettingsContribution({
-  id: 'auggie.agentSettings.v1',
-  agentId: 'auggie',
+export const AUGGIE_AGENT_SETTINGS_CONTRIBUTION = {
+  id: 'agent-settings',
+  version: 1,
+  title: { key: 'settingsAgents.plugins.auggie.title', fallback: 'Auggie' },
+  target: { kind: 'agent', agent: 'auggie' },
+  scope: 'synced',
   fields: [],
-  ui: {
-    title: { key: 'settingsAgents.plugins.auggie.title' },
+  presentation: {
     icon: { ionName: 'sparkles-outline', color: { kind: 'theme', token: 'green' } },
-    subagentSettingsSections: [],
+    subagentSections: [],
     sections: [],
   },
-});
-
-export const AUGGIE_AGENT_SETTINGS_DEFAULTS = buildAgentSettingsDefaults(
-  AUGGIE_AGENT_SETTINGS_CONTRIBUTION,
-);
-
-export const AUGGIE_AGENT_SETTINGS_DESCRIPTOR = agentSettingsContributionToUiDescriptor(
-  AUGGIE_AGENT_SETTINGS_CONTRIBUTION,
-);
+} satisfies PluginSettingsContribution;

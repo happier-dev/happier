@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ExecClientHandleV1, JsonStreamClientV1, PluginContextV1 } from '@happier-dev/plugin-sdk';
 
-import { query } from './query.js';
+import {
+    query,
+    type ClaudeSdkExecClientHandle,
+    type ClaudeSdkJsonStreamClient,
+} from './query.js';
 import type { SDKMessage } from './types.js';
 
 function createJsonStreamHandle() {
@@ -21,7 +24,7 @@ function createJsonStreamHandle() {
     }>>((resolve) => {
         resolveExit = resolve;
     });
-    const client: JsonStreamClientV1 = {
+    const client: ClaudeSdkJsonStreamClient = {
         closed: new Promise(() => undefined),
         subscribe(listener) {
             listeners.add(listener);
@@ -29,9 +32,10 @@ function createJsonStreamHandle() {
         },
         async writeRecord(record) {
             written.push(record);
+            return { kind: 'written' };
         },
     };
-    const handle: ExecClientHandleV1<JsonStreamClientV1> = {
+    const handle: ClaudeSdkExecClientHandle = {
         client,
         process: {
             pid: 123,
@@ -77,7 +81,7 @@ function createContextFixture(stream = createJsonStreamHandle()) {
                 spawnClient,
             },
         },
-    } as unknown as PluginContextV1;
+    } satisfies Parameters<typeof query>[0];
     return { ctx, spawnClient, stream };
 }
 
@@ -155,6 +159,49 @@ describe('Claude plugin SDK query', () => {
         const args = spawnClient.mock.calls[0]?.[0].launch.args as string[];
         expect(args).toEqual(expect.arrayContaining(['--settings', '{"ultracode":true}']));
         expect(args.filter((arg) => arg === '--settings')).toHaveLength(1);
+    });
+
+    it('maps the released advanced Agent SDK options to the native Claude launch without control-plane overrides', async () => {
+        const { ctx, spawnClient } = createContextFixture();
+
+        query(ctx, {
+            prompt: prompt(),
+            options: {
+                cwd: '/tmp/project',
+                customSystemPrompt: 'canonical prompt replaced by the released advanced override',
+                settingsJson: '{"ultracode":true}',
+                plugins: [{ type: 'local', path: '/tmp/plugin' }],
+                betas: ['beta-a'],
+                maxBudgetUsd: 3.5,
+                sandbox: { enabled: true },
+                additionalDirectories: ['/tmp/extra'],
+                permissionPromptToolName: 'stdio',
+                tools: ['Read', 'Edit'],
+                systemPrompt: 'Be concise',
+                debug: true,
+                debugFile: '/tmp/claude-debug.log',
+            },
+        });
+
+        const args = spawnClient.mock.calls[0]?.[0].launch.args as string[];
+        expect(args).toEqual(expect.arrayContaining([
+            '--plugin-dir', '/tmp/plugin',
+            '--betas', 'beta-a',
+            '--max-budget-usd', '3.5',
+            '--add-dir', '/tmp/extra',
+            '--permission-prompt-tool', 'stdio',
+            '--tools', 'Read,Edit',
+            '--system-prompt', 'Be concise',
+            '--debug',
+            '--debug-file', '/tmp/claude-debug.log',
+        ]));
+        const settingsIndex = args.indexOf('--settings');
+        expect(settingsIndex).toBeGreaterThanOrEqual(0);
+        expect(JSON.parse(args[settingsIndex + 1] ?? '')).toEqual({
+            ultracode: true,
+            sandbox: { enabled: true },
+        });
+        expect(args).not.toContain('canonical prompt replaced by the released advanced override');
     });
 
     it('lets an explicit settingsPath win over settingsJson (one --settings only)', async () => {
@@ -318,7 +365,7 @@ describe('Claude plugin SDK query', () => {
                     }),
                 },
             },
-        } as unknown as PluginContextV1;
+        } satisfies Parameters<typeof query>[0];
 
         const sdkQuery = query(ctx, {
             prompt: prompt(),

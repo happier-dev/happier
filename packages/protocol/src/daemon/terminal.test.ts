@@ -3,6 +3,20 @@ import { describe, expect, it } from 'vitest';
 import { DaemonTerminalEnsureRequestSchema } from './terminal';
 
 describe('DaemonTerminalEnsureRequestSchema', () => {
+  it('accepts a typed attached-session action and rejects a competing raw command', () => {
+    expect(DaemonTerminalEnsureRequestSchema.parse({
+      terminalKey: 'session:dialog-attach',
+      launch: { kind: 'session_attach', sessionId: 'session-1' },
+    })).toMatchObject({
+      launch: { kind: 'session_attach', sessionId: 'session-1' },
+    });
+
+    expect(DaemonTerminalEnsureRequestSchema.safeParse({
+      terminalKey: 'session:dialog-attach',
+      initialCommand: 'happier attach session-1',
+      launch: { kind: 'session_attach', sessionId: 'session-1' },
+    }).success).toBe(false);
+  });
   it('accepts an optional sessionId attribution field', () => {
     const parsed = DaemonTerminalEnsureRequestSchema.parse({
       terminalKey: 'terminal-a',

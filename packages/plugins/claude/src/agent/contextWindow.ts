@@ -9,13 +9,14 @@
  *
  * Capability facts (per the official model-config docs):
  * - 1M-capable: Fable 5, Opus 4.6 and later, Sonnet 4.6.
- * - Always-1M on the API (no opt-in needed): Fable 5, Opus 4.8, Opus 4.7 — the explicit
+ * - Always-1M on the API (no opt-in needed): Opus 5, Fable 5, Opus 4.8, Opus 4.7 — the explicit
  *   `[1m]` toggle is only meaningful where 1M is opt-in (Sonnet 4.6, Opus 4.6).
  */
 
 export const CLAUDE_1M_SUFFIX = '[1m]';
 
 const CLAUDE_1M_CONTEXT_MODEL_IDS: ReadonlySet<string> = new Set([
+    'claude-opus-5',
     'claude-fable-5',
     'claude-opus-4-8',
     'claude-opus-4-7',
@@ -24,6 +25,7 @@ const CLAUDE_1M_CONTEXT_MODEL_IDS: ReadonlySet<string> = new Set([
 ]);
 
 const CLAUDE_1M_ALWAYS_ON_MODEL_IDS: ReadonlySet<string> = new Set([
+    'claude-opus-5',
     'claude-fable-5',
     'claude-opus-4-8',
     'claude-opus-4-7',

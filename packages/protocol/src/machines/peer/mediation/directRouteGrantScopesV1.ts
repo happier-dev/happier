@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { VoiceMediaApplicationKindV1Schema } from './voiceMediaV1.js';
+
 const PositiveIntSchema = z.number().int().positive();
 
 export const BoundedTransferSingleGrantScopeV1Schema = z.object({
@@ -29,6 +31,17 @@ export const TcpTunnelGrantScopeV1Schema = z.object({
   maxTotalBytes: PositiveIntSchema.optional(),
 });
 
+export const VoiceMediaGrantScopeV1Schema = z.object({
+  kind: z.literal('voice_media'),
+  tunnelId: z.string().min(1),
+  applicationKind: VoiceMediaApplicationKindV1Schema,
+  applicationAttemptId: z.string().min(1).max(256),
+  applicationAuthorityDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
+  maxIdleMs: PositiveIntSchema,
+  maxDurationMs: PositiveIntSchema,
+  maxTotalBytes: PositiveIntSchema.optional(),
+}).strict();
+
 export const LiveStreamGrantScopeV1Schema = z.object({
   kind: z.literal('live_stream'),
   streamId: z.string().min(1),
@@ -52,6 +65,7 @@ export const DirectRouteGrantScopeV1Schema = z.union([
   BoundedTransferSingleGrantScopeV1Schema,
   BoundedTransferScopedGrantScopeV1Schema,
   TcpTunnelGrantScopeV1Schema,
+  VoiceMediaGrantScopeV1Schema,
   LiveStreamGrantScopeV1Schema,
   MachineRpcGrantScopeV1Schema,
 ]);
@@ -60,5 +74,6 @@ export type DirectRouteGrantScopeV1 = z.infer<typeof DirectRouteGrantScopeV1Sche
 export type BoundedTransferSingleGrantScopeV1 = z.infer<typeof BoundedTransferSingleGrantScopeV1Schema>;
 export type BoundedTransferScopedGrantScopeV1 = z.infer<typeof BoundedTransferScopedGrantScopeV1Schema>;
 export type TcpTunnelGrantScopeV1 = z.infer<typeof TcpTunnelGrantScopeV1Schema>;
+export type VoiceMediaGrantScopeV1 = z.infer<typeof VoiceMediaGrantScopeV1Schema>;
 export type LiveStreamGrantScopeV1 = z.infer<typeof LiveStreamGrantScopeV1Schema>;
 export type MachineRpcGrantScopeV1 = z.infer<typeof MachineRpcGrantScopeV1Schema>;

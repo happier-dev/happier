@@ -1,48 +1,11 @@
-import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/plugin-sdk/sessions';
+import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/plugin-sdk/experimental/sessions';
 
-import { INTERNAL_CLAUDE_EVENT_TYPES } from './internalEventTypes.js';
-import { parseRawJsonLinesObject } from './parseRawJsonLines.js';
-import { normalizeClaudeToolUseNamesInRawJsonLines } from './toolUseNames.js';
+import { classifyClaudeNativeTranscriptRow } from './nativeSemanticProjection.js';
 import type { RawJSONLines } from './rawJsonLines.js';
-import {
-    isClaudeInternalTranscriptMessage,
-    readClaudeVisibleCompactSummaryText,
-    readClaudeVisibleLocalCommandOutputText,
-    readClaudeVisibleSlashCommandText,
-} from './visibility.js';
-
-function parseJsonlLineValue(value: unknown): unknown | null {
-    if (!value) return null;
-    if (typeof value === 'string') {
-        const trimmed = value.trim();
-        if (!trimmed) return null;
-        try {
-            return JSON.parse(trimmed) as unknown;
-        } catch {
-            return null;
-        }
-    }
-    if (typeof value === 'object' && !Array.isArray(value)) {
-        return value;
-    }
-    return null;
-}
 
 export function projectClaudeJsonlLineToRawMessage(lineValue: unknown): RawJSONLines | null {
-    const rawObject = parseJsonlLineValue(lineValue);
-    if (!rawObject || typeof rawObject !== 'object' || Array.isArray(rawObject)) {
-        return null;
-    }
-
-    const rawType = (rawObject as { type?: unknown }).type;
-    if (typeof rawType === 'string' && INTERNAL_CLAUDE_EVENT_TYPES.has(rawType)) {
-        return null;
-    }
-
-    const parsed = parseRawJsonLinesObject(rawObject);
-    if (!parsed) return null;
-    const normalized = normalizeClaudeToolUseNamesInRawJsonLines(parsed);
-    return isClaudeInternalTranscriptMessage(normalized) ? null : normalized;
+    const classification = classifyClaudeNativeTranscriptRow(lineValue);
+    return classification.visibility === 'visible' ? classification.row : null;
 }
 
 function extractEnvelopeTimestampMs(value: unknown): number {
@@ -99,24 +62,22 @@ export function projectClaudeJsonlLineToDirectMessages(params: Readonly<{
     const idPrefix = `claude:${params.fileRelPath}`;
     const stableId = stableOffsetId(idPrefix, params.lineStartOffsetBytes);
 
-    const rawObject = parseJsonlLineValue(params.lineValue);
-    const rawType = (() => {
-        if (!rawObject || typeof rawObject !== 'object' || Array.isArray(rawObject)) return null;
-        const tag = (rawObject as { type?: unknown }).type;
-        return typeof tag === 'string' ? tag : null;
-    })();
-
-    if (rawType && rawType !== 'user' && rawType !== 'assistant') {
+    const classification = classifyClaudeNativeTranscriptRow(params.lineValue);
+    if (
+        classification.rawType
+        && classification.rawType !== 'user'
+        && classification.rawType !== 'assistant'
+    ) {
         return [];
     }
 
-    const parsed = parseRawJsonLinesObject(rawObject);
-    if (!parsed) {
+    if (classification.content.kind === 'opaque') {
         return [
             {
                 id: stableId,
                 localId: stableId,
                 createdAtMs,
+                messageRole: classification.messageRole,
                 raw: {
                     role: 'agent',
                     content: {
@@ -128,7 +89,7 @@ export function projectClaudeJsonlLineToDirectMessages(params: Readonly<{
                                 fileRelPath: params.fileRelPath,
                                 lineStartOffsetBytes: params.lineStartOffsetBytes,
                             },
-                            original: rawObject ?? params.lineValue,
+                            original: classification.content.original,
                         },
                     },
                 },
@@ -136,65 +97,65 @@ export function projectClaudeJsonlLineToDirectMessages(params: Readonly<{
         ];
     }
 
-    const normalized = normalizeClaudeToolUseNamesInRawJsonLines(parsed);
-    const compactSummary = readClaudeVisibleCompactSummaryText(normalized);
-    if (compactSummary) {
+    if (classification.content.kind === 'compact_summary') {
         return [
             {
                 id: stableId,
                 localId: stableId,
                 createdAtMs,
+                messageRole: 'agent',
                 raw: {
                     role: 'agent',
                     content: {
                         type: 'output',
                         data: {
                             type: 'claude_compact_summary',
-                            text: compactSummary,
+                            text: classification.content.text,
                         },
                     },
                 },
             },
         ];
     }
-    const slashCommand = readClaudeVisibleSlashCommandText(normalized);
-    if (slashCommand) {
+    if (classification.content.kind === 'slash_command') {
         return [
             {
                 id: stableId,
                 localId: stableId,
                 createdAtMs,
+                messageRole: 'user',
                 raw: {
                     role: 'user',
                     content: {
                         type: 'text',
-                        text: slashCommand,
+                        text: classification.content.text,
                     },
                 },
             },
         ];
     }
-    const localCommandOutput = readClaudeVisibleLocalCommandOutputText(normalized);
-    if (localCommandOutput) {
+    if (classification.content.kind === 'local_command_output') {
         return [
             {
                 id: stableId,
                 localId: stableId,
                 createdAtMs,
+                messageRole: 'agent',
                 raw: {
                     role: 'agent',
                     content: {
                         type: 'output',
                         data: {
                             type: 'claude_local_command_output',
-                            text: localCommandOutput,
+                            text: classification.content.text,
                         },
                     },
                 },
             },
         ];
     }
-    if (isClaudeInternalTranscriptMessage(normalized)) return [];
+    if (classification.content.kind !== 'message' || !classification.row) return [];
+    const normalized = classification.row;
     const normalizedForOutput = ensureClaudeOutputMessageRole(normalized);
 
     if (
@@ -208,6 +169,7 @@ export function projectClaudeJsonlLineToDirectMessages(params: Readonly<{
                 id: stableId,
                 localId: stableId,
                 createdAtMs,
+                messageRole: classification.messageRole,
                 raw: {
                     role: 'user',
                     content: {
@@ -224,6 +186,7 @@ export function projectClaudeJsonlLineToDirectMessages(params: Readonly<{
             id: stableId,
             localId: stableId,
             createdAtMs,
+            messageRole: classification.messageRole,
             raw: {
                 role: 'agent',
                 content: { type: 'output', data: normalizedForOutput },

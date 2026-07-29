@@ -35,4 +35,12 @@ describe('React Native plugin UI compatibility contracts', () => {
       diagnostics: ['ios_store_channel_denied'],
     })).toMatchObject({ state: 'fallback' });
   });
+
+  it('rejects the removed UI-specific artifact-revocation decision tier', () => {
+    expect(PluginReactNativeCompatibilityDecisionV1Schema.safeParse({
+      state: 'blocked',
+      reason: 'artifact_revoked',
+      diagnostics: ['artifact_revoked'],
+    }).success).toBe(false);
+  });
 });

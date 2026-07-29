@@ -35,6 +35,60 @@ describe('TranscriptRawRecordV1Schema', () => {
     expect(parsed.success).toBe(true);
   });
 
+  describe('fail-soft malformed known output payloads', () => {
+    const wrap = (data: Record<string, unknown>) => ({
+      role: 'agent',
+      content: { type: 'output', data },
+    });
+
+    it.each([
+      ['assistant row without a message', { type: 'assistant', uuid: 'u1', isApiErrorMessage: true }],
+      [
+        'assistant row whose message role is missing',
+        { type: 'assistant', uuid: 'u2', message: { content: [{ type: 'text', text: 'hi' }] } },
+      ],
+      [
+        'assistant row with null content',
+        { type: 'assistant', uuid: 'u3', message: { role: 'assistant', content: null } },
+      ],
+      ['user row without a message', { type: 'user', uuid: 'u4' }],
+      ['summary row without summary text', { type: 'summary', uuid: 'u5' }],
+    ] satisfies ReadonlyArray<readonly [string, Record<string, unknown>]>)('accepts and preserves %s', (_name, data) => {
+      const parsed = TranscriptRawRecordV1Schema.safeParse(wrap(data));
+
+      expect(parsed.success).toBe(true);
+      if (!parsed.success) throw new Error('expected fail-soft parse success');
+      expect(parsed.data).toMatchObject(wrap(data));
+    });
+
+    it('still rejects malformed shared output envelope fields', () => {
+      const parsed = TranscriptRawRecordV1Schema.safeParse(wrap({
+        type: 'assistant',
+        uuid: 42,
+        isApiErrorMessage: true,
+      }));
+
+      expect(parsed.success).toBe(false);
+    });
+
+    it('still accepts well-formed assistant rows as the rich known variant', () => {
+      const data = {
+        type: 'assistant',
+        uuid: 'u6',
+        message: {
+          role: 'assistant',
+          model: 'claude-sonnet-4',
+          content: [{ type: 'text', text: 'hello' }],
+        },
+      };
+      const parsed = TranscriptRawRecordV1Schema.safeParse(wrap(data));
+
+      expect(parsed.success).toBe(true);
+      if (!parsed.success) throw new Error('expected well-formed parse success');
+      expect(parsed.data).toMatchObject(wrap(data));
+    });
+  });
+
   it('accepts hyphenated tool-call blocks (normalized later)', () => {
     const parsed = TranscriptRawRecordV1Schema.safeParse({
       role: 'agent',

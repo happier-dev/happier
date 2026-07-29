@@ -8,20 +8,7 @@ import {
 import { geminiConnectedServiceQuotaFetcherContribution } from '../auth/services/quota/contribution.js';
 import { geminiConnectedServiceStateSharingDescriptor } from '../connectedServices/descriptor.js';
 import { verifyResumeReachableGemini } from '../connectedServices/reachability.js';
-import { resolveGeminiDaemonSpawnPrerequisites } from '../lifecycle/spawnHooks.js';
-
-async function resolveGeminiCatalogDaemonSpawnPrerequisites(
-  params: Parameters<typeof resolveGeminiDaemonSpawnPrerequisites>[0],
-) {
-  const result = await resolveGeminiDaemonSpawnPrerequisites(params);
-  return result.allowed
-    ? { ok: true as const }
-    : {
-      ok: false as const,
-      ...(result.reasonCode ? { reasonCode: result.reasonCode } : {}),
-      errorMessage: result.errorMessage ?? 'Gemini ACP credentials are unavailable.',
-    };
-}
+import { createGeminiConnectedServiceRuntimeAuthAdapter } from '../connectedServices/runtimeAuthAdapter.js';
 
 export const GEMINI_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
   agentId: 'gemini',
@@ -46,9 +33,6 @@ export const GEMINI_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
       }),
     },
   },
-  daemonSpawnHooks: {
-    resolveRuntimePrerequisites: resolveGeminiCatalogDaemonSpawnPrerequisites,
-  },
   connectedServices: {
     serviceIds: GEMINI_SUPPORTED_CONNECTED_SERVICE_IDS,
     materializedHomeCredentialEntries: GEMINI_MATERIALIZED_HOME_CREDENTIAL_ENTRIES,
@@ -57,15 +41,13 @@ export const GEMINI_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
     materializeAuthEnvironment: materializeGeminiAuthEnvironment,
     stateSharingDescriptor: geminiConnectedServiceStateSharingDescriptor,
     quotaFetcherDescriptor: geminiConnectedServiceQuotaFetcherContribution,
+    runtimeAuthAdapter: createGeminiConnectedServiceRuntimeAuthAdapter(),
     recoveryCapabilities: {
       predictiveSoftSwitch: { mode: 'unsupported' },
+      generationApplicationScope: 'per_session_runtime',
     },
     shouldRestartForServiceSwitch: (selection: unknown) => readGeminiConnectedServiceId(selection) !== null,
     restartRematerializeRequiredReason: 'gemini_auth_environment_rematerialization_required',
-  },
-  runtimeControl: {
-    connectedServices: {
-      verifyResumeReachable: verifyResumeReachableGemini,
-    },
+    verifyResumeReachable: verifyResumeReachableGemini,
   },
 } as const);

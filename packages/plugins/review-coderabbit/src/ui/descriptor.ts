@@ -23,7 +23,7 @@ export const CODERABBIT_UI_DESCRIPTOR = Object.freeze({
     },
     picker: {
       iconName: 'git-pull-request-outline',
-      cliGlyphTokenId: 'agentGlyph.coderabbit',
+      cliGlyph: 'CR',
       cliGlyphScale: 0.9,
       profileCompatibilityGlyphScale: 0.9,
     },
@@ -33,7 +33,6 @@ export const CODERABBIT_UI_DESCRIPTOR = Object.freeze({
     },
     icon: { assetId: null },
   },
-  settings: {},
   behavior: {},
   session: {},
   message: {},

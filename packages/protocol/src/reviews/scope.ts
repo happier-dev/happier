@@ -4,7 +4,7 @@ import {
   ScmBackendIdSchema,
   ScmEntryKindSchema,
   ScmRepoModeSchema,
-} from '../scm.js';
+} from '../scm/index.js';
 
 export const ReviewScmScopeDiagnosticCodeV1Schema = z.enum([
   'invalid_path',

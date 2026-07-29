@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { accountSettingsParse } from './accountSettings.js';
+import { accountSettingsParse, isExpoPushNotificationChannelEnabled } from './accountSettings.js';
 import { resolveConnectedServicesProviderStateSharingPolicyV1 } from './connectedServicesSettings.js';
 import {
   isActionEnabledByActionsSettings,
@@ -845,5 +845,40 @@ describe('accountSettings', () => {
     });
 
     expect(parsed.workspaceRefsV1).toEqual([]);
+  });
+});
+
+describe('isExpoPushNotificationChannelEnabled', () => {
+  it('treats an account with no notification settings as push-enabled', () => {
+    expect(isExpoPushNotificationChannelEnabled({})).toBe(true);
+  });
+
+  it('honors the legacy pushEnabled flag through the attention delivery policy', () => {
+    expect(isExpoPushNotificationChannelEnabled({
+      notificationsSettingsV1: { v: 1, pushEnabled: false },
+    })).toBe(false);
+  });
+
+  it('reads the explicit attention delivery policy when one is configured', () => {
+    expect(isExpoPushNotificationChannelEnabled({
+      notificationsSettingsV1: { v: 1, pushEnabled: true },
+      attentionDeliveryPolicyV1: { v: 1, channels: { expo_push: { enabled: false } } },
+    })).toBe(false);
+  });
+
+  it('lets an explicit attention delivery policy re-enable push over a legacy opt-out', () => {
+    expect(isExpoPushNotificationChannelEnabled({
+      notificationsSettingsV1: { v: 1, pushEnabled: false },
+      attentionDeliveryPolicyV1: { v: 1, channels: { expo_push: { enabled: true } } },
+    })).toBe(true);
+  });
+
+  it('does not treat a local notification channel as Expo push enablement', () => {
+    expect(isExpoPushNotificationChannelEnabled({
+      attentionDeliveryPolicyV1: {
+        v: 1,
+        channels: { expo_push: { enabled: false }, local_notification: { enabled: true } },
+      },
+    })).toBe(false);
   });
 });

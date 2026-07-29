@@ -1,25 +1,15 @@
-import {
-  buildAgentSettingsDefaults,
-  defineAgentSettingsContribution,
-  agentSettingsContributionToUiDescriptor,
-} from '@happier-dev/plugin-sdk/experimental/manifest/agentSettings';
+import type { PluginSettingsContribution } from '@happier-dev/plugin-sdk/manifest';
 
-export const COPILOT_AGENT_SETTINGS_CONTRIBUTION = defineAgentSettingsContribution({
-  id: 'copilot.agentSettings.v1',
-  agentId: 'copilot',
+export const COPILOT_AGENT_SETTINGS_CONTRIBUTION = {
+  id: 'agent-settings',
+  version: 1,
+  title: { key: 'settingsAgents.plugins.copilot.title', fallback: 'Copilot' },
+  target: { kind: 'agent', agent: 'copilot' },
+  scope: 'synced',
   fields: [],
-  ui: {
-    title: { key: 'settingsAgents.plugins.copilot.title' },
+  presentation: {
     icon: { ionName: 'logo-github', color: { kind: 'theme', token: 'blue' } },
-    subagentSettingsSections: [],
+    subagentSections: [],
     sections: [],
   },
-});
-
-export const COPILOT_AGENT_SETTINGS_DEFAULTS = buildAgentSettingsDefaults(
-  COPILOT_AGENT_SETTINGS_CONTRIBUTION,
-);
-
-export const COPILOT_AGENT_SETTINGS_DESCRIPTOR = agentSettingsContributionToUiDescriptor(
-  COPILOT_AGENT_SETTINGS_CONTRIBUTION,
-);
+} satisfies PluginSettingsContribution;

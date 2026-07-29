@@ -37,7 +37,7 @@ describe('intent session-state bindings', () => {
     })).toEqual({ v: 1, updatedAt: 11, modelId: null });
   });
 
-  it('writes canonical model intent only, with bumped stale updates and clear tombstones', () => {
+  it('removes stale legacy model state for provider-bound intent while projecting native and clear intent', () => {
     const base = {
       modelOverrideV1: { v: 1, updatedAt: 10, modelId: 'gpt-4' },
     };
@@ -52,7 +52,6 @@ describe('intent session-state bindings', () => {
       },
     });
     expect(changed).toEqual({
-      modelOverrideV1: { v: 1, updatedAt: 10, modelId: 'gpt-4' },
       modelSelectionIntentV1: {
         v: 1,
         updatedAt: 11,
@@ -70,8 +69,30 @@ describe('intent session-state bindings', () => {
       selection: null,
     });
     expect(cleared).toEqual({
-      modelOverrideV1: { v: 1, updatedAt: 10, modelId: 'gpt-4' },
+      modelOverrideV1: { v: 1, updatedAt: 12, modelId: 'default' },
       modelSelectionIntentV1: { v: 1, updatedAt: 12, selection: null },
+    });
+
+    const native = writeModelIntentToMetadata(cleared, {
+      v: 1,
+      updatedAt: 13,
+      selection: {
+        agentTargetKey: 'agent:codex',
+        providerConnectionId: null,
+        modelId: 'native/model',
+      },
+    });
+    expect(native).toEqual({
+      modelOverrideV1: { v: 1, updatedAt: 13, modelId: 'native/model' },
+      modelSelectionIntentV1: {
+        v: 1,
+        updatedAt: 13,
+        selection: {
+          agentTargetKey: 'agent:codex',
+          providerConnectionId: null,
+          modelId: 'native/model',
+        },
+      },
     });
   });
 
@@ -398,7 +419,7 @@ describe('intent session-state metadata updater', () => {
     });
 
     expect(updater({ modelOverrideV1: { v: 1, modelId: 'gpt-4', updatedAt: 10 } })).toEqual({
-      modelOverrideV1: { v: 1, modelId: 'gpt-4', updatedAt: 10 },
+      modelOverrideV1: { v: 1, modelId: 'gpt-5', updatedAt: 20 },
       modelSelectionIntentV1: {
         v: 1,
         updatedAt: 20,

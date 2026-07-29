@@ -8,7 +8,7 @@ import {
   type ScmPullRequestOpenOrReuseRequest,
   type ScmPullRequestSummary,
   type ScmWorkingSnapshot,
-} from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm';
 
 import type { ScmBackendContext } from '../types.js';
 import { createPrStatusCache } from '../hostingProviders/prStatusCache.js';
@@ -470,6 +470,63 @@ describe('git pull request open-or-reuse operation', () => {
             headBranch: 'feature/scm-pr-6',
             state: 'open',
         })).toBeNull();
+    });
+
+    it('does not reuse or publish auth-sensitive open PR rows without a safe auth identity key', async () => {
+        const cache = createPrStatusCache({ now: () => 1000 });
+        const priorPullRequest = createPullRequest({
+            number: 41,
+            title: 'Prior account row',
+            url: 'https://github.com/happier-dev/happier/pull/41',
+        });
+        const currentPullRequest = createPullRequest();
+        cache.setSuccess({
+            key: {
+                workspaceKey: context.projectKey,
+                repoRootPath: '/repo',
+                provider,
+                baseBranch: 'main',
+                headBranch: 'feature/scm-pr-6',
+                state: 'open',
+            },
+            pullRequests: [priorPullRequest],
+        });
+        const listPullRequests = vi.fn(async () => [currentPullRequest]);
+        const operation = createGitPullRequestOpenOrReuseOperation({
+            cache,
+            registry: createRegistry({
+                getPullRequestAuthProfileKey: () => null,
+                listPullRequests,
+                createPullRequest: vi.fn(),
+            }),
+            readSnapshot: async () => createSnapshot(),
+            now: () => 1000,
+        });
+
+        await expect(operation.openOrReuse({
+            context,
+            request: {
+                cwd: '/repo',
+                base: 'main',
+                title: 'Open PR',
+            },
+        })).resolves.toMatchObject({
+            success: true,
+            reused: true,
+            pullRequest: currentPullRequest,
+        });
+        expect(listPullRequests).toHaveBeenCalledOnce();
+        expect(cache.getFresh({
+            workspaceKey: context.projectKey,
+            repoRootPath: '/repo',
+            provider,
+            baseBranch: 'main',
+            headBranch: 'feature/scm-pr-6',
+            state: 'open',
+        })).toMatchObject({
+            kind: 'success',
+            pullRequests: [priorPullRequest],
+        });
     });
 
     it('returns model-derived default-branch actions before publishing or creating a PR', async () => {

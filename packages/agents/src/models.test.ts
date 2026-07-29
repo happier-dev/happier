@@ -88,7 +88,7 @@ describe('agent model config', () => {
     });
     expect(claude.staticModels?.map((model) => model.id)).toEqual(claude.allowedModes);
     expect(gemini.staticModels?.map((model) => model.id)).toEqual(gemini.allowedModes);
-    expect(claudeModels[0]).toMatchObject({
+    expect(claudeModels.find((model) => model.id === 'claude-fable-5')).toMatchObject({
       id: 'claude-fable-5',
       name: 'Fable 5',
       description: expect.any(String),

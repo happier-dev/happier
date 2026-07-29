@@ -1,4 +1,4 @@
-import type { ExecRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
+import type { PluginExecService } from '@happier-dev/plugin-sdk/runtime';
 
 export type AuggiePreflightModel = Readonly<{
   id: string;
@@ -58,25 +58,29 @@ export function buildAuggiePreflightModelsFromModelListJson(outputRaw: string): 
 }
 
 export async function probeAuggiePreflightModelsRaw(params: Readonly<{
-  exec: ExecRuntimeServiceV1;
+  exec: PluginExecService;
   cwd: string;
   timeoutMs: number;
   env?: NodeJS.ProcessEnv;
 }>): Promise<readonly AuggiePreflightModel[] | null> {
-  const result = await params.exec.run({
-    kind: 'agent-cli',
-    agentId: 'auggie',
-    args: AUGGIE_CLI_MODELS_COMMAND_ARGS,
+  const resolved = await params.exec.systemTools.resolve({
+    toolId: 'auggie-cli',
+    purpose: 'Probe Auggie models',
     cwd: params.cwd,
-    env: buildAuggiePreflightEnv(params.env),
-  }, {
+  });
+  const result = await params.exec.run({
+    executable: resolved.executable,
+    args: AUGGIE_CLI_MODELS_COMMAND_ARGS,
+    cwd: { root: 'workspace', relativePath: '' },
+    env: { ...buildAuggiePreflightEnv(params.env), CI: '1' },
     maxStderrBytes: PREFLIGHT_OUTPUT_MAX_BYTES,
     maxStdoutBytes: PREFLIGHT_OUTPUT_MAX_BYTES,
     timeoutMs: Math.max(MIN_PREFLIGHT_MODELS_TIMEOUT_MS, params.timeoutMs),
   });
-  if (result.exitCode !== 0) return null;
-  return buildAuggiePreflightModelsFromModelListJson(result.stdout)
-    ?? buildAuggiePreflightModelsFromModelListJson(result.stderr);
+  if (result.termination.observed.kind !== 'exit' || result.termination.observed.exitCode !== 0) return null;
+  const decoder = new TextDecoder();
+  return buildAuggiePreflightModelsFromModelListJson(decoder.decode(result.stdout))
+    ?? buildAuggiePreflightModelsFromModelListJson(decoder.decode(result.stderr));
 }
 
 export const AUGGIE_PREFLIGHT_SESSION_CONTROLS = Object.freeze({

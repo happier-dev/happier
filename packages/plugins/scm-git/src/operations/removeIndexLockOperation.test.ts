@@ -8,7 +8,7 @@ import {
   SCM_OPERATION_ERROR_CODES,
   type ScmRepositoryRemoveIndexLockRequest,
   type ScmRepositoryRemoveIndexLockResponse,
-} from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createGitBackend } from '../backend.js';

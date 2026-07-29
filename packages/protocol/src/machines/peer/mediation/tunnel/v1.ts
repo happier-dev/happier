@@ -4,7 +4,8 @@ import { decodeBase64 } from '../../../../crypto/base64.js';
 import { PeerRouteNonceProofV1Schema, type PeerRouteNonceProofV1 } from '../directRouteGrantNonceV1.js';
 import { SignedDirectRouteGrantV1Schema, type SignedDirectRouteGrantV1 } from '../directRouteGrantV1.js';
 import {
-  PeerTcpTunnelRelayAuthorizationV1Schema,
+  PeerTcpTunnelRelayAuthorizationSchema,
+  type PeerTcpTunnelRelayAuthorization,
   type PeerTcpTunnelRelayAuthorizationV1,
 } from './authorization.js';
 import { PeerTcpTunnelEncodingSchema } from './encoding.js';
@@ -43,7 +44,7 @@ export const PeerTcpTunnelOpenV1Schema = z
     destination: PeerTcpTunnelDestinationV1Schema,
     grant: SignedDirectRouteGrantV1Schema.optional(),
     nonceProof: PeerRouteNonceProofV1Schema.optional(),
-    relayAuthorization: PeerTcpTunnelRelayAuthorizationV1Schema.optional(),
+    relayAuthorization: PeerTcpTunnelRelayAuthorizationSchema.optional(),
     supportedEncodings: z.array(PeerTcpTunnelEncodingSchema).min(1).optional(),
     selectedEncoding: PeerTcpTunnelEncodingSchema.optional(),
     allowV1Fallback: z.boolean().optional(),
@@ -196,3 +197,4 @@ export function validatePeerTcpTunnelDataFrameCaps(input: Readonly<{
 export type PeerTcpTunnelOpenGrantV1 = SignedDirectRouteGrantV1;
 export type PeerTcpTunnelOpenNonceProofV1 = PeerRouteNonceProofV1;
 export type PeerTcpTunnelOpenRelayAuthorizationV1 = PeerTcpTunnelRelayAuthorizationV1;
+export type PeerTcpTunnelOpenRelayAuthorization = PeerTcpTunnelRelayAuthorization;

@@ -1,12 +1,13 @@
-import type { PluginContextV1 } from '@happier-dev/plugin-sdk';
-
 import {
   buildDefaultPermissionHookResponse,
   readPermissionHookEventName,
   type PermissionHookData,
   type PermissionHookResponse,
 } from '../../../hooks/protocol.js';
-import { createClaudePermissionEngine } from '../../../permissions/createClaudePermissionEngine.js';
+import {
+  createClaudePermissionEngine,
+  type ClaudePermissionContext,
+} from '../../../permissions/createClaudePermissionEngine.js';
 import type { PermissionResult } from '../../../sdk/types.js';
 
 function readString(value: unknown): string | null {
@@ -63,7 +64,7 @@ function buildPermissionResponse(
 }
 
 export function createClaudeUnifiedPermissionHookHandler(
-  ctx: PluginContextV1,
+  ctx: ClaudePermissionContext,
 ): (data: PermissionHookData) => Promise<PermissionHookResponse> {
   const permissionEngine = createClaudePermissionEngine(ctx);
   return async (data) => {

@@ -8,7 +8,7 @@ export const CODEX_UI_DESCRIPTOR = Object.freeze({
     subtitleKey: 'profiles.aiBackend.codexSubtitle',
     permissionModeI18nPrefix: 'agentInput.codexPermissionMode',
     availability: { experimental: false },
-    connectedService: { serviceId: 'openai', labelKey: 'agentInput.agent.codex', connectRoute: null },
+    connectedService: { serviceId: 'openai', labelKey: 'agentInput.connectedServiceLabel.codex', connectRoute: null },
     flavorAliases: ['codex', 'codex-acp', 'codex-mcp', 'openai', 'gpt'],
     permissions: {
       modeGroup: 'codexLike',
@@ -24,7 +24,7 @@ export const CODEX_UI_DESCRIPTOR = Object.freeze({
     },
     picker: {
       iconName: 'terminal-outline',
-      cliGlyphTokenId: 'agentGlyph.codex',
+      cliGlyph: '꩜',
       cliGlyphScale: 0.92,
       profileCompatibilityGlyphScale: 0.82,
     },
@@ -34,7 +34,6 @@ export const CODEX_UI_DESCRIPTOR = Object.freeze({
     },
     icon: { assetId: 'codex' },
   },
-  settings: {},
   behavior: {
     guidance: { includeInSessionGettingStartedCliExamples: true },
     // Cold-start context windows use the RAW catalog `context_window` values (see
@@ -79,6 +78,14 @@ export const CODEX_UI_DESCRIPTOR = Object.freeze({
             profileIdField: 'connectedServiceProfileId',
           },
         ],
+        lockedConnectedServiceSource: {
+          serviceId: 'openai-codex',
+          keyPrefix: 'codex:connected-service',
+          source: { kind: 'codexHome', home: 'connectedService' },
+          serviceIdField: 'connectedServiceId',
+          profileIdField: 'connectedServiceProfileId',
+          groupIdField: 'connectedServiceGroupId',
+        },
         compatibleSource: {
           sourceKind: 'codexHome',
           optionalFields: [
@@ -204,15 +211,13 @@ export const CODEX_UI_DESCRIPTOR = Object.freeze({
           { path: ['codexRuntimeDescriptorV1', 'backendMode'] },
           { path: ['affinity', 'backendMode'] },
           { path: ['codexBackendMode'] },
-          { path: ['directSessionV1', 'codexBackendMode'] },
+          {
+            path: ['directSessionV1', 'codexBackendMode'],
+            required: { path: ['directSessionV1', 'providerId'], equals: 'codex' },
+          },
           {
             path: ['externalSessionV1', 'codexBackendMode'],
             required: { path: ['externalSessionV1', 'agentId'], equals: 'codex' },
-          },
-          {
-            // legacy `providerId` external-link read-compat (pre-rename persisted metadata)
-            path: ['externalSessionV1', 'codexBackendMode'],
-            required: { path: ['externalSessionV1', 'providerId'], equals: 'codex' },
           },
         ],
         persistedGoalSnapshot: {
@@ -300,15 +305,13 @@ export const CODEX_UI_DESCRIPTOR = Object.freeze({
           { path: ['codexRuntimeDescriptorV1', 'backendMode'] },
           { path: ['affinity', 'backendMode'] },
           { path: ['codexBackendMode'] },
-          { path: ['directSessionV1', 'codexBackendMode'] },
+          {
+            path: ['directSessionV1', 'codexBackendMode'],
+            required: { path: ['directSessionV1', 'providerId'], equals: 'codex' },
+          },
           {
             path: ['externalSessionV1', 'codexBackendMode'],
             required: { path: ['externalSessionV1', 'agentId'], equals: 'codex' },
-          },
-          {
-            // legacy `providerId` external-link read-compat (pre-rename persisted metadata)
-            path: ['externalSessionV1', 'codexBackendMode'],
-            required: { path: ['externalSessionV1', 'providerId'], equals: 'codex' },
           },
         ],
       },

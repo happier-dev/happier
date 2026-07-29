@@ -6,9 +6,11 @@ import {
   ExecutionRunTurnStreamStartResponseSchema,
 } from '../../execution/runs/index.js';
 import { TurnIdSchema } from '../idsV1.js';
+import { PendingLocalIdSchema } from '../pending/pendingLocalId.js';
+import { ExternalSessionStorageStateV1Schema } from '../external/operationV1.js';
 import { SubAgentRunResultV2Schema } from '../../tools/v2/index.js';
 import { AccountEncryptionModeSchema } from '../../features/payload/capabilities/encryptionCapabilities.js';
-import { ActionDefinitionIdV1Schema, ActionDefinitionSummaryV1Schema } from '../../extensions/actionDefinitionV1.js';
+import { ActionDefinitionIdV1Schema, ActionDefinitionSummaryV1Schema } from '../../actions/actionDefinitionV1.js';
 import {
   PrimaryTurnStatusV1Schema,
   SessionRuntimeTemporaryThrottleDetailsV1Schema,
@@ -28,10 +30,6 @@ import {
   createConnectedServiceMaterializationIdentityV1Schema,
 } from '../metadata/connectedServiceMaterializationIdentityV1.js';
 import {
-  SESSION_CONTINUATION_RECOVERY_METADATA_KEY,
-  SessionContinuationRecoveryV1Schema,
-} from '../metadata/sessionContinuationRecoveryV1.js';
-import {
   SESSION_PENDING_QUEUE_HOLD_METADATA_KEY,
   SessionPendingQueueHoldV1Schema,
 } from '../metadata/sessionPendingQueueHoldV1.js';
@@ -40,19 +38,34 @@ import {
   ProviderAccountUsageRefsV1Schema,
 } from '../metadata/providerAccountUsageRefsV1.js';
 import {
+  SessionMetadataRecipientProjectionV1Schema,
+  isSessionOwnerMetadataCiphertextV1,
+} from '../metadata/sessionMetadataEnvelopesV1.js';
+import {
   SESSION_RUNNER_RUNTIME_METADATA_KEY,
   SessionRunnerRuntimeStateV1Schema,
 } from './sessionRunnerRuntimeV1.js';
-import { SessionRuntimeActivitySourceClassV1Schema } from '../runtime/activity/index.js';
+import {
+  parseSessionRuntimeActivityProjectionFields,
+  SessionRuntimeActivityStateSchema,
+} from '../runtime/activity/index.js';
 export {
+  ExactSessionTurnEndMutationV1Schema,
+  ExactSessionTurnMutationPositiveReceiptV1Schema,
   SessionTurnLifecycleStatusV1Schema,
   SessionTurnMutationActionV1Schema,
   SessionTurnMutationV1Schema,
+  SessionTurnProviderCheckpointV1Schema,
   SessionTurnRollbackStateV1Schema,
   SessionTurnTranscriptAnchorsV1Schema,
+  isExactSessionTurnEndMutationV1,
+  isExactSessionTurnMutationPositiveReceiptV1,
+  type ExactSessionTurnEndMutationV1,
+  type ExactSessionTurnMutationPositiveReceiptV1,
   type SessionTurnLifecycleStatusV1,
   type SessionTurnMutationActionV1,
   type SessionTurnMutationV1,
+  type SessionTurnProviderCheckpointV1,
   type SessionTurnRollbackStateV1,
   type SessionTurnTranscriptAnchorsV1,
 } from '../turns/sessionTurnMutationV1.js';
@@ -90,19 +103,6 @@ export {
   type SessionUsageLimitRecoveryOperationResultOkStatusV1,
   type SessionUsageLimitRecoveryOperationResultV1,
 } from './sessionUsageLimitRecoveryOperationResultV1.js';
-export {
-  SESSION_CONTINUATION_RECOVERY_METADATA_KEY,
-  SessionContinuationRecoveryAttemptStatusV1Schema,
-  SessionContinuationRecoveryAttemptV1Schema,
-  SessionContinuationRecoveryV1Schema,
-  SessionContinuationResumePromptModeV1Schema,
-  isSessionContinuationRecoveryBlockingPendingDrain,
-  readSessionContinuationRecoveryFromMetadata,
-  type SessionContinuationRecoveryAttemptStatusV1,
-  type SessionContinuationRecoveryAttemptV1,
-  type SessionContinuationRecoveryV1,
-  type SessionContinuationResumePromptModeV1,
-} from '../metadata/sessionContinuationRecoveryV1.js';
 export {
   SESSION_PENDING_QUEUE_HOLD_METADATA_KEY,
   SessionPendingQueueHoldEntryV1Schema,
@@ -226,12 +226,12 @@ export const SessionSummarySchema = z.object({
   latestTurnStatus: PrimaryTurnStatusV1Schema.nullable().optional(),
   latestTurnStatusObservedAt: z.number().int().nonnegative().nullable().optional(),
   lastRuntimeIssue: SessionRuntimeIssueV1Schema.nullable().optional(),
+  runtimeActivityState: SessionRuntimeActivityStateSchema.optional(),
   runtimeActivityActiveCount: z.number().int().nonnegative().optional(),
   runtimeActivityObservedAt: z.number().int().nonnegative().nullable().optional(),
-  runtimeActivityExpiresAt: z.number().int().nonnegative().nullable().optional(),
-  runtimeActivitySourceClass: SessionRuntimeActivitySourceClassV1Schema.nullable().optional(),
+  runtimeActivityRevision: z.number().int().nonnegative().optional(),
   rollbackEligibleTurnStarts: z.array(z.number().int().nonnegative()).optional(),
-}).passthrough();
+}).passthrough().superRefine(refineRuntimeActivityProjectionFields);
 export type SessionSummary = z.infer<typeof SessionSummarySchema>;
 
 /**
@@ -250,13 +250,17 @@ export function createSessionSystemSessionV1Schema(zod: typeof z) {
 export const SessionSystemSessionV1Schema = createSessionSystemSessionV1Schema(z);
 export type SessionSystemSessionV1 = z.infer<typeof SessionSystemSessionV1Schema>;
 
+export const VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_TAG =
+  'system:voice-transcript-history:v1';
+export const VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_KEY =
+  'voice_transcript_history';
+
 export function createSessionMetadataSchema(zod: typeof z) {
   return zod
     .object({
       systemSessionV1: createSessionSystemSessionV1Schema(zod).optional(),
       [SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]: SessionUsageLimitRecoveryV1Schema.optional(),
       [SESSION_RUNNER_RUNTIME_METADATA_KEY]: SessionRunnerRuntimeStateV1Schema.optional(),
-      [SESSION_CONTINUATION_RECOVERY_METADATA_KEY]: SessionContinuationRecoveryV1Schema.optional(),
       [SESSION_PENDING_QUEUE_HOLD_METADATA_KEY]: SessionPendingQueueHoldV1Schema.optional(),
       [PROVIDER_ACCOUNT_USAGE_REFS_METADATA_KEY]: ProviderAccountUsageRefsV1Schema.optional(),
       [CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_METADATA_KEY]:
@@ -312,12 +316,77 @@ export const SessionShareSchema = z
   .passthrough();
 export type SessionShare = z.infer<typeof SessionShareSchema>;
 
-export const SessionCatchUpAuthorizationV1Schema = z.enum([
-  'explicit_cursor',
-  'reconnect_watermark',
-  'startup_recovery',
-]);
-export type SessionCatchUpAuthorizationV1 = z.infer<typeof SessionCatchUpAuthorizationV1Schema>;
+function refineV2SessionMetadataRecipientFields(
+  value: Readonly<{
+    metadata: string;
+    metadataVersion: number;
+    metadataLayoutVersion?: number;
+    ownerMetadata?: string | null;
+    agentState?: string | null;
+    agentStateVersion?: number;
+  }>,
+  context: z.RefinementCtx,
+): void {
+  const metadataLayoutVersion = value.metadataLayoutVersion ?? 0;
+  if (metadataLayoutVersion !== 0 && metadataLayoutVersion !== 1) {
+    context.addIssue({
+      code: 'custom',
+      path: ['metadataLayoutVersion'],
+      message: 'Unsupported Session metadata layout',
+    });
+    return;
+  }
+
+  const hasAgentState = Object.hasOwn(value, 'agentState');
+  const hasAgentStateVersion = Object.hasOwn(value, 'agentStateVersion');
+  if (metadataLayoutVersion === 0) {
+    if (Object.hasOwn(value, 'ownerMetadata')) {
+      context.addIssue({
+        code: 'custom',
+        path: ['ownerMetadata'],
+        message: 'Layout-zero compatibility records cannot carry owner metadata',
+      });
+    }
+    if (!hasAgentState) {
+      context.addIssue({
+        code: 'custom',
+        path: ['agentState'],
+        message: 'Layout-zero compatibility records require Agent state',
+      });
+    }
+    if (!hasAgentStateVersion) {
+      context.addIssue({
+        code: 'custom',
+        path: ['agentStateVersion'],
+        message: 'Layout-zero compatibility records require an Agent-state version',
+      });
+    }
+    return;
+  }
+
+  const projection = {
+    metadata: value.metadata,
+    metadataVersion: value.metadataVersion,
+    metadataLayoutVersion,
+    ...(value.ownerMetadata !== undefined
+      ? { ownerMetadata: value.ownerMetadata }
+      : {}),
+    ...(hasAgentState ? { agentState: value.agentState } : {}),
+    ...(hasAgentStateVersion
+      ? { agentStateVersion: value.agentStateVersion }
+      : {}),
+  };
+  const parsed = SessionMetadataRecipientProjectionV1Schema.safeParse(projection);
+  if (!parsed.success) {
+    for (const issue of parsed.error.issues) {
+      context.addIssue({
+        code: 'custom',
+        path: issue.path,
+        message: issue.message,
+      });
+    }
+  }
+}
 
 export const V2SessionRecordSchema = z
   .object({
@@ -332,8 +401,10 @@ export const V2SessionRecordSchema = z
     encryptionMode: AccountEncryptionModeSchema.optional(),
     metadata: z.string(),
     metadataVersion: z.number().int().nonnegative(),
-    agentState: z.string().nullable(),
-    agentStateVersion: z.number().int().nonnegative(),
+    metadataLayoutVersion: z.number().int().nonnegative().optional(),
+    ownerMetadata: z.string().refine(isSessionOwnerMetadataCiphertextV1).nullable().optional(),
+    agentState: z.string().nullable().optional(),
+    agentStateVersion: z.number().int().nonnegative().optional(),
     lastViewedSessionSeq: z.number().int().nonnegative().nullable().optional(),
     pendingPermissionRequestCount: z.number().int().min(0).optional(),
     pendingUserActionRequestCount: z.number().int().min(0).optional(),
@@ -347,25 +418,72 @@ export const V2SessionRecordSchema = z
     latestTurnStatus: PrimaryTurnStatusV1Schema.nullable().optional(),
     latestTurnStatusObservedAt: z.number().int().nonnegative().nullable().optional(),
     lastRuntimeIssue: SessionRuntimeIssueV1Schema.nullable().optional(),
-    initialTranscriptCatchUpAuthorization: SessionCatchUpAuthorizationV1Schema.optional(),
+    runtimeActivityState: SessionRuntimeActivityStateSchema.optional(),
     runtimeActivityActiveCount: z.number().int().nonnegative().optional(),
     runtimeActivityObservedAt: z.number().int().nonnegative().nullable().optional(),
-    runtimeActivityExpiresAt: z.number().int().nonnegative().nullable().optional(),
-    runtimeActivitySourceClass: SessionRuntimeActivitySourceClassV1Schema.nullable().optional(),
+    runtimeActivityRevision: z.number().int().nonnegative().optional(),
     rollbackEligibleTurnStarts: z.array(z.number().int().nonnegative()).optional(),
     latestReadyEventSeq: z.number().int().nonnegative().nullable().optional(),
     latestReadyEventAt: z.number().int().nonnegative().nullable().optional(),
     thinking: z.boolean().optional(),
     thinkingAt: z.number().int().nonnegative().nullable().optional(),
+    currentStorageState: ExternalSessionStorageStateV1Schema.optional(),
+    acceptedThroughServerSeq: z.number().int().nonnegative().nullable().optional(),
+    materializedThroughSourceAt: z.number().int().nonnegative().nullable().optional(),
+    publishedThroughServerSeq: z.number().int().nonnegative().nullable().optional(),
   })
-  .passthrough();
+  .passthrough()
+  .superRefine(refineV2SessionMetadataRecipientFields)
+  .superRefine(refineRuntimeActivityProjectionFields);
 export type V2SessionRecord = z.infer<typeof V2SessionRecordSchema>;
+
+export const SESSION_LOOKUP_BY_TAGS_MAX_TAGS_V2 = 4;
+export const SESSION_LOOKUP_BY_TAGS_TAG_MAX_CODE_UNITS_V2 = 256;
+
+const SessionLookupTagV2Schema = z
+  .string()
+  .min(1)
+  .max(SESSION_LOOKUP_BY_TAGS_TAG_MAX_CODE_UNITS_V2);
+
+export const SessionLookupByTagsRequestV2Schema = z
+  .object({
+    tags: z
+      .array(SessionLookupTagV2Schema)
+      .min(1)
+      .max(SESSION_LOOKUP_BY_TAGS_MAX_TAGS_V2)
+      .refine((tags) => new Set(tags).size === tags.length, {
+        message: 'Session lookup tags must be unique',
+      }),
+  })
+  .strict();
+export type SessionLookupByTagsRequestV2 = z.infer<typeof SessionLookupByTagsRequestV2Schema>;
+
+export const SessionLookupByTagsResponseV2Schema = z
+  .object({
+    sessions: z.array(V2SessionRecordSchema).max(SESSION_LOOKUP_BY_TAGS_MAX_TAGS_V2),
+  })
+  .strict();
+export type SessionLookupByTagsResponseV2 = z.infer<typeof SessionLookupByTagsResponseV2Schema>;
+
+function refineRuntimeActivityProjectionFields(
+  value: unknown,
+  context: z.RefinementCtx,
+): void {
+  if (parseSessionRuntimeActivityProjectionFields(value).kind !== 'invalid') return;
+  context.addIssue({
+    code: z.ZodIssueCode.custom,
+    message: 'Runtime Activity projection fields must form one complete valid tuple',
+    path: ['runtimeActivityState'],
+  });
+}
 
 export const V2SessionListResponseSchema = z
   .object({
     sessions: z.array(V2SessionRecordSchema),
     nextCursor: z.string().nullable().optional(),
     hasNext: z.boolean().optional(),
+    attentionNextCursor: z.string().nullable().optional(),
+    attentionHasNext: z.boolean().optional(),
   })
   .passthrough();
 export type V2SessionListResponse = z.infer<typeof V2SessionListResponseSchema>;
@@ -420,6 +538,7 @@ export function decodeV2SessionListCursorV2(cursor: string): V2SessionListCursor
 export const V2SessionByIdResponseSchema = z
   .object({
     session: V2SessionRecordSchema,
+    created: z.boolean().optional(),
   })
   .passthrough();
 export type V2SessionByIdResponse = z.infer<typeof V2SessionByIdResponseSchema>;
@@ -461,7 +580,7 @@ export type SessionCreateResult = z.infer<typeof SessionCreateResultSchema>;
 
 export const SessionSendResultSchema = z.object({
   sessionId: z.string().min(1),
-  localId: z.string().min(1),
+  localId: PendingLocalIdSchema,
   waited: z.boolean(),
 }).passthrough();
 export type SessionSendResult = z.infer<typeof SessionSendResultSchema>;

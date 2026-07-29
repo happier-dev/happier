@@ -8,6 +8,13 @@ export {
   type PeerMachineRpcDirectResponseV1,
 } from './directV1.js';
 export {
+  PEER_MACHINE_RPC_DIRECT_PATH_V2,
+  PeerMachineRpcDirectRequestV2Schema,
+  PeerMachineRpcDirectResponseV2Schema,
+  type PeerMachineRpcDirectRequestV2,
+  type PeerMachineRpcDirectResponseV2,
+} from './directV2.js';
+export {
   PeerMachineRpcCommandReceiptIssuerV1Schema,
   PeerMachineRpcCommandReceiptRequestV1Schema,
   PeerMachineRpcCommandReceiptSuccessV1Schema,
@@ -20,10 +27,10 @@ export {
 export {
   MACHINE_RPC_ROUTE_POLICIES,
   DAEMON_VOICE_AUDIO_RELAY_CAP_PROFILE_ID,
-  DAEMON_VOICE_STT_RELAY_TUNNEL_ID_PREFIX,
-  createDaemonVoiceSttRelayTunnelId,
+  VOICE_MEDIA_RELAY_TUNNEL_ID_PREFIX,
+  createVoiceMediaRelayTunnelId,
   isMachineRpcDirectRoutePolicy,
-  isDaemonVoiceSttRelayTunnelId,
+  isVoiceMediaRelayTunnelId,
   resolveMachineRpcRelayFallbackDecision,
   resolveMachineRpcRoutePolicy,
   validateMachineRpcGrantAllowedMethods,

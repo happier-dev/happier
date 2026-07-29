@@ -7,17 +7,16 @@ import type {
   ScmHostingProviderPullRequestGetInput,
   ScmHostingProviderPullRequestListInput,
   ScmHostingProviderRuntimeServices,
-} from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/experimental/scm/hostingProvider';
 import type {
   ScmHostingProviderRef,
   ScmPullRequestSummary,
-} from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm';
 
 import { resolveGithubCheckoutReferenceFromPullRequest } from './checkoutReference.js';
 import {
   detectGithubCliAuth,
   type GithubCliAuthDetectionResult,
-  type GithubCliCommandResolution,
   type GithubCliCommandRunner,
   resolveGithubCliHost,
 } from './cliDetection.js';
@@ -46,6 +45,7 @@ type GithubCliAuthDetector = (input: Readonly<{
 }>) => Promise<GithubCliAuthDetectionResult>;
 
 const DEFAULT_GITHUB_CLI_PR_TIMEOUT_MS = 30_000;
+const GITHUB_CLI_EXECUTABLE = Object.freeze({ kind: 'systemTool' as const, id: 'github-cli' });
 const GITHUB_CLI_NONINTERACTIVE_ENV = Object.freeze({
   GH_PROMPT_DISABLED: '1',
   GIT_TERMINAL_PROMPT: '0',
@@ -68,29 +68,30 @@ const GITHUB_PR_JSON_FIELDS = [
   'statusCheckRollup',
 ].join(',');
 
-function normalizeRuntimeCommandResolution(
-  result: Awaited<ReturnType<NonNullable<ScmHostingProviderRuntimeServices['resolveInstallableCommand']>>>,
-): GithubCliCommandResolution {
-  if (result.kind === 'available' && (result.source === 'system' || result.source === 'managed')) {
-    return {
-      kind: 'available',
-      source: result.source,
-      binPath: result.binPath,
-    };
-  }
-  return { kind: 'missing' };
+function createRuntimeCommandRunner(
+  runtimeServices?: ScmHostingProviderRuntimeServices,
+): GithubCliCommandRunner | null {
+  const executeCommand = runtimeServices?.executeCommand;
+  if (!executeCommand) return null;
+  return async (request) => await executeCommand({
+    executable: GITHUB_CLI_EXECUTABLE,
+    args: request.args,
+    timeoutMs: request.timeoutMs,
+    ...(request.env ? { env: request.env } : {}),
+  });
 }
 
 function defaultDetectAuth(input: Readonly<{
   providerBaseUrl: string;
   runtimeServices?: ScmHostingProviderRuntimeServices;
 }>): Promise<GithubCliAuthDetectionResult> {
+  const runtimeCommandRunner = createRuntimeCommandRunner(input.runtimeServices);
   return detectGithubCliAuth({
     providerBaseUrl: input.providerBaseUrl,
-    resolveCommand: async () => input.runtimeServices?.resolveInstallableCommand
-      ? normalizeRuntimeCommandResolution(await input.runtimeServices.resolveInstallableCommand({ capabilityId: 'dep.gh' }))
+    resolveCommand: async () => runtimeCommandRunner
+      ? { kind: 'available', source: 'system', binPath: 'github-cli' }
       : { kind: 'missing' },
-    runCommand: input.runtimeServices?.runCommand ?? (async () => ({ ok: false, stdout: '', stderr: '', exitCode: null })),
+    runCommand: runtimeCommandRunner ?? (async () => ({ ok: false, stdout: '', stderr: '', exitCode: null })),
   });
 }
 
@@ -207,7 +208,7 @@ export function createGithubCliAdapter(params?: Readonly<{
     runtimeServices?: ScmHostingProviderRuntimeServices,
   ): Promise<string> {
     const auth = await resolveAuthenticatedCommand(provider, runtimeServices);
-    const commandRunner = runtimeServices?.runCommand ?? runCommand;
+    const commandRunner = createRuntimeCommandRunner(runtimeServices) ?? runCommand;
     const result = await commandRunner({
       binPath: auth.binPath,
       args,

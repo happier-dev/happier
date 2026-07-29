@@ -3,7 +3,6 @@ import {
   normalizeCodexBackendMode,
   readCodexAgentRuntimeDescriptorV1,
 } from '../protocol/runtimeDescriptorV1.js';
-
 export const CODEX_UI_BEHAVIOR_OVERRIDE = {
   payload: {
     buildBackendTransportFields: ({

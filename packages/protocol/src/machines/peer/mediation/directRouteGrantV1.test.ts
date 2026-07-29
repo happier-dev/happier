@@ -96,6 +96,35 @@ describe('DirectRouteGrantV1', () => {
     });
   });
 
+  it('accepts a daemon Voice STT scope without granting generic TCP ports', () => {
+    const parsed = DirectRouteGrantPayloadV1Schema.parse({
+      ...basePayload,
+      flowKind: 'voice_media',
+      scope: {
+        kind: 'voice_media',
+        tunnelId: 'voice-tunnel-1',
+        applicationKind: 'speech_transcription',
+        applicationAttemptId: 'attempt-1',
+        applicationAuthorityDigest: `sha256:${'ab'.repeat(32)}`,
+        maxIdleMs: 30_000,
+        maxDurationMs: 600_000,
+        maxTotalBytes: 8_388_608,
+      },
+    });
+
+    expect(parsed.scope).toEqual({
+      kind: 'voice_media',
+      tunnelId: 'voice-tunnel-1',
+      applicationKind: 'speech_transcription',
+      applicationAttemptId: 'attempt-1',
+      applicationAuthorityDigest: `sha256:${'ab'.repeat(32)}`,
+      maxIdleMs: 30_000,
+      maxDurationMs: 600_000,
+      maxTotalBytes: 8_388_608,
+    });
+    expect('allowedPorts' in parsed.scope).toBe(false);
+  });
+
   it('creates deterministic canonical signing input independent of insertion order', () => {
     const reorderedPayload = {
       exp: basePayload.exp,

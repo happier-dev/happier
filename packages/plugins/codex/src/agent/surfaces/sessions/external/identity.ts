@@ -1,18 +1,24 @@
 import {
   createSessionStateSyncEngine,
+  buildLinkedExternalSessionMetadataV1,
+  readRuntimeDescriptorV1FromMetadata,
+  removeLinkedExternalSessionMetadataV1,
   resolveFingerprintPublication,
   rollbackFingerprintPublication,
   type MetadataUpdatePort,
   type SessionStateFieldWriteValue,
-} from '@happier-dev/plugin-sdk/sessions';
+} from '@happier-dev/plugin-sdk/experimental/sessions';
+import {
+  readLinkedExternalSessionV1FromMetadata,
+  type LinkedExternalSessionV1,
+} from '@happier-dev/protocol';
 import type {
   ExternalSessionsSource,
   RuntimeDescriptorMetadataCarrier,
   RuntimeDescriptorV1,
   SessionMetadata,
   SessionStateCapabilitiesV1,
-} from '@happier-dev/plugin-sdk/sessions';
-import { applyRuntimeDescriptorSessionMetadata } from '@happier-dev/plugin-sdk/sessions';
+} from '@happier-dev/plugin-sdk/experimental/sessions';
 
 import { readCanonicalCodexRuntimeDescriptorV1 } from '../../../identity/runtimeDescriptor.js';
 import {
@@ -22,25 +28,12 @@ import {
 } from '../../../../protocol/runtimeDescriptorV1.js';
 import { inferCodexExternalSessionsSourceFromHome } from './sourceValidation.js';
 
-type LinkedExternalSessionMetadataCompatV1 = Readonly<Partial<RuntimeDescriptorMetadataCarrier>> & {
-  v: 1;
-  agentId: string;
-  machineId: string;
-  remoteSessionId: string;
-  source: ExternalSessionsSource;
-  linkedAtMs: number;
-};
-
-type CodexExternalSessionMetadataV1 = LinkedExternalSessionMetadataCompatV1 & {
-  agentId: 'codex';
-};
-
 type CodexBackendModeCompat = CodexBackendMode | 'mcp';
 
 export type CodexSessionIdentityMetadata = SessionMetadata & Readonly<Partial<RuntimeDescriptorMetadataCarrier>> & {
   codexSessionId?: string;
   codexBackendMode?: CodexBackendModeCompat;
-  externalSessionV1?: LinkedExternalSessionMetadataCompatV1;
+  externalSessionV1?: LinkedExternalSessionV1;
 };
 
 export type CodexExternalSessionLinkIdentity = Readonly<{
@@ -259,16 +252,12 @@ export function buildCodexExternalSessionMetadata(
   }>,
 ): CodexSessionIdentityMetadata {
   if (params.transcriptStorage !== 'direct') {
-    const nextMetadata: CodexSessionIdentityMetadata = { ...metadata };
-    delete nextMetadata.externalSessionV1;
-    return nextMetadata;
+    return removeLinkedExternalSessionMetadataV1(metadata) as CodexSessionIdentityMetadata;
   }
 
   const machineId = typeof metadata.machineId === 'string' ? metadata.machineId.trim() : '';
   if (!machineId) {
-    const nextMetadata: CodexSessionIdentityMetadata = { ...metadata };
-    delete nextMetadata.externalSessionV1;
-    return nextMetadata;
+    return removeLinkedExternalSessionMetadataV1(metadata) as CodexSessionIdentityMetadata;
   }
 
   const runtimeDescriptor = buildCodexRuntimeDescriptor({
@@ -277,25 +266,36 @@ export function buildCodexExternalSessionMetadata(
     codexHome: params.codexHome,
     activeServerDir: params.activeServerDir,
   });
-  const previousExternalSession = metadata.externalSessionV1 && typeof metadata.externalSessionV1 === 'object'
-    ? metadata.externalSessionV1
-    : undefined;
-  const externalSessionBase: CodexExternalSessionMetadataV1 = {
-    ...(previousExternalSession ?? {}),
-    v: 1,
-    agentId: 'codex',
+  const parsedPreviousExternalSession = readLinkedExternalSessionV1FromMetadata(metadata);
+  const previousExternalSession =
+    parsedPreviousExternalSession?.agentId === 'codex'
+    && parsedPreviousExternalSession.source.kind === 'codexHome'
+      ? parsedPreviousExternalSession
+      : undefined;
+  const previousRuntimeDescriptor = readRuntimeDescriptorV1FromMetadata(previousExternalSession);
+  const previousExternalSessionRecord: Record<string, unknown> = previousExternalSession ?? {};
+  const {
+    runtimeDescriptorV1: _previousRuntimeDescriptorV1,
+    agentRuntimeDescriptorV1: _previousAgentRuntimeDescriptorV1,
+    ...previousExternalSessionWithoutRuntimeDescriptor
+  } = previousExternalSessionRecord;
+  const effectiveRuntimeDescriptor = runtimeDescriptor ?? previousRuntimeDescriptor;
+  const externalSessionBase = {
+    ...previousExternalSessionWithoutRuntimeDescriptor,
+    v: 1 as const,
+    agentId: 'codex' as const,
     machineId,
     remoteSessionId: providerSessionId,
     source: inferCodexExternalSessionsSourceFromHome(params),
     linkedAtMs: params.nowMs ?? Date.now(),
   };
 
-  return {
-    ...metadata,
-    externalSessionV1: runtimeDescriptor
-      ? applyRuntimeDescriptorSessionMetadata(externalSessionBase, runtimeDescriptor)
+  return buildLinkedExternalSessionMetadataV1(
+    metadata,
+    effectiveRuntimeDescriptor
+      ? { ...externalSessionBase, runtimeDescriptorV1: effectiveRuntimeDescriptor }
       : externalSessionBase,
-  };
+  ) as CodexSessionIdentityMetadata;
 }
 
 function publishCodexProviderSessionId(params: Readonly<{

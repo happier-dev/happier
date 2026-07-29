@@ -2,22 +2,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createClaudeUnifiedSteerCapabilityPublisher } from './steerCapabilityPublisher.js';
 
-type AgentStateRecord = Readonly<Record<string, unknown>>;
-
 function capture() {
-  let state: AgentStateRecord = {};
-  let writes = 0;
-  // Boundary fixture: the SDK session.writeAgentState seam is the system boundary here.
-  const session = {
-    writeAgentState: vi.fn(async (request: { kind: string; handler?: (current: AgentStateRecord) => AgentStateRecord }) => {
-      if (request.kind === 'update' && request.handler) {
-        writes += 1;
-        state = request.handler(state);
-      }
-    }),
-  };
-  const capabilities = () => (state.capabilities ?? {}) as Readonly<Record<string, unknown>>;
-  return { session, capabilities, get writes() { return writes; } };
+  const statuses: Readonly<Record<string, unknown>>[] = [];
+  const publishStatus = vi.fn((status: Readonly<Record<string, unknown>>) => { statuses.push(status); });
+  const current = () => statuses.at(-1) ?? {};
+  return { publishStatus, current, get writes() { return statuses.length; } };
 }
 
 const logger = { debug: vi.fn() };
@@ -30,7 +19,7 @@ describe('createClaudeUnifiedSteerCapabilityPublisher (Seam A)', () => {
   it('publishes unsafe_window with a state timestamp while the canonical turn is active', () => {
     const captured = capture();
     const publisher = createClaudeUnifiedSteerCapabilityPublisher({
-      session: captured.session,
+      publishStatus: captured.publishStatus,
       logger,
       isCanonicalTurnActive: () => true,
       nowMs: () => 1234,
@@ -38,16 +27,16 @@ describe('createClaudeUnifiedSteerCapabilityPublisher (Seam A)', () => {
 
     publisher.publish({ available: false, reason: 'unsafe_window' });
 
-    expect(captured.capabilities().inFlightSteerAvailable).toBe(false);
-    expect(captured.capabilities().inFlightSteerUnavailableReason).toBe('unsafe_window');
-    expect(captured.capabilities().inFlightSteerStateAt).toBe(1234);
+    expect(captured.current().steerAvailable).toBe(false);
+    expect(captured.current().steerUnavailableReason).toBe('unsafe_window');
+    expect(captured.current().stateUpdatedAtMs).toBe(1234);
     publisher.dispose();
   });
 
   it('passes the user_terminal_draft starvation reason through while the canonical turn is active (X1)', () => {
     const captured = capture();
     const publisher = createClaudeUnifiedSteerCapabilityPublisher({
-      session: captured.session,
+      publishStatus: captured.publishStatus,
       logger,
       isCanonicalTurnActive: () => true,
       nowMs: () => 1234,
@@ -55,17 +44,17 @@ describe('createClaudeUnifiedSteerCapabilityPublisher (Seam A)', () => {
 
     publisher.publish({ available: false, reason: 'user_terminal_draft' });
 
-    expect(captured.capabilities().inFlightSteerAvailable).toBe(false);
-    expect(captured.capabilities().inFlightSteerUnavailableReason).toBe('user_terminal_draft');
-    expect(captured.capabilities().terminalComposerClearSupported).toBe(true);
-    expect(captured.capabilities().terminalComposerDraftPresent).toBe(true);
+    expect(captured.current().steerAvailable).toBe(false);
+    expect(captured.current().steerUnavailableReason).toBe('user_terminal_draft');
+    expect(captured.current().terminalComposerClearSupported).toBe(true);
+    expect(captured.current().terminalComposerDraftPresent).toBe(true);
     publisher.dispose();
   });
 
   it('publishes composer clear support and clears draft presence on non-draft snapshots', () => {
     const captured = capture();
     const publisher = createClaudeUnifiedSteerCapabilityPublisher({
-      session: captured.session,
+      publishStatus: captured.publishStatus,
       logger,
       isCanonicalTurnActive: () => true,
       nowMs: () => 1234,
@@ -73,8 +62,8 @@ describe('createClaudeUnifiedSteerCapabilityPublisher (Seam A)', () => {
 
     publisher.publish({ available: false, reason: 'unsafe_window' });
 
-    expect(captured.capabilities().terminalComposerClearSupported).toBe(true);
-    expect(captured.capabilities().terminalComposerDraftPresent).toBe(false);
+    expect(captured.current().terminalComposerClearSupported).toBe(true);
+    expect(captured.current().terminalComposerDraftPresent).toBe(false);
     publisher.dispose();
   });
 
@@ -83,7 +72,7 @@ describe('createClaudeUnifiedSteerCapabilityPublisher (Seam A)', () => {
     let canonicalActive = false;
     let now = 100;
     const publisher = createClaudeUnifiedSteerCapabilityPublisher({
-      session: captured.session,
+      publishStatus: captured.publishStatus,
       logger,
       isCanonicalTurnActive: () => canonicalActive,
       nowMs: () => now,
@@ -95,15 +84,15 @@ describe('createClaudeUnifiedSteerCapabilityPublisher (Seam A)', () => {
     publisher.publish({ available: false, reason: 'user_terminal_draft' });
 
     expect(captured.writes).toBe(2);
-    expect(captured.capabilities().inFlightSteerUnavailableReason).toBe('turn_settling');
-    expect(captured.capabilities().terminalComposerDraftPresent).toBe(true);
+    expect(captured.current().steerUnavailableReason).toBe('turn_settling');
+    expect(captured.current().terminalComposerDraftPresent).toBe(true);
     publisher.dispose();
   });
 
   it('maps an unavailable snapshot to turn_settling when the canonical turn is no longer active', () => {
     const captured = capture();
     const publisher = createClaudeUnifiedSteerCapabilityPublisher({
-      session: captured.session,
+      publishStatus: captured.publishStatus,
       logger,
       isCanonicalTurnActive: () => false,
       nowMs: () => 1234,
@@ -111,14 +100,14 @@ describe('createClaudeUnifiedSteerCapabilityPublisher (Seam A)', () => {
 
     publisher.publish({ available: false, reason: 'unsafe_window' });
 
-    expect(captured.capabilities().inFlightSteerUnavailableReason).toBe('turn_settling');
+    expect(captured.current().steerUnavailableReason).toBe('turn_settling');
     publisher.dispose();
   });
 
   it('clears the reason and de-duplicates identical snapshots', () => {
     const captured = capture();
     const publisher = createClaudeUnifiedSteerCapabilityPublisher({
-      session: captured.session,
+      publishStatus: captured.publishStatus,
       logger,
       isCanonicalTurnActive: () => true,
       nowMs: () => 1,
@@ -129,8 +118,8 @@ describe('createClaudeUnifiedSteerCapabilityPublisher (Seam A)', () => {
     publisher.publish({ available: true, reason: null });
 
     expect(captured.writes).toBe(1);
-    expect(captured.capabilities().inFlightSteerAvailable).toBe(true);
-    expect(captured.capabilities().inFlightSteerUnavailableReason ?? null).toBeNull();
+    expect(captured.current().steerAvailable).toBe(true);
+    expect(captured.current().steerUnavailableReason ?? null).toBeNull();
     publisher.dispose();
   });
 
@@ -138,7 +127,7 @@ describe('createClaudeUnifiedSteerCapabilityPublisher (Seam A)', () => {
     vi.useFakeTimers();
     const captured = capture();
     const publisher = createClaudeUnifiedSteerCapabilityPublisher({
-      session: captured.session,
+      publishStatus: captured.publishStatus,
       logger,
       isCanonicalTurnActive: () => true,
       minPublishIntervalMs: 1000,
@@ -152,19 +141,19 @@ describe('createClaudeUnifiedSteerCapabilityPublisher (Seam A)', () => {
     // First write immediate; the flapping follow-ups coalesce into ONE trailing write that
     // converges on the LATEST state.
     expect(captured.writes).toBe(1);
-    expect(captured.capabilities().inFlightSteerAvailable).toBe(true);
+    expect(captured.current().steerAvailable).toBe(true);
 
     vi.advanceTimersByTime(1000);
     expect(captured.writes).toBe(2);
-    expect(captured.capabilities().inFlightSteerAvailable).toBe(false);
-    expect(captured.capabilities().inFlightSteerUnavailableReason).toBe('unsafe_window');
+    expect(captured.current().steerAvailable).toBe(false);
+    expect(captured.current().steerUnavailableReason).toBe('unsafe_window');
     publisher.dispose();
   });
 
   it('publishes the static inFlightConfigApplySupported capability at creation when enabled (lane Q)', () => {
     const captured = capture();
     const publisher = createClaudeUnifiedSteerCapabilityPublisher({
-      session: captured.session,
+      publishStatus: captured.publishStatus,
       logger,
       isCanonicalTurnActive: () => true,
       nowMs: () => 1234,
@@ -174,21 +163,21 @@ describe('createClaudeUnifiedSteerCapabilityPublisher (Seam A)', () => {
 
     // Static capability lands immediately — the UI gate must open before the first steer snapshot.
     expect(captured.writes).toBe(1);
-    expect(captured.capabilities().inFlightConfigApplySupported).toBe(true);
+    expect(captured.current().inFlightConfigurationApplySupported).toBe(true);
 
     // The static write must not consume the snapshot dedup/rate-limit budget: the first
     // steer snapshot still writes immediately and carries the static capability along.
     publisher.publish({ available: false, reason: 'unsafe_window' });
     expect(captured.writes).toBe(2);
-    expect(captured.capabilities().inFlightSteerUnavailableReason).toBe('unsafe_window');
-    expect(captured.capabilities().inFlightConfigApplySupported).toBe(true);
+    expect(captured.current().steerUnavailableReason).toBe('unsafe_window');
+    expect(captured.current().inFlightConfigurationApplySupported).toBe(true);
     publisher.dispose();
   });
 
   it('never writes inFlightConfigApplySupported when the capability is disabled (fail-closed)', () => {
     const captured = capture();
     const publisher = createClaudeUnifiedSteerCapabilityPublisher({
-      session: captured.session,
+      publishStatus: captured.publishStatus,
       logger,
       isCanonicalTurnActive: () => true,
       nowMs: () => 1234,
@@ -197,15 +186,15 @@ describe('createClaudeUnifiedSteerCapabilityPublisher (Seam A)', () => {
     expect(captured.writes).toBe(0);
     publisher.publish({ available: true, reason: null });
     expect(captured.writes).toBe(1);
-    expect('inFlightConfigApplySupported' in captured.capabilities()).toBe(false);
+    expect(captured.current().inFlightConfigurationApplySupported).toBe(false);
     publisher.dispose();
   });
 
-  it('dispose cancels a scheduled trailing write and a missing writeAgentState seam is a safe no-op', () => {
+  it('dispose cancels a scheduled trailing publication', () => {
     vi.useFakeTimers();
     const captured = capture();
     const publisher = createClaudeUnifiedSteerCapabilityPublisher({
-      session: captured.session,
+      publishStatus: captured.publishStatus,
       logger,
       isCanonicalTurnActive: () => true,
       minPublishIntervalMs: 1000,
@@ -217,12 +206,5 @@ describe('createClaudeUnifiedSteerCapabilityPublisher (Seam A)', () => {
     vi.advanceTimersByTime(2000);
     expect(captured.writes).toBe(1);
 
-    // Host without the agent-state seam (older host): publishing must never throw.
-    const seamless = createClaudeUnifiedSteerCapabilityPublisher({
-      session: {},
-      logger,
-    });
-    expect(() => seamless.publish({ available: false, reason: 'unsafe_window' })).not.toThrow();
-    seamless.dispose();
   });
 });

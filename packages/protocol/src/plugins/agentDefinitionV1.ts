@@ -6,7 +6,6 @@ import {
   PluginOptionalStringSchema,
   PluginStringArraySchema,
 } from './_shared.js';
-import { AgentCliRuntimeV1Schema } from './agentCliRuntimeV1.js';
 
 export const AgentDisplayV1Schema = z.object({
   name: z.string().trim().min(1),
@@ -75,12 +74,19 @@ export const AgentDefinitionV1Schema = z.object({
   iconAgentId: PluginOptionalStringSchema,
   settingsBackendId: PluginOptionalStringSchema,
   display: AgentDisplayV1Schema,
-  agentCliRuntime: AgentCliRuntimeV1Schema.optional(),
   install: AgentInstallV1Schema.optional(),
   auth: AgentAuthV1Schema.optional(),
   session: AgentSessionV1Schema.optional(),
   tools: PluginLooseJsonObjectSchema.optional(),
   ui: AgentUiV1Schema.optional(),
   ownedBackendIds: PluginStringArraySchema,
-}).passthrough();
+}).passthrough().superRefine((value, ctx) => {
+  if (Object.prototype.hasOwnProperty.call(value, 'agentCliRuntime')) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['agentCliRuntime'],
+      message: 'Legacy agentCliRuntime authoring is not supported; use contributes.agents[].cli.',
+    });
+  }
+});
 export type AgentDefinitionV1 = z.infer<typeof AgentDefinitionV1Schema>;

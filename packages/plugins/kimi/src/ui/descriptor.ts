@@ -23,7 +23,7 @@ export const KIMI_UI_DESCRIPTOR = Object.freeze({
     },
     picker: {
       iconName: 'code-slash-outline',
-      cliGlyphTokenId: 'agentGlyph.kimi',
+      cliGlyph: 'K',
       cliGlyphScale: 1.0,
       profileCompatibilityGlyphScale: 1.0,
     },
@@ -32,9 +32,6 @@ export const KIMI_UI_DESCRIPTOR = Object.freeze({
       iconScaleRatio: 0.22,
     },
     icon: { assetId: 'kimi' },
-  },
-  settings: {
-    descriptorId: 'kimi.agentSettings.v1',
   },
   behavior: {},
   session: {},

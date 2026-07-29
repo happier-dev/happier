@@ -10,42 +10,42 @@ import {
 describe('bridgeLifecycleHookCatalog', () => {
   it('exposes the session bridge lifecycle hook event ids', () => {
     expect(SESSION_BRIDGE_LIFECYCLE_HOOK_EVENT_IDS_V1).toEqual([
-      'session.spawn_new',
+      'session.spawned',
       'session.message.send',
     ]);
   });
 
   it('exposes the execution-run bridge lifecycle hook event ids', () => {
     expect(EXECUTION_RUN_BRIDGE_LIFECYCLE_HOOK_EVENT_IDS_V1).toEqual([
-      'execution_run.start',
-      'execution_run.send',
-      'execution_run.stop',
-      'execution_run.terminal',
+      'executionRun.started',
+      'executionRun.messageSent',
+      'executionRun.stopped',
+      'executionRun.completed',
     ]);
   });
 
   it('exposes one combined bridge lifecycle hook event id list', () => {
     expect(BRIDGE_LIFECYCLE_HOOK_EVENT_IDS_V1).toEqual([
-      'session.spawn_new',
+      'session.spawned',
       'session.message.send',
-      'execution_run.start',
-      'execution_run.send',
-      'execution_run.stop',
-      'execution_run.terminal',
+      'executionRun.started',
+      'executionRun.messageSent',
+      'executionRun.stopped',
+      'executionRun.completed',
     ]);
   });
 
   it('exposes the bridge lifecycle hook event ids grouped by owning bridge', () => {
     expect(BRIDGE_LIFECYCLE_HOOK_EVENT_IDS_BY_BRIDGE_V1).toEqual({
       session: [
-        'session.spawn_new',
+        'session.spawned',
         'session.message.send',
       ],
-      execution_run: [
-        'execution_run.start',
-        'execution_run.send',
-        'execution_run.stop',
-        'execution_run.terminal',
+      executionRun: [
+        'executionRun.started',
+        'executionRun.messageSent',
+        'executionRun.stopped',
+        'executionRun.completed',
       ],
     });
   });

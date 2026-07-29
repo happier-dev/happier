@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -24,6 +24,22 @@ describe('Antigravity cliPrint transcript JSONL', () => {
     expect(parseAntigravityTranscriptJsonl('{"type":"user_input","text":"hi"}\n{"type":', {
       allowPartialLastLine: true,
     })).toEqual([{ type: 'user_input', text: 'hi' }]);
+  });
+
+  it('retains an incomplete tail record until a later append completes it', async () => {
+    const dir = await mkdir(join(tmpdir(), `antigravity-jsonl-partial-${Date.now()}-`), { recursive: true });
+    const path = join(dir, 'transcript_full.jsonl');
+
+    await writeFile(path, '{"id":"step-1","type":"planner_response","text":');
+    const partial = await readAntigravityTranscriptTail({ path });
+    expect(partial.records).toEqual([]);
+
+    await appendFile(path, '"complete"}\n');
+    await expect(readAntigravityTranscriptTail({ path, cursor: partial.cursor })).resolves.toMatchObject({
+      records: [
+        { id: 'step-1', type: 'planner_response', text: 'complete' },
+      ],
+    });
   });
 
   it('reads appended transcript lines, deduplicates stable records, and tolerates missing or rotated files', async () => {

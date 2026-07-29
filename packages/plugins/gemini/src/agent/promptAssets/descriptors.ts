@@ -1,6 +1,5 @@
 import type {
-  PluginPromptAssetContributionV1,
-  PromptAssetCapabilitiesV1,
+  PromptAssetCapabilities,
 } from '@happier-dev/plugin-sdk/manifest';
 
 export type GeminiPromptAssetConfig = Readonly<{
@@ -12,7 +11,13 @@ export type GeminiPromptAssetConfig = Readonly<{
   projectRootDisplayPath: string;
   userRootPath: readonly string[];
   userRootDisplayPath: string;
-  capabilities?: PromptAssetCapabilitiesV1;
+  capabilities?: PromptAssetCapabilities;
+}>;
+
+// Host adapter configuration for the existing prompt-library runtime. This is
+// not the public data-only `contributes.promptAssets` manifest contract.
+export type GeminiPromptAssetAdapterDescriptor = GeminiPromptAssetConfig & Readonly<{
+  adapterKind: 'skillMd';
 }>;
 
 export const GEMINI_SKILL_PROMPT_ASSET_CONFIG = Object.freeze({
@@ -35,4 +40,4 @@ export const PLUGIN_PROMPT_ASSET_DESCRIPTORS = Object.freeze([
     adapterKind: 'skillMd',
     ...GEMINI_SKILL_PROMPT_ASSET_CONFIG,
   },
-] as const satisfies readonly PluginPromptAssetContributionV1[]);
+] as const satisfies readonly GeminiPromptAssetAdapterDescriptor[]);

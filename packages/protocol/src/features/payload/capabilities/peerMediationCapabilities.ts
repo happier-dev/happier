@@ -97,6 +97,8 @@ export const DEFAULT_PEER_MEDIATION_OBSERVABILITY_CAPABILITIES: PeerMediationObs
 
 export const PeerMediationCapabilitiesSchema = z.object({
   grantSigningKeys: z.array(PeerMediationGrantSigningKeyCapabilitySchema).optional().default([]),
+  directRouteGrantProofMintVersions: z.array(z.literal(2)).max(1).optional().default([]),
+  tcpTunnelRelayAuthorizationMintVersions: z.array(z.literal(2)).max(1).optional().default([]),
   observability: PeerMediationObservabilityCapabilitiesSchema.optional().default(
     DEFAULT_PEER_MEDIATION_OBSERVABILITY_CAPABILITIES,
   ),
@@ -106,5 +108,7 @@ export type PeerMediationCapabilities = z.infer<typeof PeerMediationCapabilities
 
 export const DEFAULT_PEER_MEDIATION_CAPABILITIES: PeerMediationCapabilities = {
   grantSigningKeys: [],
+  directRouteGrantProofMintVersions: [],
+  tcpTunnelRelayAuthorizationMintVersions: [],
   observability: DEFAULT_PEER_MEDIATION_OBSERVABILITY_CAPABILITIES,
 };

@@ -3,7 +3,7 @@ import type {
   ScmOperationState,
   ScmWorkingEntry,
   ScmWorkingSnapshot,
-} from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm';
 
 import { parseGitStatusPorcelainV2Z, parseNumStatZ } from './statusParser.js';
 import { parseGitWorktreeListPorcelain } from './worktreeListParser.js';

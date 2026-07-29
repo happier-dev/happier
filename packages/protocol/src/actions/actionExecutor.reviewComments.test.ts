@@ -55,4 +55,25 @@ describe('createActionExecutor (review comments)', () => {
       serverId: 'server-1',
     });
   });
+
+  it('forwards a host-derived review principal through canonical dispatch', async () => {
+    const reviewCommentAction = vi.fn(async () => ({ comment: { id: 'comment-1' } }));
+    const executor = createActionExecutor(createDeps({ reviewCommentAction }));
+    const reviewCommentPrincipal = {
+      actor: { kind: 'agent' as const, agentId: 'acme.review', sessionId: 'session-1' },
+    };
+
+    await executor.execute('reviews.comments.create', {
+      projectId: 'project-1',
+      anchor: { kind: 'line', filePath: 'src/a.ts', line: 1 },
+      snapshot: { kind: 'too_large', filePath: 'src/a.ts', sizeBytes: 2, capBytes: 1, capturedAt: 1 },
+      body: 'Fix this.',
+      clientMutationId: 'mutation-1',
+    }, { surface: 'rpc', bypassApprovals: true, reviewCommentPrincipal });
+
+    expect(reviewCommentAction).toHaveBeenCalledWith(expect.objectContaining({
+      actionId: 'reviews.comments.create',
+      reviewCommentPrincipal,
+    }));
+  });
 });

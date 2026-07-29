@@ -1,8 +1,8 @@
 import type {
-    RuntimeEventV1,
-    SessionRollbackTarget,
-    SessionTurnV1,
-} from '@happier-dev/plugin-sdk/experimental/runtime/session';
+    CodexAppServerEvent,
+    CodexAppServerRollbackTarget,
+    CodexAppServerSessionTurn,
+} from '../core.js';
 
 import {
     resolveCodexAppServerRollbackPlanFromSessionTurns,
@@ -13,10 +13,6 @@ const MAX_RETAINED_USER_MESSAGE_SEQS_PER_TURN = 50;
 
 type SessionTurnRollbackTrackerSession = Readonly<{
     getCommittedUserMessageSeq?: (localId: string) => number | null;
-    waitForCommittedUserMessageSeq?: (
-        localId: string,
-        options?: Readonly<{ timeoutMs?: number; pollMs?: number }>,
-    ) => Promise<number | null>;
 }>;
 
 type TurnBoundary = Readonly<{
@@ -52,7 +48,7 @@ function appendBoundedUserMessageSeq(
     ];
 }
 
-function createDraftTurn(turnId: string, now: number): SessionTurnV1 {
+function createDraftTurn(turnId: string, now: number): CodexAppServerSessionTurn {
     return {
         turnId,
         status: 'in_progress',
@@ -62,9 +58,9 @@ function createDraftTurn(turnId: string, now: number): SessionTurnV1 {
 }
 
 function mergeTranscriptAnchors(
-    current: SessionTurnV1['transcriptAnchors'],
-    next: NonNullable<SessionTurnV1['transcriptAnchors']>,
-): SessionTurnV1['transcriptAnchors'] {
+    current: CodexAppServerSessionTurn['transcriptAnchors'],
+    next: NonNullable<CodexAppServerSessionTurn['transcriptAnchors']>,
+): CodexAppServerSessionTurn['transcriptAnchors'] {
     const currentUserSeqs = current?.userMessageSeqs ?? [];
     return {
         ...current,
@@ -85,9 +81,12 @@ export function createCodexAppServerSessionTurnRollbackTracker(params: Readonly<
     now?: () => number;
 }>) {
     const now = params.now ?? Date.now;
-    let turns: SessionTurnV1[] = [];
+    let turns: CodexAppServerSessionTurn[] = [];
 
-    const upsertTurn = (turnId: string, update: (turn: SessionTurnV1) => SessionTurnV1): void => {
+    const upsertTurn = (
+        turnId: string,
+        update: (turn: CodexAppServerSessionTurn) => CodexAppServerSessionTurn,
+    ): void => {
         const existingIndex = turns.findIndex((turn) => turn.turnId === turnId);
         const current = existingIndex >= 0 ? turns[existingIndex] : createDraftTurn(turnId, now());
         const next = update(current);
@@ -96,7 +95,7 @@ export function createCodexAppServerSessionTurnRollbackTracker(params: Readonly<
             : [...turns, next];
     };
 
-    const hydrateTurn = (turn: SessionTurnV1): void => {
+    const hydrateTurn = (turn: CodexAppServerSessionTurn): void => {
         const turnId = readTrimmedString(turn.turnId);
         if (!turnId) return;
         const existingIndex = turns.findIndex((candidate) => candidate.turnId === turnId);
@@ -112,9 +111,7 @@ export function createCodexAppServerSessionTurnRollbackTracker(params: Readonly<
     const resolveCommittedUserMessageSeq = async (localId: string | null | undefined): Promise<number | null> => {
         const trimmedLocalId = readTrimmedString(localId);
         if (!trimmedLocalId) return null;
-        const syncSeq = normalizeSeq(params.session.getCommittedUserMessageSeq?.(trimmedLocalId) ?? null);
-        if (syncSeq !== null) return syncSeq;
-        return normalizeSeq(await params.session.waitForCommittedUserMessageSeq?.(trimmedLocalId) ?? null);
+        return normalizeSeq(params.session.getCommittedUserMessageSeq?.(trimmedLocalId) ?? null);
     };
 
     const readBoundary = (turnId: string, endSeqInclusive: number | null): TurnBoundary | null => {
@@ -173,17 +170,17 @@ export function createCodexAppServerSessionTurnRollbackTracker(params: Readonly<
             return readBoundary(completion.sessionTurnId, completion.endSeqInclusive);
         },
 
-        resolveRollbackPlan(target: SessionRollbackTarget): CodexAppServerRollbackPlan | null {
+        resolveRollbackPlan(target: CodexAppServerRollbackTarget): CodexAppServerRollbackPlan | null {
             return resolveCodexAppServerRollbackPlanFromSessionTurns({ target, turns });
         },
 
-        hydrateFromSessionTurns(sessionTurns: readonly SessionTurnV1[]): void {
+        hydrateFromSessionTurns(sessionTurns: readonly CodexAppServerSessionTurn[]): void {
             for (const turn of sessionTurns) {
                 hydrateTurn(turn);
             }
         },
 
-        observeRuntimeEvent(event: RuntimeEventV1): void {
+        observeRuntimeEvent(event: CodexAppServerEvent): void {
             const eventTurnId = 'turnId' in event && typeof event.turnId === 'string' ? event.turnId : null;
             if (eventTurnId) {
                 upsertTurn(eventTurnId, (current) => {
@@ -264,6 +261,9 @@ export function createCodexAppServerSessionTurnRollbackTracker(params: Readonly<
                                 state: 'eligible',
                                 ...(typeof event.agentRollbackOrdinal === 'number'
                                     ? { agentRollbackOrdinal: event.agentRollbackOrdinal }
+                                    : {}),
+                                ...(event.providerCheckpoint !== undefined
+                                    ? { providerCheckpoint: event.providerCheckpoint }
                                     : {}),
                                 updatedAt: timestamp,
                             },

@@ -1,13 +1,30 @@
-import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, mkdir, readFile, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import { normalizeCodexHandoffBundleRelativePath } from './bundle.js';
 import { exportCodexSessionBundle } from './export.js';
 import { importCodexSessionBundle } from './import.js';
 
 describe('codex session handoff bundle', () => {
+  it('encodes source-native rollout paths as portable bundle paths', () => {
+    expect(normalizeCodexHandoffBundleRelativePath(
+      'sessions\\2026\\03\\08\\rollout-portable.jsonl',
+    )).toBe('sessions/2026/03/08/rollout-portable.jsonl');
+
+    for (const unsafePath of [
+      '/sessions/rollout.jsonl',
+      '\\\\server\\share\\rollout.jsonl',
+      'C:\\sessions\\rollout.jsonl',
+      'C:sessions\\rollout.jsonl',
+      '..\\escaped.jsonl',
+    ]) {
+      expect(() => normalizeCodexHandoffBundleRelativePath(unsafePath)).toThrow();
+    }
+  });
+
   it('exports rollout files for the requested codex session', async () => {
     const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-handoff-export-'));
     const rolloutDir = join(codexHome, 'sessions', '2026', '03', '08');
@@ -121,9 +138,9 @@ describe('codex session handoff bundle', () => {
         path: '/repo',
         codexSessionId: 'thread_connected',
         codexBackendMode: 'appServer',
-        externalSessionV1: {
+        directSessionV1: {
           v: 1,
-          agentId: 'codex',
+          providerId: 'codex',
           machineId: 'machine_1',
           remoteSessionId: 'thread_connected',
           source: {
@@ -239,6 +256,7 @@ describe('codex session handoff bundle', () => {
             home: 'connectedService',
             connectedServiceId: 'openai-codex',
             connectedServiceProfileId: 'profile-1',
+            connectedServiceGroupId: 'group-1',
             homePath: connectedCodexHome,
           },
         },
@@ -261,6 +279,7 @@ describe('codex session handoff bundle', () => {
       home: 'connectedService',
       connectedServiceId: 'openai-codex',
       connectedServiceProfileId: 'profile-1',
+      connectedServiceGroupId: 'group-1',
     });
   });
 
@@ -363,6 +382,188 @@ describe('codex session handoff bundle', () => {
     await expect(readFile(importedPath, 'utf8')).resolves.toBe('{"event":"hello"}\n');
   });
 
+  it('accepts an already-identical rollout without rewriting it', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-handoff-import-identical-'));
+    const relativePath = 'sessions/2026/03/08/rollout-2026-03-08T10-00-00-thread_identical.jsonl';
+    const importedPath = join(codexHome, relativePath);
+    const content = Buffer.from('{"event":"identical"}\n', 'utf8');
+    await mkdir(join(codexHome, 'sessions', '2026', '03', '08'), { recursive: true });
+    await writeFile(importedPath, content);
+    await utimes(importedPath, new Date(1_000), new Date(1_000));
+    const before = await stat(importedPath);
+
+    await importCodexSessionBundle({
+      bundle: {
+        agentId: 'codex',
+        remoteSessionId: 'thread_identical',
+        files: [{
+          relativePath,
+          contentBase64: content.toString('base64'),
+        }],
+      },
+      targetPath: '/repo-target',
+      env: { CODEX_HOME: codexHome },
+    });
+
+    const after = await stat(importedPath);
+    expect(after.mtimeMs).toBe(before.mtimeMs);
+    await expect(readFile(importedPath)).resolves.toEqual(content);
+  });
+
+  it('rejects mixed equal, divergent, and missing rollouts before creating or rewriting any file', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-handoff-import-conflict-'));
+    const rolloutDir = join(codexHome, 'sessions', '2026', '03', '08');
+    const equalRelativePath = 'sessions/2026/03/08/rollout-equal.jsonl';
+    const missingRelativePath = 'sessions/2026/03/08/rollout-missing.jsonl';
+    const divergentRelativePath = 'sessions/2026/03/08/rollout-divergent.jsonl';
+    const equalPath = join(codexHome, equalRelativePath);
+    const missingPath = join(codexHome, missingRelativePath);
+    const divergentPath = join(codexHome, divergentRelativePath);
+    const equalContent = Buffer.from('{"event":"equal"}\n', 'utf8');
+    const existingDivergentContent = Buffer.from('{"event":"existing"}\n', 'utf8');
+    await mkdir(rolloutDir, { recursive: true });
+    await writeFile(equalPath, equalContent);
+    await writeFile(divergentPath, existingDivergentContent);
+    await utimes(equalPath, new Date(1_000), new Date(1_000));
+    await utimes(divergentPath, new Date(2_000), new Date(2_000));
+    const equalBefore = await stat(equalPath);
+    const divergentBefore = await stat(divergentPath);
+
+    await expect(importCodexSessionBundle({
+      bundle: {
+        agentId: 'codex',
+        remoteSessionId: 'thread_conflict',
+        files: [
+          {
+            relativePath: equalRelativePath,
+            contentBase64: equalContent.toString('base64'),
+          },
+          {
+            relativePath: missingRelativePath,
+            contentBase64: Buffer.from('{"event":"missing"}\n', 'utf8').toString('base64'),
+          },
+          {
+            relativePath: divergentRelativePath,
+            contentBase64: Buffer.from('{"event":"incoming"}\n', 'utf8').toString('base64'),
+          },
+        ],
+      },
+      targetPath: '/repo-target',
+      env: { CODEX_HOME: codexHome },
+    })).rejects.toMatchObject({
+      code: 'target_identity_conflict',
+    });
+
+    expect((await stat(equalPath)).mtimeMs).toBe(equalBefore.mtimeMs);
+    expect((await stat(divergentPath)).mtimeMs).toBe(divergentBefore.mtimeMs);
+    await expect(readFile(equalPath)).resolves.toEqual(equalContent);
+    await expect(readFile(divergentPath)).resolves.toEqual(existingDivergentContent);
+    await expect(access(missingPath)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('converges a partial equal-plus-missing retry and then performs no rewrites', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-handoff-import-retry-'));
+    const rolloutDir = join(codexHome, 'sessions', '2026', '03', '08');
+    const existingRelativePath = 'sessions/2026/03/08/rollout-existing.jsonl';
+    const missingRelativePath = 'sessions/2026/03/08/rollout-retry.jsonl';
+    const existingPath = join(codexHome, existingRelativePath);
+    const missingPath = join(codexHome, missingRelativePath);
+    const existingContent = Buffer.from('{"event":"existing"}\n', 'utf8');
+    const missingContent = Buffer.from('{"event":"retry"}\n', 'utf8');
+    await mkdir(rolloutDir, { recursive: true });
+    await writeFile(existingPath, existingContent);
+    await utimes(existingPath, new Date(1_000), new Date(1_000));
+    const bundle = {
+      agentId: 'codex' as const,
+      remoteSessionId: 'thread_retry',
+      files: [
+        {
+          relativePath: existingRelativePath,
+          contentBase64: existingContent.toString('base64'),
+        },
+        {
+          relativePath: missingRelativePath,
+          contentBase64: missingContent.toString('base64'),
+        },
+      ],
+    };
+
+    await importCodexSessionBundle({
+      bundle,
+      targetPath: '/repo-target',
+      env: { CODEX_HOME: codexHome },
+    });
+
+    expect((await stat(existingPath)).mtimeMs).toBe(1_000);
+    await expect(readFile(missingPath)).resolves.toEqual(missingContent);
+    const missingBeforeRetry = await stat(missingPath);
+
+    await importCodexSessionBundle({
+      bundle,
+      targetPath: '/repo-target',
+      env: { CODEX_HOME: codexHome },
+    });
+
+    expect((await stat(existingPath)).mtimeMs).toBe(1_000);
+    expect((await stat(missingPath)).mtimeMs).toBe(missingBeforeRetry.mtimeMs);
+  });
+
+  it('converges concurrent identical imports through exclusive same-path creation', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-handoff-import-race-'));
+    const relativePath = 'sessions/2026/03/08/rollout-race.jsonl';
+    const content = Buffer.from('{"event":"race"}\n', 'utf8');
+    const params = {
+      bundle: {
+        agentId: 'codex' as const,
+        remoteSessionId: 'thread_race',
+        files: [{
+          relativePath,
+          contentBase64: content.toString('base64'),
+        }],
+      },
+      targetPath: '/repo-target',
+      env: { CODEX_HOME: codexHome },
+    };
+
+    const results = await Promise.allSettled([
+      importCodexSessionBundle(params),
+      importCodexSessionBundle(params),
+    ]);
+
+    expect(results.map((result) => result.status)).toEqual(['fulfilled', 'fulfilled']);
+    await expect(readFile(join(codexHome, relativePath))).resolves.toEqual(content);
+  });
+
+  it('never overwrites the winner of a divergent same-path creation race', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-handoff-import-divergent-race-'));
+    const relativePath = 'sessions/2026/03/08/rollout-divergent-race.jsonl';
+    const firstContent = Buffer.from('{"event":"first"}\n', 'utf8');
+    const secondContent = Buffer.from('{"event":"second"}\n', 'utf8');
+    const createParams = (content: Buffer) => ({
+      bundle: {
+        agentId: 'codex' as const,
+        remoteSessionId: 'thread_divergent_race',
+        files: [{
+          relativePath,
+          contentBase64: content.toString('base64'),
+        }],
+      },
+      targetPath: '/repo-target',
+      env: { CODEX_HOME: codexHome },
+    });
+
+    const results = await Promise.allSettled([
+      importCodexSessionBundle(createParams(firstContent)),
+      importCodexSessionBundle(createParams(secondContent)),
+    ]);
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    const rejected = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+    expect(rejected?.reason).toMatchObject({ code: 'target_identity_conflict' });
+    const persisted = await readFile(join(codexHome, relativePath));
+    expect(persisted.equals(firstContent) || persisted.equals(secondContent)).toBe(true);
+  });
+
   it('imports rollout files into CODEX_HOME expanded from the caller environment home', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'happier-codex-handoff-import-home-'));
     const targetPath = join(tmpdir(), 'repo-target-home');
@@ -400,6 +601,31 @@ describe('codex session handoff bundle', () => {
       join(codexHome, 'sessions', '2026', '03', '08', 'rollout-2026-03-08T10-00-00-thread_home_tilde.jsonl'),
       'utf8',
     )).resolves.toBe('{"event":"tilde"}\n');
+  });
+
+  it('imports a Windows-source rollout path into the portable target hierarchy', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-handoff-import-windows-path-'));
+    const content = Buffer.from('{"event":"portable"}\n', 'utf8');
+    const portableRelativePath = 'sessions/2026/03/08/rollout-portable.jsonl';
+    const windowsRelativePath = portableRelativePath.replaceAll('/', '\\');
+
+    await importCodexSessionBundle({
+      bundle: {
+        agentId: 'codex',
+        remoteSessionId: 'thread_portable',
+        files: [{
+          relativePath: windowsRelativePath,
+          contentBase64: content.toString('base64'),
+        }],
+      },
+      targetPath: '/repo-target',
+      env: { CODEX_HOME: codexHome },
+    });
+
+    await expect(readFile(join(codexHome, ...portableRelativePath.split('/')))).resolves.toEqual(content);
+    if (process.platform !== 'win32') {
+      await expect(access(join(codexHome, windowsRelativePath))).rejects.toMatchObject({ code: 'ENOENT' });
+    }
   });
 
   it('does not import source-machine codex homePath affinity into the target runtime descriptor', async () => {
@@ -471,6 +697,7 @@ describe('codex session handoff bundle', () => {
             kind: 'codexHome',
             home: 'connectedService',
             connectedServiceId: 'openai-codex',
+            connectedServiceGroupId: 'group-1',
             homePath: '/source-machine/codex-home',
           },
           runtimeDescriptor: {
@@ -503,6 +730,7 @@ describe('codex session handoff bundle', () => {
       kind: 'codexHome',
       home: 'connectedService',
       connectedServiceId: 'openai-codex',
+      connectedServiceGroupId: 'group-1',
     });
     expect(result.runtimeDescriptorV1).toMatchObject({
       v: 1,
@@ -599,6 +827,7 @@ describe('codex session handoff bundle', () => {
             kind: 'codexHome',
             home: 'connectedService',
             connectedServiceId: 'openai-codex',
+            connectedServiceGroupId: 'group-1',
           },
         },
         files: [
@@ -622,8 +851,15 @@ describe('codex session handoff bundle', () => {
         providerSessionId: 'thread_source',
         home: 'connectedService',
         connectedServiceId: 'openai-codex',
+        connectedServiceGroupId: 'group-1',
         homePath: codexHome,
       },
+    });
+    expect(result.externalSource).toEqual({
+      kind: 'codexHome',
+      home: 'connectedService',
+      connectedServiceId: 'openai-codex',
+      connectedServiceGroupId: 'group-1',
     });
   });
 
@@ -734,6 +970,23 @@ describe('codex session handoff bundle', () => {
         files: [
           {
             relativePath: '../escaped.txt',
+            contentBase64: Buffer.from('oops\n', 'utf8').toString('base64'),
+          },
+        ],
+      },
+      targetPath,
+      env: {
+        CODEX_HOME: codexHome,
+      },
+    })).rejects.toThrow(/CODEX_HOME|outside/i);
+
+    await expect(importCodexSessionBundle({
+      bundle: {
+        agentId: 'codex',
+        remoteSessionId: 'thread_3_windows',
+        files: [
+          {
+            relativePath: '..\\escaped.txt',
             contentBase64: Buffer.from('oops\n', 'utf8').toString('base64'),
           },
         ],

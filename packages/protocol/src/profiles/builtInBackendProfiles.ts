@@ -1,9 +1,15 @@
 import type { AIBackendProfile } from './backendProfileSchema.js';
-import { parseBackendTargetKey } from '../backendTargets/backendTargetRef.js';
-import { AGENT_PROVIDER_IDS_V1 } from '../providers/agentProviderIdsV1.js';
-import { GENERATED_BUILT_IN_BACKEND_PROFILES } from '../providers/generated/profiles/builtInBackendProfiles.js';
+import { parseBackendTargetKey } from '../backends/targets/backendTargetRef.js';
+import { AGENT_PROVIDER_IDS_V1 } from '../generated/providers/agentProviderIdsV1.js';
+import {
+  GENERATED_BUILT_IN_BACKEND_PROFILES,
+  GENERATED_PROVIDER_MIGRATION_SOURCE_PROFILE_IDS,
+} from '../agents/generated/profiles/builtInBackendProfiles.js';
 
 export const DEFAULT_BUILT_IN_BACKEND_PROFILES: ReadonlyArray<AIBackendProfile> = GENERATED_BUILT_IN_BACKEND_PROFILES;
+export const PROVIDER_MIGRATION_SOURCE_PROFILE_IDS = Object.freeze(
+  [...GENERATED_PROVIDER_MIGRATION_SOURCE_PROFILE_IDS],
+);
 
 export function getBuiltInBackendProfile(id: string): AIBackendProfile | null {
   const normalized = typeof id === 'string' ? id.trim() : '';

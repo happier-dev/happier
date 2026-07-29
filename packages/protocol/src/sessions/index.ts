@@ -37,4 +37,6 @@ export {
 export * from './control/index.js';
 export * from './turns/index.js';
 export * from './messages/canonicalTurnDiffTool.js';
-export * from './messages/daemonInitialPrompt.js';
+export * from './messages/spawnedFirstTurn.js';
+export * from './presentation/index.js';
+export * from './metadata/sessionMetadataEnvelopesV1.js';

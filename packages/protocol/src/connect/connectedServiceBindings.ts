@@ -60,6 +60,16 @@ export const ConnectedServiceBindingSelectionV1Schema = z.union([
 
 export type ConnectedServiceBindingSelectionV1 = z.infer<typeof ConnectedServiceBindingSelectionV1Schema>;
 
+export const PersistedConnectedServiceBindingSelectionV1Schema = z.union([
+    ConnectedServiceNativeBindingV1Schema.strict(),
+    ConnectedServiceProfileBindingV1Schema.strict(),
+    ConnectedServiceGroupBindingV1Schema.strict(),
+]);
+
+export type PersistedConnectedServiceBindingSelectionV1 = z.infer<
+    typeof PersistedConnectedServiceBindingSelectionV1Schema
+>;
+
 const ConnectedServiceBindingsByServiceIdV1Schema = z
     .record(z.string(), ConnectedServiceBindingSelectionV1Schema)
     .superRefine((bindings, ctx) => {
@@ -82,6 +92,29 @@ export const ConnectedServiceBindingsV1Schema = z
     .strict();
 
 export type ConnectedServiceBindingsV1 = z.infer<typeof ConnectedServiceBindingsV1Schema>;
+
+export const PersistedConnectedServiceBindingsV1Schema = z
+    .object({
+        v: z.literal(1),
+        bindingsByServiceId: z.record(
+            z.string(),
+            PersistedConnectedServiceBindingSelectionV1Schema,
+        ).superRefine((bindings, ctx) => {
+            for (const serviceId of Object.keys(bindings)) {
+                if (ConnectedServiceIdSchema.safeParse(serviceId).success) continue;
+                ctx.addIssue({
+                    code: z.ZodIssueCode.custom,
+                    message: 'Invalid connected service id',
+                    path: [serviceId],
+                });
+            }
+        }),
+    })
+    .strict();
+
+export type PersistedConnectedServiceBindingsV1 = z.infer<
+    typeof PersistedConnectedServiceBindingsV1Schema
+>;
 
 export const SessionConnectedServiceAuthSwitchRpcParamsSchema = z
     .object({

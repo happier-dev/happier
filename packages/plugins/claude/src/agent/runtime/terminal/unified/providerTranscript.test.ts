@@ -1,12 +1,15 @@
 import type {
-  TranscriptFileFollowHandleV1,
-  TranscriptFileFollowInputV1,
-  TranscriptFileFollowLineV1,
-  TranscriptFileFollowResetReasonV1,
-} from '@happier-dev/plugin-sdk';
+  AgentTranscriptFileFollowHandle as TranscriptFileFollowHandleV1,
+  AgentTranscriptFileFollowInput as TranscriptFileFollowInputV1,
+} from '@happier-dev/plugin-sdk/agent-runtime';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ClaudeUnifiedProviderTranscriptBindResult } from './providerTranscript.js';
+
+type TranscriptFileFollowLineV1 = Parameters<TranscriptFileFollowInputV1['onLine']>[0];
+type TranscriptFileFollowResetReasonV1 = Parameters<
+  NonNullable<TranscriptFileFollowInputV1['onReset']>
+>[0]['reason'];
 
 type TestLogger = Readonly<{
   debug: ReturnType<typeof vi.fn>;
@@ -188,7 +191,6 @@ describe('createClaudeUnifiedProviderTranscriptPublisher', () => {
     const ctx = createContext();
     const publisher = createClaudeUnifiedProviderTranscriptPublisher({
       ctx,
-      sessionId: 'happy-session-1',
     });
     publishers.push(publisher);
 
@@ -224,7 +226,6 @@ describe('createClaudeUnifiedProviderTranscriptPublisher', () => {
     const ctx = createContext();
     const publisher = createClaudeUnifiedProviderTranscriptPublisher({
       ctx,
-      sessionId: 'happy-session-1',
     });
     publishers.push(publisher);
 
@@ -275,8 +276,6 @@ describe('createClaudeUnifiedProviderTranscriptPublisher', () => {
 
     expect(ctx.agentRuntime.sessionHooks.publishProviderTranscript).toHaveBeenCalledTimes(3);
     expect(ctx.agentRuntime.sessionHooks.publishProviderTranscript).toHaveBeenNthCalledWith(1, {
-      providerId: 'claude',
-      sessionId: 'happy-session-1',
       providerSessionId: 'claude-session-1',
       kind: 'assistant_stop',
       turnId: 'assistant-row-1',
@@ -284,16 +283,12 @@ describe('createClaudeUnifiedProviderTranscriptPublisher', () => {
       providerPayload: assistantEndTurn,
     });
     expect(ctx.agentRuntime.sessionHooks.publishProviderTranscript).toHaveBeenNthCalledWith(2, {
-      providerId: 'claude',
-      sessionId: 'happy-session-1',
       providerSessionId: 'claude-session-1',
       kind: 'stop_hook_feedback',
       turnId: 'user-row-1',
       providerPayload: stopHookFeedback,
     });
     expect(ctx.agentRuntime.sessionHooks.publishProviderTranscript).toHaveBeenNthCalledWith(3, {
-      providerId: 'claude',
-      sessionId: 'happy-session-1',
       providerSessionId: 'claude-session-1',
       kind: 'text',
       turnId: 'user-row-2',
@@ -302,68 +297,216 @@ describe('createClaudeUnifiedProviderTranscriptPublisher', () => {
     });
   });
 
-  it('publishes Claude queued-command transcript rows as provider-acceptance evidence only', async () => {
+  it('publishes queued-command acceptance only after one exact native enqueue/remove/consumption episode', async () => {
     const { ctx } = await createBoundPublisher();
-    const queuedCommandOperation = {
+    const enqueuedAt = new Date(Date.now() + 1_000).toISOString();
+    const attachedAt = new Date(Date.parse(enqueuedAt) - 5).toISOString();
+    const queuedCommandEnqueue = {
       type: 'queue-operation',
       operation: 'enqueue',
-      uuid: 'queued-command-row-1',
+      sessionId: 'claude-session-1',
       content: 'prompt delivered through Claude queue',
-      timestamp: new Date(Date.now() + 1_000).toISOString(),
+      timestamp: attachedAt,
     };
-    const queuedCommandAttachment = {
-      type: 'attachment',
-      uuid: 'queued-command-row-2',
-      attachment: {
-        type: 'queued_command',
-        prompt: 'prompt delivered through Claude attachment',
-      },
-      timestamp: new Date(Date.now() + 2_000).toISOString(),
-    };
-    const removalOnly = {
+    const queuedCommandRemove = {
       type: 'queue-operation',
       operation: 'remove',
-      uuid: 'queued-command-row-3',
-      content: 'not delivery evidence',
-      timestamp: new Date(Date.now() + 3_000).toISOString(),
+      sessionId: 'claude-session-1',
+      content: 'prompt delivered through Claude queue',
+      timestamp: new Date(Date.now() + 2_000).toISOString(),
+    };
+    const queuedCommandConsumption = {
+      type: 'attachment',
+      uuid: 'queued-command-row-1',
+      parentUuid: 'queued-command-parent-1',
+      isSidechain: false,
+      sessionId: 'claude-session-1',
+      timestamp: enqueuedAt,
+      attachment: {
+        type: 'queued_command',
+        prompt: 'prompt delivered through Claude queue',
+        commandMode: 'prompt',
+        origin: { kind: 'human' },
+        timestamp: attachedAt,
+      },
     };
 
-    for (const row of [queuedCommandOperation, queuedCommandAttachment, removalOnly]) {
-      await ctx.fileFollows[0]?.emit(jsonLine(row));
-    }
+    await ctx.fileFollows[0]?.emit(jsonLine(queuedCommandEnqueue));
+    expect(ctx.agentRuntime.sessionHooks.publishProviderTranscript).not.toHaveBeenCalled();
+    await ctx.fileFollows[0]?.emit(jsonLine(queuedCommandRemove));
+    expect(ctx.agentRuntime.sessionHooks.publishProviderTranscript).not.toHaveBeenCalled();
+    await ctx.fileFollows[0]?.emit(jsonLine(queuedCommandConsumption));
 
-    expect(ctx.agentRuntime.sessionHooks.publishProviderTranscript).toHaveBeenCalledTimes(2);
-    expect(ctx.agentRuntime.sessionHooks.publishProviderTranscript).toHaveBeenNthCalledWith(1, {
-      providerId: 'claude',
-      sessionId: 'happy-session-1',
+    expect(ctx.agentRuntime.sessionHooks.publishProviderTranscript).toHaveBeenCalledTimes(1);
+    expect(ctx.agentRuntime.sessionHooks.publishProviderTranscript).toHaveBeenCalledWith({
       providerSessionId: 'claude-session-1',
       kind: 'queued_command',
       turnId: 'queued-command-row-1',
       text: 'prompt delivered through Claude queue',
-      providerPayload: queuedCommandOperation,
-    });
-    expect(ctx.agentRuntime.sessionHooks.publishProviderTranscript).toHaveBeenNthCalledWith(2, {
-      providerId: 'claude',
-      sessionId: 'happy-session-1',
-      providerSessionId: 'claude-session-1',
-      kind: 'queued_command',
-      turnId: 'queued-command-row-2',
-      text: 'prompt delivered through Claude attachment',
-      providerPayload: queuedCommandAttachment,
+      providerPayload: queuedCommandConsumption,
     });
   });
 
+  it('publishes repeated identical native queue episodes in chronological one-to-one order', async () => {
+    const { ctx } = await createBoundPublisher();
+    const prompt = 'repeat this exact native queue prompt';
+    const sessionId = 'claude-session-1';
+    const baseMs = Date.now() + 1_000;
+    const operations = [
+      ...[0, 1].map((episode) => ({
+        type: 'queue-operation',
+        operation: 'enqueue',
+        sessionId,
+        content: prompt,
+        timestamp: new Date(baseMs + episode * 1_000).toISOString(),
+      })),
+      ...[0, 1].map((episode) => ({
+        type: 'queue-operation',
+        operation: 'remove',
+        sessionId,
+        content: prompt,
+        timestamp: new Date(baseMs + 2_500 + episode * 500).toISOString(),
+      })),
+    ];
+    const consumptions = [0, 1].map((episode) => {
+      const attachedAt = new Date(baseMs + episode * 1_000 - 5).toISOString();
+      return {
+        type: 'attachment',
+        uuid: `repeated-queued-command-${episode + 1}`,
+        parentUuid: `repeated-queued-parent-${episode + 1}`,
+        isSidechain: false,
+        sessionId,
+        timestamp: attachedAt,
+        attachment: {
+          type: 'queued_command',
+          prompt,
+          commandMode: 'prompt',
+          origin: { kind: 'human' },
+          timestamp: attachedAt,
+        },
+      };
+    });
+
+    for (const row of [...operations, ...consumptions]) {
+      await ctx.fileFollows[0]?.emit(jsonLine(row));
+    }
+
+    expect(ctx.agentRuntime.sessionHooks.publishProviderTranscript).toHaveBeenCalledTimes(2);
+    expect(ctx.agentRuntime.sessionHooks.publishProviderTranscript).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      kind: 'queued_command',
+      turnId: 'repeated-queued-command-1',
+      text: prompt,
+    }));
+    expect(ctx.agentRuntime.sessionHooks.publishProviderTranscript).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      kind: 'queued_command',
+      turnId: 'repeated-queued-command-2',
+      text: prompt,
+    }));
+  });
+
+  it('fails closed for incomplete, mismatched, sidechain, replay-reset, and duplicate queue evidence', async () => {
+    const { ctx } = await createBoundPublisher();
+    let episodeIndex = 0;
+    const createEpisode = (overrides?: Readonly<{
+      prompt?: string;
+      operationSessionId?: string;
+      consumptionSessionId?: string;
+      consumptionPrompt?: string;
+      isSidechain?: boolean;
+      commandMode?: string;
+      originKind?: string;
+    }>) => {
+      episodeIndex += 1;
+      const prompt = overrides?.prompt ?? `queued prompt ${episodeIndex}`;
+      const enqueuedAt = new Date(Date.now() + episodeIndex * 10_000).toISOString();
+      return {
+        enqueue: {
+          type: 'queue-operation',
+          operation: 'enqueue',
+          sessionId: overrides?.operationSessionId ?? 'claude-session-1',
+          content: prompt,
+          timestamp: enqueuedAt,
+        },
+        remove: {
+          type: 'queue-operation',
+          operation: 'remove',
+          sessionId: overrides?.operationSessionId ?? 'claude-session-1',
+          content: prompt,
+          timestamp: new Date(Date.parse(enqueuedAt) + 1_000).toISOString(),
+        },
+        consumption: {
+          type: 'attachment',
+          uuid: `queued-command-row-${episodeIndex}`,
+          parentUuid: `queued-command-parent-${episodeIndex}`,
+          isSidechain: overrides?.isSidechain ?? false,
+          sessionId: overrides?.consumptionSessionId ?? 'claude-session-1',
+          timestamp: enqueuedAt,
+          attachment: {
+            type: 'queued_command',
+            prompt: overrides?.consumptionPrompt ?? prompt,
+            commandMode: overrides?.commandMode ?? 'prompt',
+            origin: { kind: overrides?.originKind ?? 'human' },
+            timestamp: enqueuedAt,
+          },
+        },
+      };
+    };
+    const emit = async (...rows: readonly unknown[]) => {
+      for (const row of rows) await ctx.fileFollows[0]?.emit(jsonLine(row));
+    };
+
+    const enqueueOnly = createEpisode();
+    await emit(enqueueOnly.enqueue);
+    const removeOnly = createEpisode();
+    await emit(removeOnly.remove);
+    const attachmentOnly = createEpisode();
+    await emit(attachmentOnly.consumption);
+
+    const sidechain = createEpisode({ isSidechain: true });
+    await emit(sidechain.enqueue, sidechain.remove, sidechain.consumption);
+    const wrongSession = createEpisode({
+      operationSessionId: 'other-session',
+      consumptionSessionId: 'other-session',
+    });
+    await emit(wrongSession.enqueue, wrongSession.remove, wrongSession.consumption);
+    const wrongContent = createEpisode({ consumptionPrompt: 'different prompt' });
+    await emit(wrongContent.enqueue, wrongContent.remove, wrongContent.consumption);
+    const wrongMode = createEpisode({ commandMode: 'command' });
+    await emit(wrongMode.enqueue, wrongMode.remove, wrongMode.consumption);
+    const wrongOrigin = createEpisode({ originKind: 'system' });
+    await emit(wrongOrigin.enqueue, wrongOrigin.remove, wrongOrigin.consumption);
+    const resetBeforeConsumption = createEpisode();
+    await emit(resetBeforeConsumption.enqueue, resetBeforeConsumption.remove);
+    await ctx.fileFollows[0]?.emitReset('truncated');
+    await emit(resetBeforeConsumption.consumption);
+    expect(ctx.agentRuntime.sessionHooks.publishProviderTranscript).not.toHaveBeenCalled();
+
+    const accepted = createEpisode();
+    await emit(accepted.enqueue, accepted.remove, accepted.consumption);
+    expect(ctx.agentRuntime.sessionHooks.publishProviderTranscript).toHaveBeenCalledTimes(1);
+
+    await emit(accepted.consumption, accepted.remove, {
+      ...accepted.consumption,
+      uuid: 'conflicting-duplicate-transcript-row',
+    });
+    expect(ctx.agentRuntime.sessionHooks.publishProviderTranscript).toHaveBeenCalledTimes(1);
+  });
+
   it('still observes queued-command rows through the raw work-state seam', async () => {
-    const observedRows: unknown[] = [];
+    const observedRows: Array<Readonly<{
+      row: unknown;
+      observation: Readonly<{ providerSessionId: string; historicalReplay: boolean }>;
+    }>> = [];
     const { ctx } = await createBoundPublisher({
-      onObserveRow: (row) => {
-        observedRows.push(row);
+      onObserveRow: (row, observation) => {
+        observedRows.push({ row, observation });
       },
     });
     const queuedCommandOperation = {
       type: 'queue-operation',
       operation: 'enqueue',
       uuid: 'queued-command-row-1',
+      sessionId: 'claude-session-1',
       content:
         '<task-notification><task-id>w1</task-id><tool-use-id>wf-tool-1</tool-use-id><status>completed</status></task-notification>',
       timestamp: new Date(Date.now() + 1_000).toISOString(),
@@ -383,28 +526,72 @@ describe('createClaudeUnifiedProviderTranscriptPublisher', () => {
       await ctx.fileFollows[0]?.emit(jsonLine(row));
     }
 
-    expect(ctx.agentRuntime.sessionHooks.publishProviderTranscript).toHaveBeenCalledTimes(2);
-    expect(observedRows).toEqual([queuedCommandOperation, queuedCommandAttachment]);
+    expect(ctx.agentRuntime.sessionHooks.publishProviderTranscript).not.toHaveBeenCalled();
+    expect(observedRows).toEqual([
+      {
+        row: queuedCommandOperation,
+        observation: {
+          providerSessionId: 'claude-session-1',
+          historicalReplay: false,
+        },
+      },
+      {
+        row: queuedCommandAttachment,
+        observation: {
+          providerSessionId: 'claude-session-1',
+          historicalReplay: false,
+        },
+      },
+    ]);
   });
 
-  it('observes trusted queued-command rows replayed during SessionStart binding', async () => {
-    const queuedCommandOperation = {
+  it('observes but never accepts queued-command history replayed during SessionStart binding', async () => {
+    const enqueuedAt = new Date(Date.now() + 1_000).toISOString();
+    const queuedCommandEnqueue = {
       type: 'queue-operation',
       operation: 'enqueue',
-      uuid: 'queued-command-initial-row',
+      sessionId: 'claude-session-1',
       content: 'prompt already present before SessionStart binding',
-      timestamp: new Date(Date.now() + 1_000).toISOString(),
+      timestamp: enqueuedAt,
     };
-    const observedRows: unknown[] = [];
+    const queuedCommandRemove = {
+      type: 'queue-operation',
+      operation: 'remove',
+      sessionId: 'claude-session-1',
+      content: 'prompt already present before SessionStart binding',
+      timestamp: new Date(Date.now() + 2_000).toISOString(),
+    };
+    const queuedCommandConsumption = {
+      type: 'attachment',
+      uuid: 'queued-command-initial-row',
+      parentUuid: 'queued-command-initial-parent',
+      isSidechain: false,
+      sessionId: 'claude-session-1',
+      timestamp: enqueuedAt,
+      attachment: {
+        type: 'queued_command',
+        prompt: 'prompt already present before SessionStart binding',
+        commandMode: 'prompt',
+        origin: { kind: 'human' },
+        timestamp: enqueuedAt,
+      },
+    };
+    const observedRows: Array<Readonly<{
+      row: unknown;
+      observation: Readonly<{ providerSessionId: string; historicalReplay: boolean }>;
+    }>> = [];
     const { createClaudeUnifiedProviderTranscriptPublisher } = await loadSubject();
     const ctx = createContext({
-      replayLinesOnFollow: [jsonLine(queuedCommandOperation)],
+      replayLinesOnFollow: [
+        jsonLine(queuedCommandEnqueue),
+        jsonLine(queuedCommandRemove),
+        jsonLine(queuedCommandConsumption),
+      ],
     });
     const publisher = createClaudeUnifiedProviderTranscriptPublisher({
       ctx,
-      sessionId: 'happy-session-1',
-      onObserveRow: (row) => {
-        observedRows.push(row);
+      onObserveRow: (row, observation) => {
+        observedRows.push({ row, observation });
       },
     });
     publishers.push(publisher);
@@ -425,17 +612,18 @@ describe('createClaudeUnifiedProviderTranscriptPublisher', () => {
       path: '/tmp/claude-session-1.jsonl',
       startAt: 'beginning',
     }));
-    expect(observedRows).toEqual([queuedCommandOperation]);
-    expect(ctx.agentRuntime.sessionHooks.publishProviderTranscript).toHaveBeenCalledTimes(1);
-    expect(ctx.agentRuntime.sessionHooks.publishProviderTranscript).toHaveBeenCalledWith({
-      providerId: 'claude',
-      sessionId: 'happy-session-1',
-      providerSessionId: 'claude-session-1',
-      kind: 'queued_command',
-      turnId: 'queued-command-initial-row',
-      text: 'prompt already present before SessionStart binding',
-      providerPayload: queuedCommandOperation,
-    });
+    expect(observedRows).toEqual([
+      queuedCommandEnqueue,
+      queuedCommandRemove,
+      queuedCommandConsumption,
+    ].map((row) => ({
+      row,
+      observation: {
+        providerSessionId: 'claude-session-1',
+        historicalReplay: true,
+      },
+    })));
+    expect(ctx.agentRuntime.sessionHooks.publishProviderTranscript).not.toHaveBeenCalled();
   });
 
   it('does not publish Claude synthetic no-response assistant closures as completion evidence', async () => {
@@ -493,7 +681,6 @@ describe('createClaudeUnifiedProviderTranscriptPublisher', () => {
     ctx.agentRuntime.transcripts.fileFollow.follow.mockRejectedValueOnce(denied);
     const publisher = createClaudeUnifiedProviderTranscriptPublisher({
       ctx,
-      sessionId: 'happy-session-1',
     });
     publishers.push(publisher);
 
@@ -536,8 +723,6 @@ describe('createClaudeUnifiedProviderTranscriptPublisher', () => {
     }));
 
   expect(ctx.agentRuntime.sessionHooks.publishProviderTranscript).toHaveBeenCalledWith({
-    providerId: 'claude',
-    sessionId: 'happy-session-1',
       providerSessionId: 'claude-session-1',
       kind: 'text',
       turnId: 'user-row-1',
@@ -559,8 +744,6 @@ describe('createClaudeUnifiedProviderTranscriptPublisher', () => {
     }));
 
     expect(ctx.agentRuntime.sessionHooks.publishProviderTranscript).toHaveBeenCalledWith({
-      providerId: 'claude',
-      sessionId: 'happy-session-1',
       providerSessionId: 'claude-session-1',
       kind: 'assistant_stop',
       turnId: 'assistant-row-1',
@@ -646,8 +829,6 @@ describe('createClaudeUnifiedProviderTranscriptPublisher', () => {
 
     expect(ctx.agentRuntime.sessionHooks.publishProviderTranscript).toHaveBeenCalledTimes(2);
     expect(ctx.agentRuntime.sessionHooks.publishProviderTranscript).toHaveBeenNthCalledWith(1, {
-      providerId: 'claude',
-      sessionId: 'happy-session-1',
       providerSessionId: 'claude-session-1',
       kind: 'text',
       turnId: 'historical-user-row',
@@ -655,8 +836,6 @@ describe('createClaudeUnifiedProviderTranscriptPublisher', () => {
       providerPayload: historicalUser,
     });
     expect(ctx.agentRuntime.sessionHooks.publishProviderTranscript).toHaveBeenNthCalledWith(2, {
-      providerId: 'claude',
-      sessionId: 'happy-session-1',
       providerSessionId: 'claude-session-1',
       kind: 'assistant_api_error',
       turnId: 'live-api-error-row',
@@ -669,7 +848,6 @@ describe('createClaudeUnifiedProviderTranscriptPublisher', () => {
     const ctx = createContext();
     const publisher = createClaudeUnifiedProviderTranscriptPublisher({
       ctx,
-      sessionId: 'happy-session-known-resume',
     });
     publishers.push(publisher);
 
@@ -700,14 +878,79 @@ describe('createClaudeUnifiedProviderTranscriptPublisher', () => {
     await ctx.fileFollows[0]?.emit(jsonLine(liveUser));
 
     expect(ctx.agentRuntime.sessionHooks.publishProviderTranscript).toHaveBeenCalledWith({
-      providerId: 'claude',
-      sessionId: 'happy-session-known-resume',
       providerSessionId: 'claude-known-resume',
       kind: 'text',
       turnId: 'known-live-user-row',
       text: 'known resumed prompt accepted',
       providerPayload: liveUser,
     });
+  });
+
+  it('rebinds to a rotated main SessionStart identity and stops publishing the prior transcript', async () => {
+    const { createClaudeUnifiedProviderTranscriptPublisher } = await loadSubject();
+    const ctx = createContext();
+    const observedRows: unknown[] = [];
+    const publisher = createClaudeUnifiedProviderTranscriptPublisher({
+      ctx,
+      onObserveRow: (row) => {
+        observedRows.push(row);
+      },
+    });
+    publishers.push(publisher);
+
+    await expect(publisher.bindKnownLiveTranscript({
+      providerSessionId: 'claude-session-before-compact',
+      transcriptPath: '/tmp/claude-session-before-compact.jsonl',
+    })).resolves.toEqual({
+      status: 'bound',
+      binding: {
+        providerSessionId: 'claude-session-before-compact',
+        transcriptPath: '/tmp/claude-session-before-compact.jsonl',
+      },
+    });
+
+    await expect(publisher.bindFromSessionHook('claude-session-after-compact', {
+      hook_event_name: 'SessionStart',
+      source: 'compact',
+      session_id: 'claude-session-after-compact',
+      transcript_path: '/tmp/claude-session-after-compact.jsonl',
+    })).resolves.toEqual({
+      status: 'bound',
+      binding: {
+        providerSessionId: 'claude-session-after-compact',
+        transcriptPath: '/tmp/claude-session-after-compact.jsonl',
+      },
+    });
+
+    expect(ctx.fileFollows).toHaveLength(2);
+    expect(ctx.fileFollows[0]?.close).toHaveBeenCalledTimes(1);
+
+    const rotatedRow = {
+      type: 'assistant',
+      uuid: 'assistant-after-compact',
+      message: { stop_reason: 'end_turn' },
+    };
+    await ctx.fileFollows[1]?.emit(jsonLine(rotatedRow));
+    expect(ctx.agentRuntime.sessionHooks.publishProviderTranscript).toHaveBeenCalledWith(expect.objectContaining({
+      providerSessionId: 'claude-session-after-compact',
+      turnId: 'assistant-after-compact',
+    }));
+
+    ctx.agentRuntime.sessionHooks.publishProviderTranscript.mockClear();
+    await ctx.fileFollows[0]?.emit(jsonLine({
+      type: 'system',
+      subtype: 'task_updated',
+      session_id: 'claude-session-before-compact',
+      task_id: 'stale-task',
+      patch: { status: 'killed' },
+    }));
+    await ctx.fileFollows[0]?.emit(jsonLine({
+      type: 'assistant',
+      uuid: 'stale-assistant-before-compact',
+      message: { stop_reason: 'end_turn' },
+    }));
+    expect(ctx.agentRuntime.sessionHooks.publishProviderTranscript).not.toHaveBeenCalled();
+    expect(observedRows).toEqual([rotatedRow]);
   });
 
   it('suppresses rows replayed by a file reset until the first fresh transcript row arrives', async () => {
@@ -749,8 +992,6 @@ describe('createClaudeUnifiedProviderTranscriptPublisher', () => {
 
     expect(ctx.agentRuntime.sessionHooks.publishProviderTranscript).toHaveBeenCalledTimes(2);
     expect(ctx.agentRuntime.sessionHooks.publishProviderTranscript).toHaveBeenNthCalledWith(1, {
-      providerId: 'claude',
-      sessionId: 'happy-session-1',
       providerSessionId: 'claude-session-1',
       kind: 'text',
       turnId: 'reset-fresh-user',
@@ -758,8 +999,6 @@ describe('createClaudeUnifiedProviderTranscriptPublisher', () => {
       providerPayload: freshUser,
     });
     expect(ctx.agentRuntime.sessionHooks.publishProviderTranscript).toHaveBeenNthCalledWith(2, {
-      providerId: 'claude',
-      sessionId: 'happy-session-1',
       providerSessionId: 'claude-session-1',
       kind: 'text',
       turnId: 'reset-later-backdated-user',
@@ -770,6 +1009,13 @@ describe('createClaudeUnifiedProviderTranscriptPublisher', () => {
 
   it('does not observe resume-replayed rows on the raw work-state seam before the live cutoff', async () => {
     const observedRows: unknown[] = [];
+    const oldProviderTask = {
+      type: 'system',
+      subtype: 'task_updated',
+      session_id: 'claude-session-1',
+      task_id: 'old-provider-task',
+      patch: { status: 'killed' },
+    };
     const oldGoalStatus = {
       type: 'attachment',
       uuid: 'resume-old-goal-status',
@@ -789,7 +1035,11 @@ describe('createClaudeUnifiedProviderTranscriptPublisher', () => {
     };
     const { ctx } = await createBoundPublisher({
       source: 'resume',
-      replayLinesOnFollow: [jsonLine(oldGoalStatus), jsonLine(oldGoalWithoutTimestamp)],
+      replayLinesOnFollow: [
+        jsonLine(oldGoalStatus),
+        jsonLine(oldGoalWithoutTimestamp),
+        jsonLine(oldProviderTask),
+      ],
       onObserveRow: (row) => {
         observedRows.push(row);
       },
@@ -909,8 +1159,6 @@ describe('createClaudeUnifiedProviderTranscriptPublisher', () => {
         text: "Compacted\nPreCompact [python3 '/tmp/hook.py'] completed successfully\nPostCompact [python3 '/tmp/hook.py'] completed successfully",
       }),
       expect.objectContaining({
-        providerId: 'claude',
-        sessionId: 'happy-session-1',
         providerSessionId: 'claude-session-1',
         kind: 'compact_boundary',
         turnId: 'compact-boundary-1',

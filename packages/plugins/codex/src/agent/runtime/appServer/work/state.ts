@@ -1,31 +1,24 @@
-import { z } from 'zod';
 import {
   mergeSessionWorkStateMetadataV1,
   type SessionWorkStateItemV1,
-  type SessionWorkStateStatusV1,
   type SessionWorkStateV1,
   type SessionWorkStateWriteSnapshotV1,
 } from '@happier-dev/plugin-sdk/experimental/sessions/workState';
+import { decodeCodexAppServerGoal, normalizeCodexGoalTimestampMs } from './goalCodec.js';
 
 type MetadataRecord = Record<string, unknown>;
-type CodexAppServerGoalStatus = 'active' | 'paused' | 'budgetLimited' | 'complete';
-
 const CODEX_BACKEND_ID = 'codex';
 const LEGACY_CODEX_GOAL_ITEM_ID = 'goal:codex:thread';
 const LEGACY_CODEX_GOAL_ITEM_PREFIX = 'goal:codex:';
 
-const CodexAppServerGoalSchema = z
-  .object({
-    threadId: z.string().min(1),
-    objective: z.string().trim().min(1).max(4000),
-    status: z.enum(['active', 'paused', 'budgetLimited', 'complete']),
-    tokenBudget: z.number().finite().positive().nullable().optional(),
-    tokensUsed: z.number().int().nonnegative().optional(),
-    timeUsedSeconds: z.number().finite().nonnegative().optional(),
-    createdAt: z.union([z.string(), z.number()]).optional(),
-    updatedAt: z.union([z.string(), z.number()]),
-  })
-  .passthrough();
+const CODEX_GOAL_PROJECTION_FIELD = 'codexGoalProjectionV1';
+
+type CodexGoalProjectionV1 = Readonly<{
+  v: 1;
+  threadId: string;
+  updatedAt: number;
+  state: 'present' | 'cleared';
+}>;
 
 function asRecord(value: unknown): MetadataRecord | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as MetadataRecord : null;
@@ -42,73 +35,54 @@ function readString(value: unknown): string | null {
 }
 
 function readNonNegativeInteger(value: unknown): number | null {
-  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null;
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
-function normalizeTimestampMs(value: unknown): number | null {
-  if (typeof value === 'number' && Number.isInteger(value) && value >= 0) return value;
-  if (typeof value !== 'string') return null;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
-}
-
-function normalizeCodexGoalStatus(status: CodexAppServerGoalStatus): SessionWorkStateStatusV1 {
-  if (status === 'budgetLimited') return 'blocked';
-  if (status === 'complete') return 'complete';
-  return status;
-}
-
-function normalizeCodexGoalStatusReason(status: CodexAppServerGoalStatus): 'budgetLimited' | undefined {
-  return status === 'budgetLimited' ? 'budgetLimited' : undefined;
-}
-
-function buildCodexGoalItemId(vendorRef: string): string {
-  const normalized = vendorRef.trim();
-  if (!normalized) {
-    throw new Error('vendorRef is required');
+function readProjection(metadata: unknown): CodexGoalProjectionV1 | null {
+  const record = asRecord(asRecord(metadata)?.[CODEX_GOAL_PROJECTION_FIELD]);
+  const threadId = readString(record?.threadId);
+  const updatedAt = readNonNegativeInteger(record?.updatedAt);
+  const state = record?.state;
+  if (record?.v !== 1 || !threadId || updatedAt === null || (state !== 'present' && state !== 'cleared')) {
+    return null;
   }
-  return `goal:${normalized}`;
+  return { v: 1, threadId, updatedAt, state };
 }
 
-function normalizeCodexAppServerGoalToSessionWorkStateItem(params: Readonly<{
-  backendId: string;
-  agentId?: string;
-  goal: unknown;
-}>): SessionWorkStateItemV1 | null {
-  const parsed = CodexAppServerGoalSchema.safeParse(params.goal);
-  if (!parsed.success) return null;
-
-  const updatedAt = normalizeTimestampMs(parsed.data.updatedAt);
-  if (updatedAt === null) return null;
-  const createdAt = normalizeTimestampMs(parsed.data.createdAt);
-  const statusReason = normalizeCodexGoalStatusReason(parsed.data.status);
-
-  return {
-    id: buildCodexGoalItemId(parsed.data.threadId),
-    kind: 'goal',
-    origin: 'vendor',
-    status: normalizeCodexGoalStatus(parsed.data.status),
-    ...(statusReason ? { statusReason } : {}),
-    title: parsed.data.objective.trim(),
-    backendId: params.backendId,
-    ...(params.agentId ? { agentId: params.agentId } : {}),
-    vendorRef: parsed.data.threadId,
-    ...(Object.prototype.hasOwnProperty.call(parsed.data, 'tokenBudget') ? { tokenBudget: parsed.data.tokenBudget } : {}),
-    ...(typeof parsed.data.tokensUsed === 'number' ? { tokensUsed: parsed.data.tokensUsed } : {}),
-    ...(typeof parsed.data.timeUsedSeconds === 'number' ? { timeUsedSeconds: parsed.data.timeUsedSeconds } : {}),
-    ...(createdAt !== null ? { createdAt } : {}),
-    updatedAt,
-  };
+function deriveProjection(metadata: unknown): CodexGoalProjectionV1 | null {
+  const explicit = readProjection(metadata);
+  if (explicit) return explicit;
+  const current = readItems(asRecord(asRecord(metadata)?.sessionWorkStateV1)?.items).find(isCodexGoalItem);
+  const threadId = readString(current?.vendorRef);
+  const updatedAt = readNonNegativeInteger(current?.updatedAt);
+  return threadId && updatedAt !== null ? { v: 1, threadId, updatedAt, state: 'present' } : null;
 }
 
-function readCurrentWorkState(metadata: unknown, backendId: string): MetadataRecord {
+function withProjection<TMetadata extends object>(
+  metadata: TMetadata,
+  projection: CodexGoalProjectionV1,
+): TMetadata & { codexGoalProjectionV1: CodexGoalProjectionV1 } {
+  return { ...metadata, codexGoalProjectionV1: projection };
+}
+
+function readCurrentWorkState(metadata: unknown, backendId: string): SessionWorkStateWriteSnapshotV1 {
   const current = asRecord(asRecord(metadata)?.sessionWorkStateV1) ?? {};
   return {
     ...current,
-    v: 1,
+    v: 1 as const,
     backendId: readString(current.backendId) ?? backendId,
     updatedAt: readNonNegativeInteger(current.updatedAt) ?? 0,
     items: readItems(current.items),
+  };
+}
+
+function preserveCurrentWorkState<TMetadata extends object>(
+  metadata: TMetadata,
+  backendId: string,
+): TMetadata & { sessionWorkStateV1: SessionWorkStateWriteSnapshotV1 } {
+  return {
+    ...metadata,
+    sessionWorkStateV1: readCurrentWorkState(metadata, backendId),
   };
 }
 
@@ -130,14 +104,19 @@ export function mergeCodexGoalIntoSessionWorkStateMetadata<TMetadata extends obj
   }> = {},
 ): TMetadata & { sessionWorkStateV1: SessionWorkStateWriteSnapshotV1 } {
   const backendId = options.backendId ?? CODEX_BACKEND_ID;
-  const item = normalizeCodexAppServerGoalToSessionWorkStateItem({
+  const item = decodeCodexAppServerGoal({
     backendId,
     ...(options.agentId ? { agentId: options.agentId } : {}),
     goal,
   });
 
-  if (!item) {
-    return removeCodexGoalFromSessionWorkStateMetadata(metadata, { backendId });
+  if (!item) return preserveCurrentWorkState(metadata, backendId);
+
+  const projection = deriveProjection(metadata);
+  if (projection && projection.threadId === item.vendorRef && (
+    projection.updatedAt >= item.updatedAt
+  )) {
+    return preserveCurrentWorkState(metadata, backendId);
   }
 
   const current = readCurrentWorkState(metadata, backendId);
@@ -157,7 +136,7 @@ export function mergeCodexGoalIntoSessionWorkStateMetadata<TMetadata extends obj
   // item set (shared `resolveSessionWorkStatePrimaryItemId`), so this path no
   // longer re-derives its own primary — one rule, no Codex-local duplicate.
   return {
-    ...metadata,
+    ...withProjection(metadata, { v: 1, threadId: item.vendorRef, updatedAt: item.updatedAt, state: 'present' }),
     ...mergeSessionWorkStateMetadataV1({
       metadata,
       nextOwned,
@@ -171,10 +150,25 @@ export function removeCodexGoalFromSessionWorkStateMetadata<TMetadata extends ob
   metadata: TMetadata,
   options: Readonly<{
     backendId?: string;
+    threadId?: string;
+    updatedAt?: string | number;
   }> = {},
 ): TMetadata & { sessionWorkStateV1: SessionWorkStateWriteSnapshotV1 } {
   const backendId = options.backendId ?? CODEX_BACKEND_ID;
   const current = readCurrentWorkState(metadata, backendId);
+  const projection = deriveProjection(metadata);
+  const threadId = readString(options.threadId)
+    ?? projection?.threadId
+    ?? readItems(current.items).map((item) => readString(item.vendorRef)).find(Boolean)
+    ?? null;
+  const explicitUpdatedAt = normalizeCodexGoalTimestampMs(options.updatedAt);
+  if (projection && threadId && projection.threadId !== threadId) {
+    return preserveCurrentWorkState(metadata, backendId);
+  }
+  if (explicitUpdatedAt !== null && projection && explicitUpdatedAt < projection.updatedAt) {
+    return preserveCurrentWorkState(metadata, backendId);
+  }
+  const clearedAt = explicitUpdatedAt ?? projection?.updatedAt ?? readNonNegativeInteger(current.updatedAt) ?? 0;
   const ownedItemIds = readItems(current.items)
     .filter(isCodexGoalItem)
     .map((item) => readString(item.id))
@@ -183,14 +177,17 @@ export function removeCodexGoalFromSessionWorkStateMetadata<TMetadata extends ob
   const nextOwned: SessionWorkStateV1 = {
     v: 1,
     backendId,
-    updatedAt: readNonNegativeInteger(current.updatedAt) ?? 0,
+    updatedAt: clearedAt,
     items: [] satisfies SessionWorkStateItemV1[],
     primaryItemId: null,
   };
   // Primary is re-resolved canonically at the merge chokepoint after the Codex
   // goal item is removed; no Codex-local primary computation here.
+  const metadataWithProjection = threadId
+    ? withProjection(metadata, { v: 1, threadId, updatedAt: clearedAt, state: 'cleared' })
+    : metadata;
   return {
-    ...metadata,
+    ...metadataWithProjection,
     ...mergeSessionWorkStateMetadataV1({
       metadata,
       nextOwned,

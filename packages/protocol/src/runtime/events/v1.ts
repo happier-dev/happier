@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { RuntimeDescriptorV1Schema } from '../../sessionMetadata/runtimeDescriptorV1.js';
+import { RuntimeDescriptorV1Schema } from '../../sessions/metadata/runtimeDescriptorV1.js';
 import {
   SessionIdSchema,
   SidechainIdSchema,
@@ -11,11 +11,16 @@ import {
   RuntimeStatusChangeDetailV1Schema,
 } from '../../sessions/runtimeModeV1.js';
 import { SessionRuntimeIssueV1Schema } from '../../sessions/control/runtimeIssueV1.js';
+import { PendingLocalIdSchema } from '../../sessions/pending/pendingLocalId.js';
 import {
   SubagentLifecycleDetailV1Schema,
   SubagentRefV1Schema,
   SubagentStatusV1Schema,
 } from '../../sessions/subagents/subagentRefV1.js';
+import {
+  AgentRuntimeJsonValueV1Schema,
+  AgentSessionProviderCheckpointV1Schema,
+} from '../agentSessionV1.js';
 
 const RuntimeEventBaseV1Schema = z.object({
   sessionId: SessionIdSchema,
@@ -24,11 +29,11 @@ const RuntimeEventBaseV1Schema = z.object({
   sidechainId: SidechainIdSchema.optional(),
 }).passthrough();
 
-const ProviderTurnIdV1Schema = z.string().trim().min(1);
+const AgentTurnIdV1Schema = z.string().trim().min(1);
 
 const RuntimeTurnEventBaseV1Schema = RuntimeEventBaseV1Schema.extend({
   turnId: TurnIdSchema,
-  providerTurnId: ProviderTurnIdV1Schema.optional(),
+  agentTurnId: AgentTurnIdV1Schema.optional(),
 });
 
 const MessageDeltaEventV1Schema = RuntimeEventBaseV1Schema.extend({
@@ -37,18 +42,33 @@ const MessageDeltaEventV1Schema = RuntimeEventBaseV1Schema.extend({
   delta: z.unknown(),
 });
 
+const ExactOpaqueToolCallIdV1Schema = z.string().refine(
+  (value) => value.trim().length > 0,
+  'Tool call id must contain at least one non-whitespace character',
+);
+
+const RuntimeToolOperationalLocalIdV1Schema = z.string()
+  .max(160)
+  .refine(
+    (value) => value.trim().length > 0,
+    'Runtime tool operational local id must contain at least one non-whitespace character',
+  );
+
 const ToolCallEventV1Schema = RuntimeEventBaseV1Schema.extend({
   kind: z.literal('tool-call'),
   turnId: TurnIdSchema,
-  toolCallId: z.string().trim().min(1),
+  toolCallId: ExactOpaqueToolCallIdV1Schema,
+  localId: RuntimeToolOperationalLocalIdV1Schema.optional(),
   toolName: z.string().trim().min(1),
   toolInput: z.unknown(),
+  toolSnapshot: z.unknown().optional(),
 });
 
 const ToolResultEventV1Schema = RuntimeEventBaseV1Schema.extend({
   kind: z.literal('tool-result'),
   turnId: TurnIdSchema,
-  toolCallId: z.string().trim().min(1),
+  toolCallId: ExactOpaqueToolCallIdV1Schema,
+  localId: RuntimeToolOperationalLocalIdV1Schema.optional(),
   output: z.unknown(),
   isError: z.boolean().optional(),
 });
@@ -56,15 +76,20 @@ const ToolResultEventV1Schema = RuntimeEventBaseV1Schema.extend({
 const ToolProgressEventV1Schema = RuntimeEventBaseV1Schema.extend({
   kind: z.literal('tool-progress'),
   turnId: TurnIdSchema,
-  toolCallId: z.string().trim().min(1),
+  toolCallId: ExactOpaqueToolCallIdV1Schema,
+  localId: RuntimeToolOperationalLocalIdV1Schema.optional(),
   progress: z.unknown(),
 });
 
 const TurnStartEventV1Schema = RuntimeEventBaseV1Schema.extend({
   kind: z.literal('turn-start'),
   turnId: TurnIdSchema,
-  providerTurnId: ProviderTurnIdV1Schema.optional(),
+  agentTurnId: AgentTurnIdV1Schema.optional(),
   startedBy: z.string().optional(),
+});
+
+const TurnProgressEventV1Schema = RuntimeTurnEventBaseV1Schema.extend({
+  kind: z.literal('turn-progress'),
 });
 
 const TurnCompleteEventV1Schema = RuntimeTurnEventBaseV1Schema.extend({
@@ -83,9 +108,9 @@ const TurnCancelledEventV1Schema = RuntimeTurnEventBaseV1Schema.extend({
 });
 
 const TurnProviderIdObservedEventV1Schema = RuntimeEventBaseV1Schema.extend({
-  kind: z.literal('turn-provider-id-observed'),
+  kind: z.literal('turn-agent-id-observed'),
   turnId: TurnIdSchema,
-  providerTurnId: ProviderTurnIdV1Schema,
+  agentTurnId: AgentTurnIdV1Schema,
 });
 
 const TurnInputAppendedEventV1Schema = RuntimeTurnEventBaseV1Schema.extend({
@@ -97,13 +122,13 @@ const TurnInputAppendedEventV1Schema = RuntimeTurnEventBaseV1Schema.extend({
 const TranscriptUserTextEventV1Schema = RuntimeEventBaseV1Schema.extend({
   kind: z.literal('transcript-user-text'),
   text: z.string(),
-  localId: z.string().trim().min(1).optional(),
+  localId: PendingLocalIdSchema,
   meta: z.record(z.string(), z.unknown()).optional(),
 });
 
 const TranscriptAgentMessageCommittedEventV1Schema = RuntimeEventBaseV1Schema.extend({
   kind: z.literal('transcript-agent-message-committed'),
-  provider: z.string().trim().min(1),
+  agentId: z.string().trim().min(1),
   localId: z.string().trim().min(1),
   body: z.unknown(),
   meta: z.record(z.string(), z.unknown()).optional(),
@@ -114,18 +139,19 @@ const TurnRollbackBoundaryObservedEventV1Schema = RuntimeTurnEventBaseV1Schema.e
   startUserMessageSeq: z.number().int().nonnegative().optional(),
   startSeqInclusive: z.number().int().nonnegative().optional(),
   endSeqInclusive: z.number().int().nonnegative().nullable().optional(),
-  providerRollbackOrdinal: z.number().int().nonnegative().optional(),
+  agentRollbackOrdinal: z.number().int().nonnegative().optional(),
+  providerCheckpoint: AgentSessionProviderCheckpointV1Schema.optional(),
 });
 
 const TurnRollbackAppliedEventV1Schema = RuntimeTurnEventBaseV1Schema.extend({
   kind: z.literal('turn-rollback-applied'),
   restoredToTurnId: TurnIdSchema,
-  providerRollbackOrdinal: z.number().int().nonnegative().optional(),
+  agentRollbackOrdinal: z.number().int().nonnegative().optional(),
 });
 
 const SessionEndedEventV1Schema = RuntimeEventBaseV1Schema.extend({
   kind: z.literal('session-ended'),
-  providerSessionId: z.string().trim().min(1).optional(),
+  agentSessionId: z.string().trim().min(1).optional(),
   reason: z.string().trim().min(1).optional(),
 });
 
@@ -187,9 +213,9 @@ const ContextCompactionEventV1Schema = RuntimeEventBaseV1Schema.extend({
   phase: z.enum(['started', 'progress', 'completed', 'failed', 'cancelled']),
   lifecycleId: z.string().trim().min(1).optional(),
   source: z.enum([
-    'provider-event',
-    'provider-status',
-    'provider-hook',
+    'agent-event',
+    'agent-status',
+    'agent-hook',
     'transcript-inference',
     'runtime',
     'user-command',
@@ -197,8 +223,8 @@ const ContextCompactionEventV1Schema = RuntimeEventBaseV1Schema.extend({
   trigger: z.enum(['manual', 'auto', 'threshold', 'overflow', 'unknown']).optional(),
   backendId: z.string().trim().min(1).optional(),
   agentId: z.string().trim().min(1).optional(),
-  providerEventId: z.string().trim().min(1).optional(),
-  providerSessionId: z.string().trim().min(1).optional(),
+  agentEventId: z.string().trim().min(1).optional(),
+  agentSessionId: z.string().trim().min(1).optional(),
   turnId: TurnIdSchema.optional(),
   tokenCountBefore: z.number().finite().nonnegative().optional(),
   tokenCountAfter: z.number().finite().nonnegative().optional(),
@@ -233,6 +259,7 @@ export const RuntimeEventV1Schema = z.discriminatedUnion('kind', [
   ToolResultEventV1Schema,
   ToolProgressEventV1Schema,
   TurnStartEventV1Schema,
+  TurnProgressEventV1Schema,
   TurnCompleteEventV1Schema,
   TurnFailedEventV1Schema,
   TurnCancelledEventV1Schema,
@@ -263,10 +290,11 @@ export const RUNTIME_EVENT_KINDS_V1 = [
   'tool-result',
   'tool-progress',
   'turn-start',
+  'turn-progress',
   'turn-complete',
   'turn-failed',
   'turn-cancelled',
-  'turn-provider-id-observed',
+  'turn-agent-id-observed',
   'turn-input-appended',
   'transcript-user-text',
   'transcript-agent-message-committed',

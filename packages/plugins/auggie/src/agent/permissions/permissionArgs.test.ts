@@ -1,13 +1,16 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildAuggiePermissionArgs } from './permissionArgs.js';
+import {
+  buildAuggiePermissionIntentArgs,
+} from './permissionArgs.js';
 
 describe('Auggie permission args', () => {
-  it('normalizes workspace-write aliases through the shared ACP permission intent parser', () => {
-    const args = buildAuggiePermissionArgs('workspace_write');
-
-    expect(args).toContain('save-file:allow');
-    expect(args).toContain('apply_patch:allow');
-    expect(args).toContain('web-search:ask-user');
+  it('consumes each canonical native permission intent without a second alias field', () => {
+    expect(buildAuggiePermissionIntentArgs('default')).toContain('view:allow');
+    expect(buildAuggiePermissionIntentArgs('read-only')).toContain('save-file:deny');
+    expect(buildAuggiePermissionIntentArgs('safe-yolo')).toContain('save-file:allow');
+    expect(buildAuggiePermissionIntentArgs('yolo')).toContain('web-search:allow');
+    expect(buildAuggiePermissionIntentArgs('plan')).toContain('launch-process:deny');
+    expect(buildAuggiePermissionIntentArgs(null)).toContain('view:allow');
   });
 });

@@ -3,19 +3,13 @@ import {
   type RuntimeDescriptorV1,
   type ExternalSessionResolvedIdentityV1,
   type SessionStateUpdateV1,
-} from '@happier-dev/plugin-sdk/sessions';
+} from '@happier-dev/plugin-sdk/experimental/sessions';
 
 import {
   buildOpenCodeAgentRuntimeDescriptorV1,
   readCanonicalOpenCodeAgentRuntimeDescriptorV1,
   readOpenCodeSessionRuntimeHandleFromMetadata,
 } from '../../../identity/runtimeDescriptor.js';
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null;
-}
 
 function buildSessionStateUpdates(params: Readonly<{
   providerSessionId: string;
@@ -115,12 +109,7 @@ export function resolveOpenCodeLinkedExternalSessionIdentity(params: Readonly<{
   providerSessionId: string;
   source: ExternalSessionsSource;
 }>): ExternalSessionResolvedIdentityV1 {
-  const externalSession = asRecord(params.metadata.externalSessionV1);
-  const runtimeHandle = readOpenCodeSessionRuntimeHandleFromMetadata({
-    ...params.metadata,
-    runtimeDescriptorV1: externalSession?.runtimeDescriptorV1 ?? params.metadata.runtimeDescriptorV1,
-    agentRuntimeDescriptorV1: externalSession?.agentRuntimeDescriptorV1 ?? params.metadata.agentRuntimeDescriptorV1,
-  });
+  const runtimeHandle = readOpenCodeSessionRuntimeHandleFromMetadata(params.metadata);
   const baseUrl =
     runtimeHandle.serverBaseUrl
     ?? (params.source.kind === 'opencodeServer' && typeof params.source.baseUrl === 'string'

@@ -1,6 +1,4 @@
-import { normalizeAcpPermissionIntent } from '@happier-dev/plugin-sdk/experimental/acp';
-
-export type AuggiePermissionMode = string | null | undefined;
+import type { AgentPermissionIntent } from '@happier-dev/plugin-sdk/agent-runtime';
 
 type AuggieToolPolicy = 'allow' | 'deny' | 'ask-user';
 
@@ -33,9 +31,7 @@ function permissionArgsForRules(rules: ReadonlyArray<readonly [string, AuggieToo
   return rules.flatMap(([tool, policy]) => ['--permission', `${tool}:${policy}`]);
 }
 
-export function buildAuggiePermissionArgs(permissionMode: AuggiePermissionMode): string[] {
-  const intent = normalizeAcpPermissionIntent(permissionMode);
-
+export function buildAuggiePermissionIntentArgs(intent: AgentPermissionIntent | null): string[] {
   if (intent === 'yolo') {
     return permissionArgsForRules(AUGGIE_TOOL_NAMES.map((tool) => [tool, 'allow'] as const));
   }

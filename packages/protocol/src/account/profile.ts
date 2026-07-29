@@ -5,9 +5,14 @@ import {
   ConnectedServiceAuthGroupIdSchema,
   ConnectedServiceCloudVendorKeySchema,
   ConnectedServiceCredentialHealthV1Schema,
+  ConnectedServiceCredentialRevisionV1Schema,
   ConnectedServiceIdSchema,
   ConnectedServiceProfileIdSchema,
 } from '../connect/connectedServiceSchemas.js';
+import {
+  QualifiedConnectedAccountGroupV4Schema,
+  QualifiedConnectedAccountProfileV4Schema,
+} from '../connect/qualifiedConnectedAccountsV4.js';
 
 const ConnectedServiceV2ProfileSchema = z.object({
   profileId: z.string().min(1),
@@ -34,6 +39,12 @@ const ConnectedServiceV2ServiceSchema = z.object({
   groups: z.array(ConnectedServiceV2GroupSchema).default([]),
 }).strict();
 
+const ConnectedServiceCredentialRevisionProjectionV1Schema = z.object({
+  serviceId: ConnectedServiceIdSchema,
+  profileId: ConnectedServiceProfileIdSchema,
+  credentialRevision: ConnectedServiceCredentialRevisionV1Schema,
+}).strict();
+
 export const LinkedProviderSchema = z.object({
   id: z.string(),
   login: z.string().nullable(),
@@ -55,6 +66,9 @@ export const AccountProfileSchema = z.object({
   linkedProviders: z.array(LinkedProviderSchema).default([]),
   connectedServices: z.array(ConnectedServiceCloudVendorKeySchema).default([]),
   connectedServicesV2: z.array(ConnectedServiceV2ServiceSchema).default([]),
+  connectedServiceCredentialRevisionsV1: z.array(ConnectedServiceCredentialRevisionProjectionV1Schema).default([]),
+  connectedAccountsV4: z.array(QualifiedConnectedAccountProfileV4Schema).default([]),
+  connectedAccountGroupsV4: z.array(QualifiedConnectedAccountGroupV4Schema).default([]),
 }).passthrough();
 
 export type AccountProfile = z.infer<typeof AccountProfileSchema>;

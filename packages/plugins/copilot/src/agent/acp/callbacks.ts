@@ -1,8 +1,10 @@
-import { parsePermissionIntentAlias, type AcpTier2ArgvBuilderV1 } from '@happier-dev/plugin-sdk/experimental/acp';
+import type { AgentPermissionIntent } from '@happier-dev/plugin-sdk/agent-runtime';
 
-export const buildCopilotAcpArgv: AcpTier2ArgvBuilderV1 = ({ baseArgs, permissionMode }) => {
-  const intent = parsePermissionIntentAlias(permissionMode ?? 'default') ?? 'default';
-  return intent === 'yolo'
-    ? [...baseArgs, '--yolo']
-    : [...baseArgs];
-};
+export function buildCopilotAcpArgv(params: Readonly<{
+  baseArgs: readonly string[];
+  permissionIntent: AgentPermissionIntent | null;
+}>): readonly string[] {
+  return params.permissionIntent === 'yolo'
+    ? [...params.baseArgs, '--yolo']
+    : [...params.baseArgs];
+}

@@ -1,4 +1,4 @@
-import type { TerminalControlPort } from '@happier-dev/plugin-sdk/experimental/runtime/session';
+import type { TerminalControlPort } from '@happier-dev/agents';
 import { sleep } from '@happier-dev/plugin-sdk/experimental/timeout';
 
 import type { ClaudeScreenState } from '../screenState.js';

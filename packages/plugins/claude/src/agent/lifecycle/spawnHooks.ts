@@ -1,3 +1,5 @@
+import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+
 import { resolveClaudeConfigDirOverride } from '../surfaces/sessions/handoff/path.js';
 
 type ClaudeDaemonResolvedTool =
@@ -20,19 +22,13 @@ type ClaudeDaemonSpawnToolResolutionContext = Readonly<{
     }>): Promise<ClaudeDaemonResolvedTool>;
 }>;
 
-type ClaudeDaemonSpawnHookContext = Readonly<{
+type ClaudeDaemonSpawnHookContext = Partial<PluginInvocationContext> & Readonly<{
     tools?: ClaudeDaemonSpawnToolResolutionContext;
 }>;
 
-type ClaudeDaemonSpawnPrerequisiteResult = Readonly<{
-    allowed: boolean;
-    reasonCode?: string;
-    errorMessage?: string;
-}>;
-
-type ClaudeDaemonHookEvent = Readonly<{
-    payload?: unknown;
-}>;
+type ClaudeDaemonSpawnPrerequisiteResult =
+    | Readonly<{ decision: 'allow' }>
+    | Readonly<{ decision: 'deny'; reasonCode: string; errorMessage: string }>;
 
 function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
     return value && typeof value === 'object' && !Array.isArray(value)
@@ -40,8 +36,13 @@ function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
         : null;
 }
 
-function readEnvFromEvent(event: ClaudeDaemonHookEvent): NodeJS.ProcessEnv {
-    const env = readRecord(readRecord(event.payload)?.env);
+function readHookPayload(event: unknown): Readonly<Record<string, unknown>> {
+    const record = readRecord(event);
+    return readRecord(record?.payload) ?? record ?? {};
+}
+
+function readEnvFromEvent(event: unknown): NodeJS.ProcessEnv {
+    const env = readRecord(readHookPayload(event).env);
     if (!env) return process.env;
     const out: NodeJS.ProcessEnv = {};
     for (const [key, value] of Object.entries(env)) {
@@ -54,14 +55,14 @@ function readEnvFromEvent(event: ClaudeDaemonHookEvent): NodeJS.ProcessEnv {
 
 function denyClaudeCliUnavailable(errorMessage: string): ClaudeDaemonSpawnPrerequisiteResult {
     return {
-        allowed: false,
+        decision: 'deny',
         reasonCode: 'claude_cli_unavailable',
         errorMessage,
     };
 }
 
 export async function resolveClaudeDaemonSpawnPrerequisites(
-    _event: ClaudeDaemonHookEvent,
+    _event: unknown,
     context?: ClaudeDaemonSpawnHookContext,
 ): Promise<ClaudeDaemonSpawnPrerequisiteResult> {
     const tools = context?.tools;
@@ -77,13 +78,13 @@ export async function resolveClaudeDaemonSpawnPrerequisites(
     });
 
     if (resolvedTool.ok) {
-        return { allowed: true };
+        return { decision: 'allow' };
     }
 
     return denyClaudeCliUnavailable(resolvedTool.errorMessage);
 }
 
-export function augmentClaudeDaemonSpawnEnv(event: ClaudeDaemonHookEvent): Record<string, string> {
+export function augmentClaudeDaemonSpawnEnv(event: unknown): Record<string, string> {
     const claudeConfigDir = resolveClaudeConfigDirOverride(readEnvFromEvent(event));
     if (!claudeConfigDir) {
         return {};

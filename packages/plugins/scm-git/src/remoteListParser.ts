@@ -1,4 +1,4 @@
-import type { ScmRemoteInfo } from '@happier-dev/plugin-sdk/scm';
+import type { ScmRemoteInfo } from '@happier-dev/plugin-sdk/experimental/scm';
 
 const GIT_REMOTE_VERBOSE_LINE = /^(\S+)\s+(.+?)\s+\((fetch|push)\)$/;
 

@@ -35,6 +35,8 @@ export type HandoffImportResultV1 = Readonly<{
 export type HandoffFailureCodeV1 =
   | 'bundle_invalid'
   | 'target_import_failed'
+  | 'target_identity_conflict'
+  | 'agent_version_unsupported'
   | 'handoff_failed';
 
 export type HandoffSurfaceV1 = Readonly<{

@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ExecRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
-
 import * as cursorCliModelsModule from './models.js';
 import { parseCursorCliModelsOutput } from './models.js';
 
+type CursorCliModelsExec = Parameters<typeof cursorCliModelsModule.readCursorCliModels>[0]['exec'];
+
 type CursorCliModelsModuleWithReader = typeof cursorCliModelsModule & Readonly<{
   readCursorCliModels?: (params: Readonly<{
-    exec: Pick<ExecRuntimeServiceV1, 'run'>;
+    exec: CursorCliModelsExec;
     executablePath: string;
     cwd?: string;
     env?: Readonly<Record<string, string>>;
@@ -32,7 +32,7 @@ describe('parseCursorCliModelsOutput', () => {
 
   it('runs cursor models through exec before parsing descriptors', async () => {
     const launches: unknown[] = [];
-    const exec: Pick<ExecRuntimeServiceV1, 'run'> = {
+    const exec: CursorCliModelsExec = {
       run: async (launch) => {
         launches.push(launch);
         return {

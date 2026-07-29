@@ -1,6 +1,6 @@
 import { isAbsolute } from 'node:path';
 
-import { applyRuntimeDescriptorSessionMetadata } from '@happier-dev/plugin-sdk/sessions';
+import { applyRuntimeDescriptorSessionMetadata } from '@happier-dev/plugin-sdk/experimental/sessions';
 
 import {
   buildPiAgentRuntimeDescriptorV1,

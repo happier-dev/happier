@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { KnownCanonicalToolNameV2 } from './names.js';
 import { ToolHappyMetaV2Schema, ToolHappierMetaV2Schema } from './meta.js';
+import { StructuredQuestionAnswersV1Schema } from '../structuredQuestionAnswersV1.js';
 
 const BaseEnvelopeSchema = z.object({
   _happier: ToolHappierMetaV2Schema.optional(),
@@ -219,6 +220,25 @@ export const TaskResultV2Schema = BaseEnvelopeSchema.extend({
 export const SubAgentInputV2Schema = TaskInputV2Schema;
 export const SubAgentResultV2Schema = TaskResultV2Schema;
 
+// Dynamic Workflow run. The provider-native input carries a workflow `script`; the result
+// carries the canonical tool-use/task ids used to join the transcript card to the durable
+// `activity/workflow_run.v1` snapshot. Kept permissive/passthrough — the workflow detail is
+// normalized into provider-agnostic activity records, not parsed from this envelope by UI.
+export const WorkflowInputV2Schema = BaseEnvelopeSchema.extend({
+  script: z.string().optional(),
+  name: z.string().optional(),
+  title: z.string().optional(),
+  description: z.string().optional(),
+}).passthrough();
+
+export const WorkflowResultV2Schema = BaseEnvelopeSchema.extend({
+  task_id: z.string().optional(),
+  tool_use_id: z.string().optional(),
+  run_id: z.string().optional(),
+  status: z.string().optional(),
+  summary: z.string().optional(),
+}).passthrough();
+
 export const ReasoningInputV2Schema = BaseEnvelopeSchema.extend({
   text: z.string().optional(),
 }).passthrough();
@@ -246,7 +266,10 @@ export const AskUserQuestionInputV2Schema = BaseEnvelopeSchema.extend({
 }).passthrough();
 
 export const AskUserQuestionResultV2Schema = BaseEnvelopeSchema.extend({
-  answers: z.record(z.string(), z.string()).optional(),
+  answers: z.union([
+    StructuredQuestionAnswersV1Schema,
+    z.record(z.string(), z.string()),
+  ]).optional(),
 }).passthrough();
 
 export const SubAgentRunInputV2Schema = BaseEnvelopeSchema.extend({
@@ -407,6 +430,7 @@ const TOOL_INPUT_SCHEMAS: Record<KnownCanonicalToolNameV2, z.ZodTypeAny> = {
   TodoRead: TodoReadInputV2Schema,
   SubAgent: SubAgentInputV2Schema,
   Task: TaskInputV2Schema,
+  Workflow: WorkflowInputV2Schema,
   Reasoning: ReasoningInputV2Schema,
   EnterPlanMode: EnterPlanModeInputV2Schema,
   ExitPlanMode: ExitPlanModeInputV2Schema,
@@ -439,6 +463,7 @@ const TOOL_RESULT_SCHEMAS: Record<KnownCanonicalToolNameV2, z.ZodTypeAny> = {
   TodoRead: TodoResultV2Schema,
   SubAgent: SubAgentResultV2Schema,
   Task: TaskResultV2Schema,
+  Workflow: WorkflowResultV2Schema,
   Reasoning: ReasoningResultV2Schema,
   EnterPlanMode: BaseEnvelopeSchema.passthrough(),
   ExitPlanMode: BaseEnvelopeSchema.passthrough(),

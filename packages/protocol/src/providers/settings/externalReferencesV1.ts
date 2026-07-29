@@ -1,5 +1,5 @@
 import type { ProviderSettingsV1 } from './v1.js';
-import { readOwnRecordValue } from '../ownRecordValue.js';
+import { canonicalizeProviderContributionKeyV1 } from '../contributionIdentityV1.js';
 
 export type ProviderSettingsExternalReferenceDiagnosticV1 = Readonly<{
   path: string;
@@ -15,9 +15,17 @@ export function validateProviderSettingsExternalReferencesV1(
 ): readonly ProviderSettingsExternalReferenceDiagnosticV1[] {
   const diagnostics: ProviderSettingsExternalReferenceDiagnosticV1[] = [];
   const knownMachineIds = new Set(context.knownMachineIds);
+  const endpointTemplateIdsByContributionKey = new Map(
+    Object.entries(context.endpointTemplateIdsByContributionKey).map(([contributionKey, endpointIds]) => [
+      canonicalizeProviderContributionKeyV1(contributionKey),
+      endpointIds,
+    ] as const),
+  );
   settings.connections.forEach((connection, connectionIndex) => {
     const contributedEndpointIds = connection.source.kind === 'contribution'
-      ? readOwnRecordValue(context.endpointTemplateIdsByContributionKey, connection.source.contributionKey)
+      ? endpointTemplateIdsByContributionKey.get(
+          canonicalizeProviderContributionKeyV1(connection.source.contributionKey),
+        )
       : undefined;
     const endpointIds = connection.source.kind === 'custom'
       ? new Set(connection.source.template.endpointTemplates.map((endpoint) => endpoint.id))

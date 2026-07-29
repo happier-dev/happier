@@ -1,329 +1,310 @@
+import type { PluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import {
-  BackendSurfaceOperationCatalogV1,
-  definePluginManifest,
-  type PluginAgentContributionV2,
-  type PluginHookContributionV2,
-  type PluginManifestV2,
-  type PluginMcpContributesV1,
-  type PluginAgentSettingsContributionV1,
-  type PluginSystemToolContributionV1,
-} from '@happier-dev/plugin-sdk/manifest';
+  HAPPIER_CLAUDE_CONFIG_DIR_ENV,
+  HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_JSON_ENV,
+  HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON_ENV,
+} from '@happier-dev/plugin-sdk/experimental/envConstants';
 
-import { AGENT_DEFINITION } from './agent/definition.js';
+import { CLAUDE_PROVIDER_OWNED_ENV_KEYS } from './agent/providerBinding/adapter.js';
 import { CLAUDE_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
+import { CLAUDE_UI_TRANSLATIONS } from './ui/translations.js';
 
-const CLAUDE_BACKEND_ID = 'claude';
-const SURFACE_OPERATIONS = BackendSurfaceOperationCatalogV1;
-type BackendSurfaceHandlerV1 = NonNullable<PluginAgentContributionV2['surfaceHandlers']>[number];
-type ClaudeAgentCliRuntime = typeof AGENT_DEFINITION.agentCliRuntime & Readonly<{ kindVersion: 1 }>;
-type ClaudeManualInstallRecipe = NonNullable<
-  NonNullable<ClaudeAgentCliRuntime['manualInstallRecipes']>['darwin']
->[number];
-type ClaudeSourceManualInstallRecipe = NonNullable<
-  NonNullable<typeof AGENT_DEFINITION.agentCliRuntime.manualInstallRecipes>['darwin']
->[number];
-
-function cloneManualInstallRecipe(recipe: ClaudeSourceManualInstallRecipe): ClaudeManualInstallRecipe {
-  return {
-    cmd: recipe.cmd,
-    args: [...recipe.args],
-    requiresAdmin: recipe.requiresAdmin,
-    note: recipe.note,
-  };
-}
-
-function cloneManualInstallRecipes(
-  recipes: typeof AGENT_DEFINITION.agentCliRuntime.manualInstallRecipes,
-): ClaudeAgentCliRuntime['manualInstallRecipes'] {
-  if (!recipes) return recipes;
-
-  return {
-    darwin: recipes.darwin?.map(cloneManualInstallRecipe),
-    linux: recipes.linux?.map(cloneManualInstallRecipe),
-    win32: recipes.win32?.map(cloneManualInstallRecipe),
-  };
-}
-
-function surfaceHandler(params: Readonly<{
-  id: string;
-  kind: 'externalSession' | 'handoff';
-  operation: string;
-  exportName: string;
-}>): BackendSurfaceHandlerV1 {
-  return {
-    surfaceApiVersion: 1,
-    id: params.id,
-    kind: params.kind,
-    operation: params.operation,
-    handler: { target: 'daemon' as const, exportName: params.exportName },
-  } as BackendSurfaceHandlerV1;
-}
-
-function toClaudeAgentCliRuntime(): ClaudeAgentCliRuntime {
-  const runtime = AGENT_DEFINITION.agentCliRuntime;
-
-  return {
-    ...runtime,
-    kindVersion: 1,
-    knownUserBinDirSuffixes: runtime.knownUserBinDirSuffixes == null
-      ? runtime.knownUserBinDirSuffixes
-      : [...runtime.knownUserBinDirSuffixes],
-    managedInstall: runtime.managedInstall,
-    manualInstallRecipes: cloneManualInstallRecipes(runtime.manualInstallRecipes),
-  };
-}
-
-const CLAUDE_AGENT_CLI_RUNTIME = Object.freeze(toClaudeAgentCliRuntime());
-const CLAUDE_INSTALL_DOCS_URL =
-  AGENT_DEFINITION.agentCliRuntime.installGuideUrl
-  ?? AGENT_DEFINITION.agentCliRuntime.docsUrl
-  ?? undefined;
-const CLAUDE_CONNECTED_SERVICE_IDS = [
-  ...(AGENT_DEFINITION.core.connectedServices?.supportedServiceIds ?? []),
-];
-const CLAUDE_MACOS_SECURITY_SYSTEM_TOOL = Object.freeze({
-  toolId: 'claude.macos.security',
-  displayName: 'macOS Keychain security',
-  source: 'system',
-  lookupNames: ['security'],
-  defaultArgs: [],
-} satisfies PluginSystemToolContributionV1);
-
-type ClaudePluginManifestV2 = Omit<PluginManifestV2, 'contributes'> & Readonly<{
-  contributes: Readonly<{
-    agents: ReadonlyArray<PluginAgentContributionV2>;
-    hooks: ReadonlyArray<PluginHookContributionV2>;
-    mcp: PluginMcpContributesV1;
-    agentSettings: ReadonlyArray<PluginAgentSettingsContributionV1>;
-    systemTools: ReadonlyArray<PluginSystemToolContributionV1>;
-  }>;
-}>;
-
-// Thin composition file that declares this plugin’s canonical manifest.
-// Keep this mostly declarative; executable behavior lives in domain folders.
-export const PLUGIN_MANIFEST = definePluginManifest({
+export const PLUGIN_MANIFEST = {
   schemaVersion: 2,
   id: 'happier.agent.claude',
   version: '0.0.0',
-  displayName: 'claude',
-  description: undefined,
-  engines: { happier: '^0.0.0' },
-  activationEvents: ['onAgent:claude'],
-  uses: ['agents', 'hooks', 'mcp', 'sessionHooks', 'terminalHost'],
-  entrypoints: { main: './dist/index.js' },
-  permissions: { required: [
+  displayName: 'Claude',
+  description: 'Claude Code coding agent.',
+  engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
+  entrypoints: { daemon: './dist/index.js' },
+  hostAccess: {
+    required: [
       {
-        capability: 'terminal.host.control',
-        reason: 'Run Claude through the host-owned terminal multiplexer substrate.',
+        id: 'claude-workspace',
+        capability: 'filesystem',
+        reason: 'Use the admitted Agent workspace as the Claude process working directory.',
+        scope: {
+          locations: [{ root: 'workspace' }],
+          access: ['read'],
+        },
       },
       {
-        capability: 'events.session.subscribe',
-        reason: 'Observe host-delivered Claude terminal lifecycle events for session runtime finality.',
+        id: 'claude-process',
+        capability: 'process',
+        reason: 'Run the declared Claude Code executable and its macOS keychain boundary.',
+        scope: { executables: [
+          { kind: 'systemTool', id: 'claude-cli' },
+          { kind: 'systemTool', id: 'macos-security' },
+        ], envKeys: [
+          ...CLAUDE_PROVIDER_OWNED_ENV_KEYS,
+          'CLAUDE_CONFIG_DIR',
+          'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS',
+          'CLAUDE_CODE_SDK_HAS_OAUTH_REFRESH',
+          HAPPIER_CLAUDE_CONFIG_DIR_ENV,
+          HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON_ENV,
+          HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_JSON_ENV,
+          'USER',
+        ] },
       },
       {
-        capability: 'session.hooks.control',
-        reason: 'Create authenticated Claude session hook bridges for unified terminal runtime events.',
+        id: 'claude-terminal-control',
+        capability: 'terminal',
+        reason: 'Run Claude through the host-owned terminal session substrate.',
+        scope: { operations: ['open', 'send', 'resize', 'close'] },
       },
-    ], optional: [] },
-  contributes: {
-    agents: [
       {
-        kindVersion: 1,
-        id: CLAUDE_BACKEND_ID,
-        catalogAgentId: CLAUDE_BACKEND_ID,
-        iconAgentId: CLAUDE_BACKEND_ID,
-        settingsBackendId: CLAUDE_BACKEND_ID,
-        display: {
-          name: 'Claude',
-          subtitle: 'Claude Code',
-          tags: [],
+        id: 'claude-session-runtime-control',
+        capability: 'sessions',
+        reason: 'Read Claude lifecycle events and control authenticated hooks for the current Agent session.',
+        scope: { access: ['read', 'control'] },
+      },
+      {
+        id: 'claude-subscription-oauth',
+        capability: 'network',
+        reason: 'Exchange and refresh Claude OAuth credentials for the exact Connected Account.',
+        scope: {
+          targets: [
+            { kind: 'fixedOrigin', origin: 'https://platform.claude.com' },
+            { kind: 'connectedAccountOrigin', service: 'claude-subscription' },
+          ],
+          methods: ['POST'],
         },
-        agentCliRuntime: CLAUDE_AGENT_CLI_RUNTIME,
-        install: {
-          docsUrl: CLAUDE_INSTALL_DOCS_URL,
-        },
-        auth: {
-          machineLoginSupport: AGENT_DEFINITION.localCli.supportKind,
-          connectedServiceCompatibility: CLAUDE_CONNECTED_SERVICE_IDS,
-        },
-        session: {
-          storage: AGENT_DEFINITION.core.sessionStorage.direct ? 'direct' : 'host',
-          resume: {
-            supportLevel: AGENT_DEFINITION.core.resume.vendorResume,
-            vendorResumeIdField: AGENT_DEFINITION.core.resume.vendorResumeIdField ?? undefined,
-          },
-          handoff: {
-            supportLevel: AGENT_DEFINITION.core.handoff.vendorStateTransfer,
-          },
-          terminalRuntime: {
-            supported: AGENT_DEFINITION.core.localControl?.supported ?? false,
-            topology: AGENT_DEFINITION.core.localControl?.topology,
-            attachStrategy: AGENT_DEFINITION.core.localControl?.attachStrategy,
-          },
-          sessionCapabilities: AGENT_DEFINITION.core.sessionCapabilities,
-        },
-        ui: {
-          modeSelection: AGENT_DEFINITION.sessionModesKind,
-          modelSelection: AGENT_DEFINITION.modelConfig.supportsSelection ? 'supported' : 'unsupported',
-        },
-        ownedBackendIds: [CLAUDE_BACKEND_ID],
-        runtime: { kind: 'custom' },
-        surfaceHandlers: [
-          surfaceHandler({
-            id: 'claude.externalSession.resolveSource',
-            kind: 'externalSession',
-            operation: SURFACE_OPERATIONS.externalSession.resolveSource,
-            exportName: 'resolveClaudeExternalSessionSource',
-          }),
-          surfaceHandler({
-            id: 'claude.externalSession.listCandidates',
-            kind: 'externalSession',
-            operation: SURFACE_OPERATIONS.externalSession.listCandidates,
-            exportName: 'listClaudeExternalSessionCandidates',
-          }),
-          surfaceHandler({
-            id: 'claude.externalSession.getActivity',
-            kind: 'externalSession',
-            operation: SURFACE_OPERATIONS.externalSession.getActivity,
-            exportName: 'getClaudeExternalSessionActivity',
-          }),
-          surfaceHandler({
-            id: 'claude.externalSession.pageTranscript',
-            kind: 'externalSession',
-            operation: SURFACE_OPERATIONS.externalSession.pageTranscript,
-            exportName: 'pageClaudeExternalSessionTranscript',
-          }),
-          surfaceHandler({
-            id: 'claude.externalSession.readAfterTranscript',
-            kind: 'externalSession',
-            operation: SURFACE_OPERATIONS.externalSession.readAfterTranscript,
-            exportName: 'readClaudeExternalSessionAfterTranscript',
-          }),
-          surfaceHandler({
-            id: 'claude.externalSession.resolveFollowTranscriptPath',
-            kind: 'externalSession',
-            operation: SURFACE_OPERATIONS.externalSession.resolveFollowTranscriptPath,
-            exportName: 'resolveClaudeExternalSessionFollowTranscriptPath',
-          }),
-          surfaceHandler({
-            id: 'claude.externalSession.acquireFollowLease',
-            kind: 'externalSession',
-            operation: SURFACE_OPERATIONS.externalSession.acquireFollowLease,
-            exportName: 'acquireClaudeExternalSessionFollowLease',
-          }),
-          surfaceHandler({
-            id: 'claude.externalSession.resolveLinkIdentity',
-            kind: 'externalSession',
-            operation: SURFACE_OPERATIONS.externalSession.resolveLinkIdentity,
-            exportName: 'resolveClaudeExternalSessionLinkIdentity',
-          }),
-          surfaceHandler({
-            id: 'claude.externalSession.resolveLinkedIdentity',
-            kind: 'externalSession',
-            operation: SURFACE_OPERATIONS.externalSession.resolveLinkedIdentity,
-            exportName: 'resolveLinkedClaudeExternalSessionIdentity',
-          }),
-          surfaceHandler({
-            id: 'claude.externalSession.resolveTakeoverLaunch',
-            kind: 'externalSession',
-            operation: SURFACE_OPERATIONS.externalSession.resolveTakeoverLaunch,
-            exportName: 'resolveClaudeExternalSessionTakeoverLaunch',
-          }),
-          surfaceHandler({
-            id: 'claude.handoff.exportBundle',
-            kind: 'handoff',
-            operation: SURFACE_OPERATIONS.handoff.exportBundle,
-            exportName: 'exportClaudeSessionBundle',
-          }),
-          surfaceHandler({
-            id: 'claude.handoff.importBundle',
-            kind: 'handoff',
-            operation: SURFACE_OPERATIONS.handoff.importBundle,
-            exportName: 'importClaudeSessionBundle',
-          }),
-        ],
-        surfaces: {
-          externalSession: {
-            sources: [
-              {
-                sourceKind: 'claudeConfig',
-                schema: {
-                  passthrough: true,
-                  fields: [
-                    { name: 'kind', kind: 'literal', value: 'claudeConfig' },
-                    { name: 'configDir', kind: 'string', min: 1, max: 10_000, nullish: true },
-                    { name: 'projectId', kind: 'string', min: 1, max: 2_000, nullish: true },
-                  ],
-                },
-                key: {
-                  segments: [
-                    { kind: 'literal', value: 'claudeConfig' },
-                    { kind: 'field', field: 'configDir' },
-                    { kind: 'field', field: 'projectId' },
-                  ],
-                },
-              },
-            ],
-          },
-        },
-        capabilities: {
-          executionRun: { supported: true },
-          session: {
-            media: {
-              emitsSessionMedia: {
-                supported: true,
-                mediaKinds: ['image'],
-                sources: ['tool-output'],
-                storage: 'session-media-file',
-              },
-              nativeImageGeneration: { supported: false },
-            },
-          },
+      },
+      {
+        id: 'claude-subscription-quota',
+        capability: 'network',
+        reason: 'Read quota for the exact Claude Subscription Connected Account.',
+        scope: {
+          targets: [
+            { kind: 'fixedOrigin', origin: 'https://api.anthropic.com' },
+            { kind: 'connectedAccountOrigin', service: 'claude-subscription' },
+          ],
+          methods: ['GET'],
         },
       },
     ],
-    hooks: [
-      {
-        id: 'agent.resolvePrerequisites',
-        hookApiVersion: 1,
-        category: 'decision',
-        scope: 'agent',
-        filters: { agentId: CLAUDE_BACKEND_ID },
-        executionKind: 'decide',
-        handler: {
-          target: 'plugin',
-          exportName: 'resolveClaudeDaemonSpawnPrerequisites',
+    optional: [],
+  },
+  contributes: {
+    connectedAccountDescriptors: [{
+      id: 'claude-subscription',
+      title: 'Claude',
+      authentication: {
+        defaultModeId: 'setup-token',
+        modes: [{
+          id: 'setup-token',
+          kind: 'manual',
+          title: 'Setup token',
+          outcomeReconciliation: 'none',
+          fields: [{
+            id: 'token',
+            title: 'Claude setup token',
+            schema: { type: 'string', minLength: 1 },
+            secret: true,
+          }],
+        }, {
+          id: 'oauth',
+          kind: 'oauthAuthorizationCode',
+          scopes: [
+            'user:inference',
+            'user:profile',
+            'user:sessions:claude_code',
+            'user:mcp_servers',
+            'user:file_upload',
+          ],
+          pkce: 'required',
+          outcomeReconciliation: 'none',
+        }],
+      },
+    }, {
+      id: 'anthropic',
+      title: 'Anthropic API key',
+      authentication: {
+        defaultModeId: 'api-key',
+        modes: [{
+          id: 'api-key',
+          kind: 'manual',
+          outcomeReconciliation: 'none',
+          fields: [{
+            id: 'token',
+            title: 'Anthropic API key',
+            schema: { type: 'string', minLength: 1 },
+            secret: true,
+          }],
+        }],
+      },
+    }],
+    agents: [{
+      id: 'claude',
+      title: 'Claude',
+      runtime: { kind: 'custom' },
+      cli: {
+        displayName: 'Claude Code CLI',
+        executable: {
+          binaryName: 'claude',
+          knownUserBinDirSuffixes: ['.local/bin'],
+          sourcePreference: 'system-first',
+          acceptsJavaScriptFileOverride: true,
+          systemCommandResolutionStrategy: 'known-user-first-runnable',
+        },
+        install: {
+          managed: null,
+          manual: {
+            kind: 'vendor_recipe',
+            recipes: {
+              darwin: [{ cmd: 'bash', args: ['-lc', 'curl -fsSL https://claude.ai/install.sh | bash'] }],
+              linux: [{ cmd: 'bash', args: ['-lc', 'curl -fsSL https://claude.ai/install.sh | bash'] }],
+              win32: [{
+                cmd: 'powershell',
+                args: [
+                  '-NoProfile',
+                  '-ExecutionPolicy',
+                  'Bypass',
+                  '-Command',
+                  'irm https://claude.ai/install.ps1 | iex',
+                ],
+              }],
+            },
+          },
+          recommendationOrder: 10,
+          guideUrl: 'https://code.claude.com/docs/en/setup',
+          docsUrl: 'https://claude.ai',
+        },
+        auth: {
+          support: 'login_terminal',
+          machineLoginKey: 'claude-code',
+          probe: {
+            parser: 'claudeCredentialsFile',
+            backgroundChecks: 'safe',
+            statusArgs: null,
+            envVars: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'],
+            credentialPaths: ['~/.claude/.credentials.json', '~/.claude/.claude.json'],
+          },
+          loginLaunches: [{ kind: 'primary', args: [], initialInput: '/login\r' }],
         },
       },
+      primary: 'sessions',
+      connectedAccounts: [{
+        purpose: 'model_upstream',
+        service: 'claude-subscription',
+        required: false,
+        materializationKinds: ['environment', 'files'],
+      }, {
+        purpose: 'model_upstream_api_key',
+        service: 'anthropic',
+        required: false,
+        materializationKinds: ['environment'],
+      }],
+      capabilities: {
+        surfaces: ['terminal', 'externalSessions'],
+        sessions: {
+          open: ['create', 'resume'],
+          delivery: ['newTurn', 'steer', 'followUp'],
+          cancel: true,
+          configuration: true,
+          goals: {
+            active: {
+              clear: true,
+              set: { fields: ['objective'] },
+            },
+            inactive: {
+              get: true,
+              clear: true,
+              set: { fields: ['objective'] },
+            },
+            source: 'goals',
+          },
+          runtimeActivitySnapshots: true,
+          workStateSources: [{ id: 'goals', itemKinds: ['goal'] }],
+        },
+        executionRuns: { open: ['create'], checkpoint: true, stop: true },
+      },
+      providerRequirements: {
+        acceptsProtocols: ['anthropic'],
+        required: { streaming: true, toolRoundTrips: true },
+        credentialSupport: {
+          supportsNoAuth: true,
+          apiKeyTransports: [
+            {
+              protocol: 'anthropic',
+              destination: { kind: 'httpHeader', names: ['authorization'], formats: ['bearer'] },
+            },
+            {
+              protocol: 'anthropic',
+              destination: { kind: 'httpHeader', names: ['x-api-key'], formats: ['raw'] },
+            },
+          ],
+        },
+        authIsolation: {
+          suppressConnectedServiceIds: ['claude-subscription', 'anthropic'],
+          ownedEnvKeys: [
+            'ANTHROPIC_BASE_URL',
+            'ANTHROPIC_CUSTOM_HEADERS',
+            'ANTHROPIC_API_KEY',
+            'ANTHROPIC_AUTH_TOKEN',
+            'ANTHROPIC_OAUTH_TOKEN',
+            'CLAUDE_CODE_OAUTH_TOKEN',
+            'CLAUDE_CODE_OAUTH_REFRESH_TOKEN',
+            'CLAUDE_CODE_OAUTH_SCOPES',
+            'CLAUDE_CODE_SETUP_TOKEN',
+            'CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY',
+          ],
+        },
+        materialization: 'spawnEnv',
+        applyPolicy: 'live',
+        supportsFreeformModelIds: true,
+      },
+      surfaces: { externalSession: {
+        externalLinkedTakeover: { writerSafety: 'unsupported' },
+        sources: [{
+        sourceKind: 'claudeConfig',
+        schema: { passthrough: true, fields: [
+          { name: 'kind', kind: 'literal', value: 'claudeConfig' },
+          { name: 'configDir', kind: 'string', min: 1, max: 10_000, nullish: true },
+          { name: 'projectId', kind: 'string', min: 1, max: 2_000, nullish: true },
+        ] },
+        key: { segments: [
+          { kind: 'literal', value: 'claudeConfig' },
+          { kind: 'field', field: 'configDir' },
+          { kind: 'field', field: 'projectId' },
+        ] },
+        instances: [{ kind: 'default', constants: {} }],
+      }],
+      } },
+    }],
+    systemTools: [
+      { id: 'claude-cli', title: 'Claude Code CLI', executableNames: ['claude'] },
+      { id: 'macos-security', title: 'macOS Keychain security', executableNames: ['security'] },
+    ],
+    hooks: [
       {
-        id: 'agent.spawnEnv.augment',
-        hookApiVersion: 1,
+        id: 'resolve-prerequisites',
+        on: 'agent.resolvePrerequisites',
+        category: 'decision',
+        scope: 'agent',
+        filters: { agentId: 'claude' },
+        executionKind: 'decide',
+      },
+      {
+        id: 'augment-spawn-env',
+        on: 'agent.spawnEnv.augment',
         category: 'augmentation',
         scope: 'daemon',
-        filters: { agentId: CLAUDE_BACKEND_ID },
+        filters: { agentId: 'claude' },
         executionKind: 'augment',
-        handler: {
-          target: 'plugin',
-          exportName: 'augmentClaudeDaemonSpawnEnv',
-        },
       },
     ],
     mcp: {
       servers: [],
-      discoveryProviders: [
-        {
-          id: 'claude.config',
-          kind: 'mcp.discoveryProvider',
-          version: '1.0.0',
-          capabilityGates: [],
-          permissionGates: [],
-          redaction: 'none',
-          hidden: false,
-          agentId: CLAUDE_BACKEND_ID,
-        },
-      ],
+      discoveryProviders: [{
+        id: 'config',
+        title: 'Claude MCP configuration',
+        metadata: { agentId: 'claude' },
+      }],
     },
-    agentSettings: [CLAUDE_AGENT_SETTINGS_CONTRIBUTION],
-    systemTools: [CLAUDE_MACOS_SECURITY_SYSTEM_TOOL],
+    ui: {
+      translations: [{ locale: 'en', messages: CLAUDE_UI_TRANSLATIONS.en }],
+    },
+    settings: [CLAUDE_AGENT_SETTINGS_CONTRIBUTION],
   },
-} satisfies ClaudePluginManifestV2);
+} satisfies PluginManifest;

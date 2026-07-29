@@ -1,0 +1,40 @@
+{
+  "v": 1,
+  "contributionKey": "happier.provider.ollama/ollama",
+  "reviewedAt": "2026-07-12",
+  "sources": [
+    { "id": "openai-compat", "kind": "official-doc", "url": "https://docs.ollama.com/api/openai-compatibility", "accessedAt": "2026-07-12", "revision": "current-2026-07-12" },
+    { "id": "tags", "kind": "official-doc", "url": "https://docs.ollama.com/api/tags", "accessedAt": "2026-07-12", "revision": "current-2026-07-12" },
+    { "id": "cli", "kind": "official-doc", "url": "https://docs.ollama.com/cli", "accessedAt": "2026-07-12", "revision": "current-2026-07-12" },
+    { "id": "faq", "kind": "official-doc", "url": "https://docs.ollama.com/faq", "accessedAt": "2026-07-12", "revision": "current-2026-07-12" }
+  ],
+  "facts": [
+    { "path": "catalog.probes.ollama-native.ollama-tags", "sourceIds": ["tags"], "status": "verified" },
+    { "path": "catalog.source", "sourceIds": ["tags", "cli"], "status": "verified" },
+    { "path": "discovery.availabilityProbe", "sourceIds": ["tags"], "status": "verified" },
+    { "path": "discovery.catalogFallback", "sourceIds": ["cli"], "status": "verified" },
+    { "path": "discovery.installedCheck", "sourceIds": ["cli"], "status": "verified" },
+    { "path": "discovery.listener", "sourceIds": ["cli", "faq"], "status": "verified" },
+    { "path": "discovery.managedStart", "sourceIds": ["cli"], "status": "verified" },
+    { "path": "endpointTemplates.ollama-native.capabilities.reasoningControls", "sourceIds": ["openai-compat"], "status": "verified" },
+    { "path": "endpointTemplates.ollama-native.capabilities.statefulResponses", "sourceIds": ["openai-compat"], "status": "verified" },
+    { "path": "endpointTemplates.ollama-native.capabilities.streaming", "sourceIds": ["openai-compat"], "status": "verified" },
+    { "path": "endpointTemplates.ollama-native.capabilities.toolRoundTrips", "sourceIds": ["openai-compat"], "status": "verified" },
+    { "path": "endpointTemplates.ollama-native.localUrlCandidates", "sourceIds": ["faq"], "status": "verified" },
+    { "path": "endpointTemplates.ollama-native.protocol", "sourceIds": ["tags"], "status": "verified" },
+    { "path": "endpointTemplates.ollama-openai-chat.capabilities.reasoningControls", "sourceIds": ["openai-compat"], "status": "verified" },
+    { "path": "endpointTemplates.ollama-openai-chat.capabilities.statefulResponses", "sourceIds": ["openai-compat"], "status": "verified" },
+    { "path": "endpointTemplates.ollama-openai-chat.capabilities.streaming", "sourceIds": ["openai-compat"], "status": "verified" },
+    { "path": "endpointTemplates.ollama-openai-chat.capabilities.toolRoundTrips", "sourceIds": ["openai-compat"], "status": "verified" },
+    { "path": "endpointTemplates.ollama-openai-chat.localUrlCandidates", "sourceIds": ["openai-compat"], "status": "verified" },
+    { "path": "endpointTemplates.ollama-openai-chat.protocol", "sourceIds": ["openai-compat"], "status": "verified" },
+    { "path": "endpointTemplates.ollama-openai-responses.capabilities.reasoningControls", "sourceIds": ["openai-compat"], "status": "verified" },
+    { "path": "endpointTemplates.ollama-openai-responses.capabilities.statefulResponses", "sourceIds": ["openai-compat"], "status": "verified" },
+    { "path": "endpointTemplates.ollama-openai-responses.capabilities.streaming", "sourceIds": ["openai-compat"], "status": "verified" },
+    { "path": "endpointTemplates.ollama-openai-responses.capabilities.toolRoundTrips", "sourceIds": ["openai-compat"], "status": "verified" },
+    { "path": "endpointTemplates.ollama-openai-responses.localUrlCandidates", "sourceIds": ["openai-compat"], "status": "verified" },
+    { "path": "endpointTemplates.ollama-openai-responses.protocol", "sourceIds": ["openai-compat"], "status": "verified" },
+    { "path": "kind", "sourceIds": ["faq"], "status": "verified" },
+    { "path": "websiteUrl", "sourceIds": ["faq"], "status": "verified" }
+  ]
+}

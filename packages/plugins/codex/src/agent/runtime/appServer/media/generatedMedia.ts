@@ -11,40 +11,24 @@ export type CodexGeneratedMediaOrigin = Readonly<{
 export type CodexGeneratedMediaCandidate = Readonly<{
   itemId: string;
   origin: CodexGeneratedMediaOrigin;
-  source:
-    | Readonly<{
-        kind: 'local-file';
-        path: string;
-        fileNameHint: string;
-        restrictedRoot: string;
-      }>
-    | Readonly<{
-        kind: 'base64';
-        data: string;
-        fileNameHint: string;
-      }>;
+  source: Readonly<{
+    kind: 'local-file';
+    path: string;
+    fileNameHint: string;
+    restrictedRoot: string;
+  }>;
 }>;
 
-function readString(value: unknown): string | null {
-  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
-}
-
-function readBase64Image(item: RecordLike): string | null {
-  return readString(item.result)
-    ?? readString(item.image)
-    ?? readString(item.imageData)
-    ?? readString(item.image_data)
-    ?? readString(item.b64_json)
-    ?? readString(item.base64);
-}
-
-function readSavedPath(item: RecordLike): string | null {
-  return readString(item.savedPath)
-    ?? readString(item.saved_path)
-    ?? readString(item.outputPath)
-    ?? readString(item.output_path)
-    ?? readString(item.path);
-}
+const OFFICIAL_ITEM_KEYS = [
+  'id',
+  'result',
+  'revisedPrompt',
+  'savedPath',
+  'status',
+  'type',
+] as const;
+const MAX_PATH_CODE_UNITS = 4_096;
+const SUPPORTED_IMAGE_EXTENSIONS = new Set(['.gif', '.jpeg', '.jpg', '.png', '.webp']);
 
 function pathApiFor(value: string): typeof posix | typeof win32 {
   return /^[a-z]:[\\/]/iu.test(value) || value.includes('\\') ? win32 : posix;
@@ -68,6 +52,7 @@ function buildSavedPathCandidate(
 ): CodexGeneratedMediaCandidate | null {
   if (!isAbsoluteSavedPath(savedPath)) return null;
   const api = pathApiFor(savedPath);
+  if (!SUPPORTED_IMAGE_EXTENSIONS.has(api.extname(savedPath).toLowerCase())) return null;
   const restrictedRoot = api.dirname(savedPath);
   if (!restrictedRoot || restrictedRoot === '.') return null;
   return {
@@ -86,22 +71,26 @@ export function extractCodexGeneratedMediaCandidate(
   itemId: string,
   item: RecordLike,
 ): CodexGeneratedMediaCandidate | null {
-  const savedPath = readSavedPath(item);
-  if (savedPath) {
-    const media = buildSavedPathCandidate(itemId, savedPath);
-    if (media) return media;
+  const keys = Object.keys(item).sort();
+  if (
+    keys.length !== OFFICIAL_ITEM_KEYS.length
+    || OFFICIAL_ITEM_KEYS.some((key, index) => keys[index] !== key)
+    || item.type !== 'imageGeneration'
+    || item.id !== itemId
+    || item.status !== 'completed'
+    || typeof item.result !== 'string'
+    || (item.revisedPrompt !== null && typeof item.revisedPrompt !== 'string')
+    || typeof item.savedPath !== 'string'
+  ) {
+    return null;
   }
-
-  const base64Image = readBase64Image(item);
-  return base64Image
-    ? {
-        itemId,
-        origin: buildOrigin(itemId),
-        source: {
-          kind: 'base64',
-          data: base64Image,
-          fileNameHint: `${itemId}.png`,
-        },
-      }
-    : null;
+  const savedPath = item.savedPath.trim();
+  if (
+    savedPath.length === 0
+    || savedPath.length > MAX_PATH_CODE_UNITS
+    || savedPath.includes('\0')
+  ) {
+    return null;
+  }
+  return buildSavedPathCandidate(itemId, savedPath);
 }

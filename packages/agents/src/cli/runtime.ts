@@ -3,6 +3,7 @@ import {
   type AgentId,
 } from '../types.js';
 import { mergeAuthoredWithGeneratedAgentFacts } from '../definitions/generatedFacts.js';
+import type { AgentDefinitionCliMetadata } from '../definitions/agentDefinition.js';
 
 function readBooleanEnvWithDefault(value: string | undefined, defaultValue: boolean): boolean {
   if (typeof value !== 'string') return defaultValue;
@@ -62,6 +63,38 @@ export type AgentCliRuntimeSpec = Readonly<{
   docsUrl?: string | null;
 }>;
 
+export function projectAgentCliRuntimeSpec(
+  agentId: AgentId,
+  cli: AgentDefinitionCliMetadata,
+): AgentCliRuntimeSpec {
+  const { executable, install } = cli;
+  return Object.freeze({
+    id: agentId,
+    title: cli.displayName ?? agentId,
+    binaryName: executable.binaryName,
+    ...(executable.alternativeBinaryNames ? { alternativeBinaryNames: executable.alternativeBinaryNames } : {}),
+    ...(executable.alternativeBinaryFallbackEnabledEnvVar
+      ? { alternativeBinaryFallbackEnabledEnvVar: executable.alternativeBinaryFallbackEnabledEnvVar }
+      : {}),
+    ...(executable.knownUserBinDirSuffixes !== undefined
+      ? { knownUserBinDirSuffixes: executable.knownUserBinDirSuffixes }
+      : {}),
+    ...(executable.systemCommandResolutionStrategy
+      ? { systemCommandResolutionStrategy: executable.systemCommandResolutionStrategy }
+      : {}),
+    sourcePreferenceDefault: executable.sourcePreference,
+    managedInstall: install.managed ?? null,
+    manualInstallKind: install.manual.kind,
+    manualInstallRecipes: install.manual.kind === 'none' ? null : (install.manual.recipes ?? null),
+    acceptsJavaScriptFileOverride: executable.acceptsJavaScriptFileOverride ?? false,
+    ...(install.recommendationOrder !== undefined
+      ? { setupRecommendation: { order: install.recommendationOrder } }
+      : {}),
+    ...(install.guideUrl !== undefined ? { installGuideUrl: install.guideUrl } : {}),
+    ...(install.docsUrl !== undefined ? { docsUrl: install.docsUrl } : {}),
+  });
+}
+
 const AUTHORED_AGENT_CLI_RUNTIME_SPECS = {
 } as const satisfies Partial<Record<AgentId, AgentCliRuntimeSpec>>;
 
@@ -69,7 +102,7 @@ export const CANONICAL_AGENT_CLI_RUNTIME_SPECS: Readonly<Record<AgentId, AgentCl
   mergeAuthoredWithGeneratedAgentFacts<AgentCliRuntimeSpec>({
     authored: AUTHORED_AGENT_CLI_RUNTIME_SPECS,
     label: 'agent CLI runtime spec',
-    readGenerated: (definition) => definition.agentCliRuntime,
+    readGenerated: (definition) => projectAgentCliRuntimeSpec(definition.id as AgentId, definition.cli),
   });
 
 export const AGENT_CLI_RUNTIME_SPECS: Readonly<Record<AgentId, AgentCliRuntimeSpec>> = CANONICAL_AGENT_CLI_RUNTIME_SPECS;

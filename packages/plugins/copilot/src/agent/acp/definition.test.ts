@@ -1,23 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
-import { COPILOT_ACP_BACKEND_SPEC } from './definition.js';
+import { COPILOT_ACP_RUNTIME_DEFINITION } from './definition.js';
 
 describe('Copilot ACP backend definition', () => {
-  it('uses the final agent-cli ACP seam and plugin-owned argv callback', () => {
-    expect(COPILOT_ACP_BACKEND_SPEC).toMatchObject({
-      backendId: 'copilot',
-      transport: {
-        kind: 'stdio',
-        launch: { kind: 'agent-cli', agentId: 'copilot', args: ['--acp'] },
-      },
-      capabilities: {
-        supportsPermissionRequests: true,
-        supportsLoadSession: true,
-      },
-      sessionIdHeaderName: 'copilotSessionId',
+  it('owns the static ACP policy consumed by the native runtime leaf', () => {
+    expect(COPILOT_ACP_RUNTIME_DEFINITION).toMatchObject({
+      modelConfigOptionId: 'model',
       toolNameInference: {
         shellBridgeHint: true,
-        hintInputFields: ['tool_name', 'toolName', 'name'],
+        hintInputFields: ['tool_name', 'toolName', 'name', 'title', 'description'],
         investigationToolIdPatterns: ['task'],
         investigationToolKinds: ['task'],
       },
@@ -31,7 +22,5 @@ describe('Copilot ACP backend definition', () => {
       },
       mcp: { policy: 'pass_through' },
     });
-    expect(COPILOT_ACP_BACKEND_SPEC.callbacks).toHaveProperty('argvBuilder');
-    expect(COPILOT_ACP_BACKEND_SPEC.callbacks).not.toHaveProperty('permissionDecision');
   });
 });

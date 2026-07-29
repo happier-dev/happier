@@ -1,10 +1,11 @@
 import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
-import { execYarn } from '../../../scripts/workspaces/execYarnCommand.mjs';
+import { ensureWorkspacePackagesBuiltForComponent as ensureWorkspacePackagesBuiltForComponentDefault } from '../../../apps/stack/scripts/utils/proc/pm.mjs';
+import { ensureWorkspacePackagesBuiltByName as ensureWorkspacePackagesBuiltByNameDefault } from '../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
 import { createWorkspaceChildBuildEnv } from '../../../scripts/workspaces/workspaceChildBuildEnv.mjs';
-import { resolveWorkspaceDependencyBuildOrder } from '../../../scripts/workspaces/resolveWorkspaceDependencyBuildOrder.mjs';
+import { loadCliCommonWorkspacesModule } from '../../../scripts/workspaces/loadCliCommonWorkspacesModule.mjs';
 import { resolveWorkspaceBundlePublicationMode } from '../../../scripts/workspaces/workspaceBundlePublication.mjs';
 import {
   resolveWorkspaceBundleLockPath,
@@ -26,41 +27,20 @@ function findRepoRoot(startDir) {
   return resolve(startDir, '..', '..', '..');
 }
 
-async function loadCliCommonWorkspacesModule(repoRoot, env = process.env) {
-  const modulePath = resolve(repoRoot, 'packages', 'cli-common', 'dist', 'workspaces', 'index.js');
-  if (!existsSync(modulePath)) {
-    execYarn(['-s', 'workspace', '@happier-dev/cli-common', 'build'], {
-      cwd: repoRoot,
-      env,
-      stdio: 'inherit',
-    });
-  }
-
-  if (!existsSync(modulePath)) {
-    throw new Error(`Missing cli-common workspaces build helpers: ${modulePath}`);
-  }
-
-  return await import(pathToFileURL(modulePath).href);
-}
-
-function buildWorkspace(repoRoot, workspaceName, env = process.env) {
-  execYarn(['-s', 'workspace', `@happier-dev/${workspaceName}`, 'build'], {
-    cwd: repoRoot,
-    env,
-    stdio: 'inherit',
-  });
-}
-
-export function resolvePluginSdkWorkspaceBuildOrder({ repoRoot }) {
-  return resolveWorkspaceDependencyBuildOrder({
-    repoRoot,
-    seedPackageNames: ['@happier-dev/cli-common'],
-  });
-}
-
 export function resolvePluginSdkWorkspaceBundleLockPath({ repoRoot, lockPath = '' }) {
   const explicitLockPath = String(lockPath ?? '').trim();
   return explicitLockPath || resolveWorkspaceBundleLockPath(repoRoot);
+}
+
+export async function preparePluginSdkWorkspacePrerequisites(opts = {}) {
+  const repoRoot = opts.repoRoot ?? findRepoRoot(__dirname);
+  const pluginSdkDir = opts.pluginSdkDir ?? resolve(repoRoot, 'packages', 'plugin-sdk');
+  const ensureWorkspacePackagesBuiltForComponent = opts.ensureWorkspacePackagesBuiltForComponent
+    ?? ensureWorkspacePackagesBuiltForComponentDefault;
+  return await ensureWorkspacePackagesBuiltForComponent(pluginSdkDir, {
+    env: opts.env ?? process.env,
+    quiet: opts.quiet ?? true,
+  });
 }
 
 export async function bundleWorkspaceDeps(opts = {}) {
@@ -68,28 +48,51 @@ export async function bundleWorkspaceDeps(opts = {}) {
   const pluginSdkDir = opts.pluginSdkDir ?? resolve(repoRoot, 'packages', 'plugin-sdk');
   const lockPath = resolvePluginSdkWorkspaceBundleLockPath({ repoRoot, lockPath: opts.lockPath });
   const baseEnv = opts.env ?? process.env;
+  const publicationMode = opts.publicationMode ?? 'live';
+  const forceArtifactWorkspaceBuilds = publicationMode === 'artifact';
+  const publishWithWorkspaceBundleLock = opts.withWorkspaceBundleLock ?? withWorkspaceBundleLock;
+  const loadWorkspacesModule = opts.loadCliCommonWorkspacesModule ?? loadCliCommonWorkspacesModule;
+  const ensureWorkspacePackagesBuiltByName = opts.ensureWorkspacePackagesBuiltByName
+    ?? ensureWorkspacePackagesBuiltByNameDefault;
 
-  return withWorkspaceBundleLock(async ({ heldLockValue }) => {
-    const heldLockEnv = createWorkspaceChildBuildEnv({
+  return publishWithWorkspaceBundleLock(async ({ heldLockValue } = {}) => {
+    const childBuildEnv = createWorkspaceChildBuildEnv({
       env: baseEnv,
       heldLockValue,
     });
-    for (const workspaceName of resolvePluginSdkWorkspaceBuildOrder({ repoRoot })) {
-      buildWorkspace(repoRoot, workspaceName, heldLockEnv);
-    }
-
     const {
       bundleWorkspacePackagesWithRuntimeDependencies,
       resolveWorkspaceBundlesFromPackageJson,
-    } = await loadCliCommonWorkspacesModule(repoRoot, heldLockEnv);
+    } = await loadWorkspacesModule(
+      repoRoot,
+      childBuildEnv,
+      ensureWorkspacePackagesBuiltByName,
+      {
+        force: forceArtifactWorkspaceBuilds,
+        includeDevDependencies: false,
+        quiet: true,
+      },
+    );
 
     const bundles = resolveWorkspaceBundlesFromPackageJson({
       repoRoot,
       hostPackageDir: pluginSdkDir,
     });
+    await ensureWorkspacePackagesBuiltByName(
+      repoRoot,
+      [...new Set(bundles.map((bundle) => String(bundle?.packageName ?? bundle?.name ?? '').trim()).filter(Boolean))],
+      {
+        quiet: true,
+        env: childBuildEnv,
+        includeDevDependencies: false,
+        ...(forceArtifactWorkspaceBuilds
+          ? { force: true }
+          : {}),
+      },
+    );
     bundleWorkspacePackagesWithRuntimeDependencies({
       bundles,
-      publicationMode: opts.publicationMode ?? 'live',
+      publicationMode,
     });
   }, {
     lockPath,
@@ -113,12 +116,16 @@ const invokedAsMain = (() => {
 
 if (invokedAsMain) {
   try {
-    await bundleWorkspaceDeps({
-      publicationMode: resolveWorkspaceBundlePublicationMode({
-        argv: process.argv.slice(2),
-        env: process.env,
-      }),
-    });
+    if (process.argv.slice(2).includes('--declarations')) {
+      await preparePluginSdkWorkspacePrerequisites();
+    } else {
+      await bundleWorkspaceDeps({
+        publicationMode: resolveWorkspaceBundlePublicationMode({
+          argv: process.argv.slice(2),
+          env: process.env,
+        }),
+      });
+    }
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);

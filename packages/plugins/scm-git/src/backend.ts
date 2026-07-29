@@ -1,8 +1,8 @@
 import {
   createScmCapabilitiesFromBackendCapabilities,
   type ScmBackendDescribeResponse,
-} from '@happier-dev/plugin-sdk/scm';
-import type { PluginApiV1, ScmBackendRuntimeRegistration } from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/experimental/scm';
+import type { ScmBackendRuntimeRegistration } from '@happier-dev/plugin-sdk/experimental/scm/backend';
 
 import { resolveScmBackendCapabilities } from './capabilities/resolveScmBackendCapabilities.js';
 import type { ScmBackend } from './types.js';
@@ -40,6 +40,7 @@ import { gitRepositoryClone } from './operations/repositoryCloneOperations.js';
 import { gitRepositoryInit } from './operations/repositoryInitOperations.js';
 import { gitStashApply, gitStashDrop, gitStashList, gitStashPop, gitStashShow } from './operations/stashOperations.js';
 import { gitWorktreeCreate, gitWorktreePrune, gitWorktreeRemove } from './operations/worktreeOperations.js';
+import { GIT_INSTALLABLE_DEP_ID } from './installables/gitInstallable.js';
 
 export function createGitBackend(): ScmBackend {
     return {
@@ -168,6 +169,11 @@ export function createGitScmBackendRuntimeRegistration(): ScmBackendRuntimeRegis
     const backend = createGitBackend();
     return {
         id: backend.id,
+        runtime: {
+            repoModes: ['.git'],
+            capabilities: GIT_SCM_BACKEND_CAPABILITIES,
+            commands: [{ installableKey: GIT_INSTALLABLE_DEP_ID, command: 'git' }],
+        },
         handlers: {
             detection: {
                 detectRepo: backend.detectRepo,
@@ -238,8 +244,4 @@ export function createGitScmBackendRuntimeRegistration(): ScmBackendRuntimeRegis
             workspaceIntegration: backend.workspaceIntegration,
         },
     };
-}
-
-export function registerGitScmBackend(api: PluginApiV1): void {
-    api.registerScmBackend(createGitScmBackendRuntimeRegistration());
 }

@@ -9,12 +9,10 @@ import { CANONICAL_AGENT_LOCAL_CLI_CONFIG } from '../localCli.js';
 import { CANONICAL_AGENT_AUTH_PROBE_CONFIG } from '../auth.js';
 import { BUILT_IN_ACP_CONFIG } from '../acp.js';
 import {
-  CANONICAL_AGENT_CLI_RUNTIME_SPECS,
   getAgentCliSetupRecommendedIds,
   getAgentCliSetupSupportedIds,
 } from '../cli/runtime.js';
 import { BUNDLED_AGENT_DEFINITIONS_BY_ID } from '../generated/bundledAgentDefinitions.js';
-import { getAgentSettingsDefinition } from '../agentSettings/index.js';
 import type { AgentCatalogDefinition, AgentDefinitionContractV1 } from './types.js';
 import { resolveOwnedBackendIdsForAgent } from './resolveBackendOwnership.js';
 
@@ -35,8 +33,6 @@ function createAgentCatalogDefinition(agentId: AgentId): AgentCatalogDefinition 
     sessionModesKind: CANONICAL_AGENT_SESSION_MODES[agentId],
     modelConfig: CANONICAL_AGENT_MODEL_CONFIG[agentId],
     localCli: CANONICAL_AGENT_LOCAL_CLI_CONFIG[agentId],
-    agentCliRuntime: CANONICAL_AGENT_CLI_RUNTIME_SPECS[agentId],
-    agentSettings: getAgentSettingsDefinition(agentId),
   };
 }
 
@@ -84,7 +80,6 @@ export type AgentArtifacts = Readonly<{
   localCliConfig: typeof CANONICAL_AGENT_LOCAL_CLI_CONFIG;
   authProbeConfig: typeof CANONICAL_AGENT_AUTH_PROBE_CONFIG;
   builtInAcpConfig: typeof BUILT_IN_ACP_CONFIG;
-  agentCliRuntimeSpecs: typeof CANONICAL_AGENT_CLI_RUNTIME_SPECS;
 }>;
 
 export function buildAgentArtifacts(): AgentArtifacts {
@@ -104,7 +99,6 @@ export function buildAgentArtifacts(): AgentArtifacts {
     localCliConfig: CANONICAL_AGENT_LOCAL_CLI_CONFIG,
     authProbeConfig: CANONICAL_AGENT_AUTH_PROBE_CONFIG,
     builtInAcpConfig: BUILT_IN_ACP_CONFIG,
-    agentCliRuntimeSpecs: CANONICAL_AGENT_CLI_RUNTIME_SPECS,
   };
 }
 

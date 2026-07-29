@@ -220,4 +220,34 @@ describe('runtimeDescriptorMetadata compat helpers', () => {
       host: 'localhost',
     });
   });
+
+  it('writes Oh My Pi metadata with structured identity and no flat identity alias', () => {
+    const written = writeRuntimeDescriptorV1ToMetadata({
+      path: '/tmp/session',
+    }, {
+      v: 1,
+      agentId: 'ohMyPi',
+      agent: {
+        backendMode: 'acp',
+        providerSessionId: 'omp-session-1',
+      },
+    });
+
+    expect(written.runtimeDescriptorV1).toEqual({
+      v: 1,
+      agentIdentity: {
+        pluginId: 'happier.agent.ohmypi',
+        localId: 'ohmypi',
+      },
+      agent: {
+        backendMode: 'acp',
+        providerSessionId: 'omp-session-1',
+      },
+    });
+    expect(written).not.toHaveProperty('agentRuntimeDescriptorV1');
+    expect(JSON.stringify(written.runtimeDescriptorV1)).not.toContain('ohMyPi');
+    expect(readRuntimeDescriptorV1FromMetadata(written)).toMatchObject({
+      agentId: 'ohMyPi',
+    });
+  });
 });

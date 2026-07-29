@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { serializeModelVisibilityRefV1 } from '../selection/v1.js';
 import {
+  SavedSecretSlotBindingsV1Schema,
   DEFAULT_PROVIDER_SETTINGS_V1,
   ProviderSettingsLimitError,
   ProviderSettingsV1Schema,
@@ -10,7 +11,7 @@ import {
   parseProviderSettingsV1Narrow,
 } from './v1.js';
 
-function connection(id: string, contributionKey = 'happier.provider.openrouter:providers:openrouter') {
+function connection(id: string, contributionKey = 'happier.provider.openrouter/openrouter') {
   return {
     v: 1,
     id,
@@ -18,6 +19,7 @@ function connection(id: string, contributionKey = 'happier.provider.openrouter:p
     role: 'default',
     displayName: 'OpenRouter',
     displayNameMode: 'automatic',
+    deployment: { kind: 'external' },
     revision: 0,
     createdAt: 1,
     updatedAt: 1,
@@ -47,9 +49,35 @@ function validSettings() {
   } as const;
 }
 
+describe('SavedSecretSlotBindingsV1Schema', () => {
+  it('validates the reusable account and per-machine slot-binding primitive', () => {
+    expect(SavedSecretSlotBindingsV1Schema.parse({
+      account: { api_key: 'saved-secret-account' },
+      byMachineId: { machine_a: { api_key: 'saved-secret-machine' } },
+    })).toEqual({
+      account: { api_key: 'saved-secret-account' },
+      byMachineId: { machine_a: { api_key: 'saved-secret-machine' } },
+    });
+    expect(SavedSecretSlotBindingsV1Schema.safeParse({
+      account: { api_key: ' saved-secret' },
+    }).success).toBe(false);
+  });
+});
+
 describe('ProviderSettingsV1Schema', () => {
   it('round-trips one coherent synced owner', () => {
     expect(ProviderSettingsV1Schema.parse(validSettings())).toEqual(validSettings());
+  });
+
+  it('expands predecessor connections without deployment as external', () => {
+    const settings = structuredClone(validSettings());
+    const { deployment: _deployment, ...predecessorConnection } =
+      settings.connections[0];
+    settings.connections = [predecessorConnection] as typeof settings.connections;
+
+    expect(
+      ProviderSettingsV1Schema.parse(settings).connections[0]?.deployment,
+    ).toEqual({ kind: 'external' });
   });
 
   it('rejects duplicate defaults, invalid cross-references and executable tombstones', () => {
@@ -81,7 +109,7 @@ describe('ProviderSettingsV1Schema', () => {
   it('enforces per-field limits and the decoded 4 MiB subtree budget atomically', () => {
     const oversized = structuredClone(validSettings()) as any;
     oversized.connections = Array.from({ length: 257 }, (_, index) => ({
-      ...connection(`pc_${index}`, `plugin:providers:provider-${index}`), id: `pc_${index}`,
+      ...connection(`pc_${index}`, `plugin/provider-${index}`), id: `pc_${index}`,
     }));
     expect(() => assertProviderSettingsV1WithinLimits(oversized)).toThrow(ProviderSettingsLimitError);
 
@@ -129,7 +157,7 @@ describe('ProviderSettingsV1Schema', () => {
 
     const totalManualOver = structuredClone(DEFAULT_PROVIDER_SETTINGS_V1) as any;
     totalManualOver.connections = Array.from({ length: 11 }, (_, index) =>
-      ({ ...connection(`pc_${index}`, `plugin:providers:p-${index}`), role: 'named', displayNameMode: 'custom' }));
+      ({ ...connection(`pc_${index}`, `plugin/p-${index}`), role: 'named', displayNameMode: 'custom' }));
     totalManualOver.manualModelsByConnectionId = Object.fromEntries(totalManualOver.connections.map((entry: { id: string }, index: number) => [
       entry.id,
       Array.from({ length: index === 10 ? 1 : 500 }, (_, modelIndex) => ({ id: `m-${index}-${modelIndex}`, addedAt: 1 })),
@@ -195,7 +223,7 @@ describe('ProviderSettingsV1Schema', () => {
 
   it('diagnoses read-recovery truncation at hard caps while retaining the first valid records', () => {
     const raw = structuredClone(DEFAULT_PROVIDER_SETTINGS_V1) as any;
-    raw.connections = Array.from({ length: 257 }, (_, index) => connection(`pc_${index}`, `plugin:providers:p-${index}`));
+    raw.connections = Array.from({ length: 257 }, (_, index) => connection(`pc_${index}`, `plugin/p-${index}`));
     const parsed = parseProviderSettingsV1Narrow(raw);
     expect(parsed.settings.connections).toHaveLength(256);
     expect(parsed.diagnostics).toContainEqual({ path: 'connections', reason: 'limit_exceeded' });
@@ -280,6 +308,28 @@ describe('ProviderSettingsV1Schema', () => {
     expect(ProviderSettingsV1Schema.safeParse(contradictory).success).toBe(false);
   });
 
+  it('retains migration revision and implicit-versus-explicit selection provenance', () => {
+    const settings = structuredClone(validSettings()) as any;
+    settings.connections.push({
+      v: 1, id: 'pc-deepseek', source: { kind: 'contribution', contributionKey: 'happier.provider.deepseek/deepseek' },
+      role: 'default', displayName: 'DeepSeek', displayNameMode: 'automatic', revision: 0, createdAt: 1, updatedAt: 1,
+    });
+    settings.migration = {
+      v: 1,
+      completedSources: [{
+        sourceProfileId: 'deepseek', kind: 'connection', connectionId: 'pc-deepseek',
+        sourceRevision: 2, modelSelectionOrigin: 'implicit_default',
+        modelSelection: { agentTargetKey: 'agent:claude', providerConnectionId: 'pc-deepseek', modelId: 'deepseek-v4-flash' },
+      }],
+      pendingCustomProfileIds: [],
+      pendingConflicts: [],
+    };
+    expect(ProviderSettingsV1Schema.parse(settings).migration?.completedSources[0]).toMatchObject({
+      sourceRevision: 2,
+      modelSelectionOrigin: 'implicit_default',
+    });
+  });
+
   it('retains historical connection outcomes while diagnosing contradictory pending state', () => {
     const raw = structuredClone(validSettings()) as any;
     raw.migration = {
@@ -312,7 +362,7 @@ describe('ProviderSettingsV1Schema', () => {
     const base = {
       v: 1 as const,
       sourceProfileId: 'deepseek',
-      contributionKey: 'happier.provider.deepseek:providers:deepseek',
+      contributionKey: 'happier.provider.deepseek/deepseek',
       existingConnectionId: 'pc_existing',
       kinds: ['manual_model'] as const,
       candidateFingerprint: 'legacy-profile-migration-conflict:v1:test',

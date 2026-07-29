@@ -230,6 +230,8 @@ export const ExecutionRunStartRequestSchema = z.object({
   retentionPolicy: ExecutionRunRetentionPolicySchema,
   runClass: ExecutionRunClassSchema,
   ioMode: ExecutionRunIoModeSchema,
+  profileId: z.string().trim().min(1).optional(),
+  profileGenerationId: z.string().trim().min(1).optional(),
   initialContext: z.string().optional(),
   initialContextMode: z.enum(['bootstrap', 'first_turn']).optional(),
   bootstrapMode: z.enum(['none', 'ready_handshake']).optional(),
@@ -266,6 +268,20 @@ export const ExecutionRunStartRequestSchema = z.object({
    */
   connectedServicesDefaultServiceIds: z.array(z.string()).optional(),
 }).passthrough().superRefine((value, ctx) => {
+  if (Object.prototype.hasOwnProperty.call(value, 'agentSessionStartupInstructionsV1')) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Agent-session startup instructions are not supported for execution runs',
+      path: ['agentSessionStartupInstructionsV1'],
+    });
+  }
+  if (Boolean(value.profileId) !== Boolean(value.profileGenerationId)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'profileId and profileGenerationId must be provided together',
+      path: value.profileId ? ['profileGenerationId'] : ['profileId'],
+    });
+  }
   if (hasLegacyCustomAcpConcreteBackendId(value.backendTarget)) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,

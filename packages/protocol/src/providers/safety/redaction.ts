@@ -1,55 +1,27 @@
-import { isUnsafeTelemetryDataKey } from '../../common/sensitiveKeys.js';
-import { redactSensitiveUrlPathSegments } from '../../browser/diagnostics/egress/url.js';
-import { normalizeProviderPublicHeaders } from './headers.js';
-
-export function redactProviderUrlForDiagnostics(rawUrl: string): Readonly<{
-  origin: string;
-  path: string;
-  queryKeys: readonly string[];
-}> {
-  try {
-    const parsed = new URL(rawUrl);
-    const queryKeys = [...new Set(
-      [...parsed.searchParams.keys()].filter((key) => !isUnsafeTelemetryDataKey(key)),
-    )].sort();
-    return {
-      origin: parsed.origin,
-      path: redactSensitiveUrlPathSegments(parsed.pathname || '/'),
-      queryKeys,
-    };
-  } catch {
-    return { origin: 'unknown:', path: '/', queryKeys: [] };
-  }
-}
-
-export function redactProviderHeadersForDiagnostics(
-  headers: Readonly<Record<string, string>>,
-): readonly string[] {
-  return Object.keys(normalizeProviderPublicHeaders(headers)).sort();
-}
-
-export function redactProviderDiagnosticText(
-  input: string,
-  values: Readonly<{
-    secretValues?: readonly string[];
-    headerValues?: readonly string[];
-    queryValues?: readonly string[];
-  }>,
-): string {
-  const redactedValues = [...new Set([
-    ...(values.secretValues ?? []),
-    ...(values.headerValues ?? []),
-    ...(values.queryValues ?? []),
-  ].filter((value) => value.length > 0))].sort((a, b) => b.length - a.length);
-  return redactedValues.reduce(
-    (text, value) => text.split(value).join('[REDACTED]'),
-    input,
-  );
-}
-
 export function containsProviderRegisteredSecret(
   input: string,
   registeredSecretValues: readonly string[],
 ): boolean {
-  return registeredSecretValues.some((value) => value.length > 0 && input.includes(value));
+  return containsProviderRegisteredSensitiveValue(input, registeredSecretValues);
+}
+
+/**
+ * Detects registered sensitive values in untrusted Provider output, including
+ * their URL-percent-encoded representation. This is the shared egress check
+ * for response fields and redirect targets; callers must reject a match
+ * rather than attempting to redact and continue the request.
+ */
+export function containsProviderRegisteredSensitiveValue(
+  input: string,
+  registeredValues: readonly string[],
+): boolean {
+  const lowerInput = input.toLowerCase();
+  return registeredValues.some((value) => {
+    if (value.length === 0) return false;
+    if (input.includes(value)) return true;
+    const encoded = encodeURIComponent(value);
+    if (encoded !== value && lowerInput.includes(encoded.toLowerCase())) return true;
+    const formEncoded = encoded.replaceAll('%20', '+');
+    return formEncoded !== encoded && lowerInput.includes(formEncoded.toLowerCase());
+  });
 }

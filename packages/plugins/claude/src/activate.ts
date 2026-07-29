@@ -1,39 +1,33 @@
-import {
-  toPluginHookObjectContext,
-  toPluginHookPayloadEnvelope,
-} from '@happier-dev/plugin-sdk';
+import type { PluginApi } from '@happier-dev/plugin-sdk';
 import type {
-  PluginApi,
-  McpServerSpecV1,
-  PluginApiHookRegistrationV1,
-  PluginHookHandler,
-  RegisterDaemonAuthBridgeV1,
-} from '@happier-dev/plugin-sdk';
+  HookHandler,
+  PluginMcpDiscoveryResult,
+} from '@happier-dev/plugin-sdk/runtime';
 
 import { readClaudeMcpConfigServers } from './agent/mcp/configServers.js';
-import { createClaudeBackendEngine } from './agent/runtime/engine.js';
+import { CLAUDE_PROVIDER_BINDING_ADAPTER_V1 } from './agent/providerBinding/adapter.js';
+import { createClaudeAgentRuntime } from './agent/runtime/nativeRuntime.js';
+import { claudeExternalSessionsContribution } from './agent/surfaces/sessions/external/contribution.js';
+import { claudeExternalSessionHooksContribution } from './agent/surfaces/sessions/external/hooks.js';
+import { claudeExternalSessionObservationContribution } from './agent/surfaces/sessions/external/observation.js';
+import { claudeExternalSessionTakeoverContribution } from './agent/surfaces/sessions/external/takeover.js';
 import {
   augmentClaudeDaemonSpawnEnv,
   resolveClaudeDaemonSpawnPrerequisites,
 } from './agent/lifecycle/spawnHooks.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
+import { anthropicConnectedAccountRuntime } from './connectedAccounts/anthropicRuntime.js';
+import {
+  claudeSubscriptionConnectedAccountRuntime,
+} from './connectedAccounts/claudeSubscriptionRuntime.js';
 
-type ClaudeSpawnPrerequisiteHookEvent = Parameters<typeof resolveClaudeDaemonSpawnPrerequisites>[0];
-type ClaudeSpawnPrerequisiteHookContext = NonNullable<Parameters<typeof resolveClaudeDaemonSpawnPrerequisites>[1]>;
-type ClaudeSpawnEnvHookEvent = Parameters<typeof augmentClaudeDaemonSpawnEnv>[0];
+type ClaudeMcpServerSpec = NonNullable<PluginMcpDiscoveryResult['servers']>[number];
 
-const resolveClaudeDaemonSpawnPrerequisitesHook: PluginHookHandler = (event, context) =>
-  resolveClaudeDaemonSpawnPrerequisites(
-    toPluginHookPayloadEnvelope<ClaudeSpawnPrerequisiteHookEvent>(event),
-    toPluginHookObjectContext<ClaudeSpawnPrerequisiteHookContext>(context),
-  );
+const resolveClaudeDaemonSpawnPrerequisitesHook: HookHandler = (event, context) =>
+  resolveClaudeDaemonSpawnPrerequisites(event, context);
 
-const augmentClaudeDaemonSpawnEnvHook: PluginHookHandler = (event) =>
-  augmentClaudeDaemonSpawnEnv(toPluginHookPayloadEnvelope<ClaudeSpawnEnvHookEvent>(event));
-
-const refreshClaudeDaemonAuthBridge: RegisterDaemonAuthBridgeV1['refresh'] = async () => {
-  throw new Error('claude-subscription daemon auth bridge is unavailable until the daemon binds registered bridges');
-};
+const augmentClaudeDaemonSpawnEnvHook: HookHandler = (event) =>
+  augmentClaudeDaemonSpawnEnv(event);
 
 function toRedactedEnvKeys(envKeys: readonly string[]): Readonly<Record<string, string>> | undefined {
   if (envKeys.length === 0) return undefined;
@@ -42,7 +36,7 @@ function toRedactedEnvKeys(envKeys: readonly string[]): Readonly<Record<string, 
 
 function toClaudeMcpServerSpec(
   server: Awaited<ReturnType<typeof readClaudeMcpConfigServers>>['servers'][number],
-): McpServerSpecV1 | null {
+): ClaudeMcpServerSpec | null {
   if (server.transport === 'stdio' && server.stdio) {
     return {
       id: `claude.config.${server.name}`,
@@ -72,7 +66,7 @@ function toClaudeMcpServerSpec(
 }
 
 function readClaudeConfigDiscoveryProvider(): typeof PLUGIN_MANIFEST.contributes.mcp.discoveryProviders[number] {
-  const provider = PLUGIN_MANIFEST.contributes.mcp.discoveryProviders.find((entry) => entry.id === 'claude.config');
+  const provider = PLUGIN_MANIFEST.contributes.mcp.discoveryProviders.find((entry) => entry.id === 'config');
   if (!provider) {
     throw new Error('Claude plugin manifest must declare claude.config MCP discovery provider');
   }
@@ -80,46 +74,52 @@ function readClaudeConfigDiscoveryProvider(): typeof PLUGIN_MANIFEST.contributes
 }
 
 export function activate(api: PluginApi): void {
-  api.registerAgentRuntime({
-    agentId: 'claude',
-    create: async (ctx) => {
-      ctx.logger.debug('[plugins/claude] Creating backend engine');
-      return createClaudeBackendEngine(ctx);
-    },
+  const claudeSubscriptionDescriptor = PLUGIN_MANIFEST.contributes.connectedAccountDescriptors.find(
+    ({ id }) => id === 'claude-subscription',
+  );
+  if (!claudeSubscriptionDescriptor) {
+    throw new Error('Claude plugin manifest must declare the Claude Subscription Connected Account');
+  }
+  const anthropicDescriptor = PLUGIN_MANIFEST.contributes.connectedAccountDescriptors.find(
+    ({ id }) => id === 'anthropic',
+  );
+  if (!anthropicDescriptor) {
+    throw new Error('Claude plugin manifest must declare the Anthropic Connected Account');
+  }
+  api.connectedAccounts.register(anthropicDescriptor.id, anthropicConnectedAccountRuntime);
+  api.connectedAccounts.register(
+    claudeSubscriptionDescriptor.id,
+    claudeSubscriptionConnectedAccountRuntime,
+  );
+  api.agents.register('claude', createClaudeAgentRuntime, {
+    providerBinding: CLAUDE_PROVIDER_BINDING_ADAPTER_V1,
   });
-  api.registerDaemonAuthBridge({
-    serviceId: 'claude-subscription',
-    refresh: refreshClaudeDaemonAuthBridge,
-  });
-  api.registerHook({
-    hookId: 'agent.resolvePrerequisites',
-    category: 'decision',
-    scope: 'agent',
-    filters: { agentId: 'claude' },
-    executionKind: 'decide',
-    handler: resolveClaudeDaemonSpawnPrerequisitesHook,
-  });
-  api.registerHook({
-    hookId: 'agent.spawnEnv.augment',
-    category: 'augmentation',
-    scope: 'daemon',
-    filters: { agentId: 'claude' },
-    executionKind: 'augment',
-    handler: augmentClaudeDaemonSpawnEnvHook,
-  });
+  api.agents.registerExternalSessions('claude', claudeExternalSessionsContribution);
+  api.agents.registerExternalSessionTakeover(
+    'claude',
+    claudeExternalSessionTakeoverContribution,
+  );
+  api.agents.registerExternalSessionHooks(
+    'claude',
+    claudeExternalSessionHooksContribution,
+  );
+  api.agents.registerExternalSessionObservation(
+    'claude',
+    claudeExternalSessionObservationContribution,
+  );
+  api.hooks.register('resolve-prerequisites', resolveClaudeDaemonSpawnPrerequisitesHook);
+  api.hooks.register('augment-spawn-env', augmentClaudeDaemonSpawnEnvHook);
   const configDiscoveryProvider = readClaudeConfigDiscoveryProvider();
-  api.registerMcpDiscoveryProvider({
-    id: configDiscoveryProvider.id,
-    discover: async (input) => {
+  api.mcp.registerDiscoveryProvider(configDiscoveryProvider.id, async (input) => {
       const detected = await readClaudeMcpConfigServers({
         directory: input?.directory ?? null,
       });
       return {
+        items: [],
         servers: detected.servers
           .map(toClaudeMcpServerSpec)
-          .filter((server): server is McpServerSpecV1 => server !== null),
+          .filter((server): server is ClaudeMcpServerSpec => server !== null),
         warnings: detected.warnings,
       };
-    },
   });
 }

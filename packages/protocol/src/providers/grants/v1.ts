@@ -43,6 +43,7 @@ export type ProviderProbeAuthorizationV1 = z.infer<typeof ProviderProbeAuthoriza
 
 export const ProviderBindingAuthorizationTicketV1Schema = z.object({
   connectionId: ProviderConnectionIdSchema,
+  connectionRevision: z.number().int().nonnegative(),
   machineId: ProviderMachineIdSchema,
   connectionSecurityFingerprint: FingerprintSchema,
   bindingSecurityFingerprint: FingerprintSchema,

@@ -51,8 +51,15 @@ export type JsonlForwardLineV1 = Readonly<{
   endOffsetBytes: number;
 }>;
 
+export type JsonlSourceDiagnosticV1 = Readonly<{
+  code: 'malformed_source_utf8';
+  count: number;
+  positions: readonly number[];
+}>;
+
 const DEFAULT_CHUNK_BYTES = 64 * 1024;
 const DEFAULT_MAX_OVERSIZE_LINE_BYTES = 8 * 1024 * 1024;
+const MAX_SOURCE_DIAGNOSTIC_POSITIONS = 200;
 
 const defaultFileSystem: JsonlScannerFileSystemV1 = {
   async stat(filePath) {
@@ -77,14 +84,112 @@ function normalizePositiveInteger(value: number | undefined, fallback: number): 
     : fallback;
 }
 
-function splitLines(buffer: Buffer): string[] {
-  return buffer.toString('utf8').split('\n').map((line) => line.trim()).filter((line) => line.length > 0);
+function findMalformedUtf8Offset(buffer: Buffer): number | null {
+  for (let index = 0; index < buffer.length;) {
+    const first = buffer[index]!;
+    if (first <= 0x7f) {
+      index += 1;
+      continue;
+    }
+    const continuation = (offset: number): number | null => {
+      const value = buffer[index + offset];
+      return value !== undefined && value >= 0x80 && value <= 0xbf ? value : null;
+    };
+    if (first >= 0xc2 && first <= 0xdf) {
+      if (continuation(1) === null) return index;
+      index += 2;
+      continue;
+    }
+    if (first >= 0xe0 && first <= 0xef) {
+      const second = continuation(1);
+      if (
+        second === null
+        || continuation(2) === null
+        || (first === 0xe0 && second < 0xa0)
+        || (first === 0xed && second > 0x9f)
+      ) {
+        return index;
+      }
+      index += 3;
+      continue;
+    }
+    if (first >= 0xf0 && first <= 0xf4) {
+      const second = continuation(1);
+      if (
+        second === null
+        || continuation(2) === null
+        || continuation(3) === null
+        || (first === 0xf0 && second < 0x90)
+        || (first === 0xf4 && second > 0x8f)
+      ) {
+        return index;
+      }
+      index += 4;
+      continue;
+    }
+    return index;
+  }
+  return null;
 }
 
-function splitCompleteLines(text: string, reachedEof: boolean): string[] {
-  const lines = text.split('\n');
-  if (text.endsWith('\n')) lines.pop();
-  if (!text.endsWith('\n') && !reachedEof) lines.pop();
+function decodeSourceLine(buffer: Buffer): Readonly<
+  | { ok: true; value: string }
+  | { ok: false; malformedOffsetBytes: number }
+> {
+  const malformedOffsetBytes = findMalformedUtf8Offset(buffer);
+  return malformedOffsetBytes === null
+    ? { ok: true, value: buffer.toString('utf8') }
+    : { ok: false, malformedOffsetBytes };
+}
+
+function buildMalformedSourceDiagnostics(
+  count: number,
+  positions: readonly number[],
+): readonly JsonlSourceDiagnosticV1[] | undefined {
+  return count === 0
+    ? undefined
+    : [{ code: 'malformed_source_utf8', count, positions }];
+}
+
+function splitLines(buffer: Buffer): string[] {
+  return splitCompleteLineBuffers(buffer, true).flatMap((line) => {
+    const decoded = decodeSourceLine(line.value);
+    if (!decoded.ok) return [];
+    const trimmed = decoded.value.trim();
+    return trimmed.length > 0 ? [trimmed] : [];
+  });
+}
+
+function splitCompleteLineBuffers(
+  buffer: Buffer,
+  reachedEof: boolean,
+): readonly Readonly<{
+  value: Buffer;
+  startOffsetBytes: number;
+  endOffsetBytes: number;
+}>[] {
+  const lines: Array<Readonly<{
+    value: Buffer;
+    startOffsetBytes: number;
+    endOffsetBytes: number;
+  }>> = [];
+  let startOffsetBytes = 0;
+  for (let index = 0; index < buffer.byteLength; index += 1) {
+    if (buffer[index] !== 0x0a) continue;
+    lines.push({
+      value: buffer.subarray(startOffsetBytes, index),
+      startOffsetBytes,
+      endOffsetBytes: index + 1,
+    });
+    startOffsetBytes = index + 1;
+  }
+  if (reachedEof && startOffsetBytes < buffer.byteLength) {
+    lines.push({
+      value: buffer.subarray(startOffsetBytes),
+      startOffsetBytes,
+      endOffsetBytes: buffer.byteLength,
+    });
+  }
   return lines;
 }
 
@@ -96,10 +201,15 @@ function findTitleFromTail(records: readonly unknown[], fallback: string | null)
       const title = readString(record.name);
       if (title) return title;
     }
-    if (record.type === 'session') {
-      const title = readString(record.title);
-      if (title) return title;
-    }
+  }
+  return fallback;
+}
+
+function findTitleFromHead(records: readonly unknown[], fallback: string | null): string | null {
+  for (const record of records) {
+    if (!isRecord(record) || record.type !== 'title') continue;
+    const title = readString(record.title);
+    if (title) return title;
   }
   return fallback;
 }
@@ -142,7 +252,10 @@ export async function scanJsonlSessionFile(
     const fullScanLineLimit = normalizePositiveInteger(bounds.fullScanLineLimit, DEFAULT_FULL_SCAN_LINE_LIMIT);
     const head = await fileSystem.read(filePath, 0, Math.min(headBytes, fileStat.size));
     const headLines = splitLines(head);
-    const header = parseDefaultSessionHeader(parseJsonLine(headLines[0] ?? ''));
+    const headRecords = headLines.map(parseJsonLine).filter((record): record is unknown => record !== null);
+    const header = headRecords
+      .map(parseDefaultSessionHeader)
+      .find((candidate) => candidate !== null) ?? null;
     if (!header) return null;
 
     const tailStart = Math.max(0, fileStat.size - tailBytes);
@@ -156,7 +269,7 @@ export async function scanJsonlSessionFile(
       sessionId: header.sessionId,
       cwd: header.cwd,
       createdAtMs: header.createdAtMs,
-      title: findTitleFromTail(tailRecords, header.title),
+      title: findTitleFromHead(headRecords, null) ?? findTitleFromTail(tailRecords, header.title),
       firstUserMessage: findFirstUserMessage(headLines, fullScanLineLimit),
       lastUserMessage: findLastUserMessage(tailRecords),
       lastActivityAtMs: lastTimestampMs ?? fallbackActivity,
@@ -197,6 +310,8 @@ export async function readJsonlAfterCursor(params: Readonly<{
   maxItems: number;
 }>): Promise<Readonly<{
   lines: readonly string[];
+  lineStartOffsets: readonly number[];
+  diagnostics?: readonly JsonlSourceDiagnosticV1[];
   nextCursor: JsonlByteCursorV1;
   truncated: boolean;
 }>> {
@@ -206,26 +321,41 @@ export async function readJsonlAfterCursor(params: Readonly<{
   const maxItems = normalizePositiveInteger(params.maxItems, 100);
   const bytesToRead = Math.min(maxBytes, fileStat.size - startOffset);
   const buffer = await defaultFileSystem.read(params.filePath, startOffset, bytesToRead);
-  const text = buffer.toString('utf8');
   const reachedEof = startOffset + buffer.byteLength >= fileStat.size;
-  const split = splitCompleteLines(text, reachedEof);
+  const split = splitCompleteLineBuffers(buffer, reachedEof);
 
   const lines: string[] = [];
+  const lineStartOffsets: number[] = [];
+  const malformedPositions: number[] = [];
+  let malformedCount = 0;
   let consumedBytes = 0;
-  for (const rawLine of split) {
-    const lineBytes = Buffer.byteLength(`${rawLine}\n`, 'utf8');
+  for (const line of split) {
+    const decoded = decodeSourceLine(line.value);
+    if (!decoded.ok) {
+      malformedCount += 1;
+      if (malformedPositions.length < MAX_SOURCE_DIAGNOSTIC_POSITIONS) {
+        malformedPositions.push(startOffset + line.startOffsetBytes + decoded.malformedOffsetBytes);
+      }
+      consumedBytes = line.endOffsetBytes;
+      continue;
+    }
+    const rawLine = decoded.value;
     if (rawLine.length === 0) {
-      consumedBytes += lineBytes;
+      consumedBytes = line.endOffsetBytes;
       continue;
     }
     if (lines.length >= maxItems) break;
     lines.push(rawLine);
-    consumedBytes += lineBytes;
+    lineStartOffsets.push(startOffset + line.startOffsetBytes);
+    consumedBytes = line.endOffsetBytes;
   }
 
   const nextOffset = Math.min(fileStat.size, startOffset + consumedBytes);
+  const diagnostics = buildMalformedSourceDiagnostics(malformedCount, malformedPositions);
   return {
     lines,
+    lineStartOffsets,
+    ...(diagnostics === undefined ? {} : { diagnostics }),
     nextCursor: { v: 1, kind: 'byteOffset', offset: nextOffset },
     truncated: nextOffset < fileStat.size,
   };
@@ -235,22 +365,43 @@ export async function readJsonlRange(params: Readonly<{
   filePath: string;
   startOffset: number;
   maxBytes: number;
-}>): Promise<Readonly<{ lines: readonly string[]; nextOffset: number; eof: boolean }>> {
+}>): Promise<Readonly<{
+  lines: readonly string[];
+  diagnostics?: readonly JsonlSourceDiagnosticV1[];
+  nextOffset: number;
+  eof: boolean;
+}>> {
   const fileStat = await defaultFileSystem.stat(params.filePath);
   const startOffset = Math.min(Math.max(0, Math.trunc(params.startOffset)), fileStat.size);
   const maxBytes = normalizePositiveInteger(params.maxBytes, DEFAULT_TAIL_BYTES);
   const buffer = await defaultFileSystem.read(params.filePath, startOffset, Math.min(maxBytes, fileStat.size - startOffset));
-  const text = buffer.toString('utf8');
   const reachedEof = startOffset + buffer.byteLength >= fileStat.size;
-  const split = splitCompleteLines(text, reachedEof);
+  const split = splitCompleteLineBuffers(buffer, reachedEof);
   const lines: string[] = [];
+  const malformedPositions: number[] = [];
+  let malformedCount = 0;
   let consumedBytes = 0;
-  for (const rawLine of split) {
-    consumedBytes += Buffer.byteLength(`${rawLine}\n`, 'utf8');
+  for (const line of split) {
+    consumedBytes = line.endOffsetBytes;
+    const decoded = decodeSourceLine(line.value);
+    if (!decoded.ok) {
+      malformedCount += 1;
+      if (malformedPositions.length < MAX_SOURCE_DIAGNOSTIC_POSITIONS) {
+        malformedPositions.push(startOffset + line.startOffsetBytes + decoded.malformedOffsetBytes);
+      }
+      continue;
+    }
+    const rawLine = decoded.value;
     if (rawLine.trim().length > 0) lines.push(rawLine);
   }
   const nextOffset = Math.min(fileStat.size, startOffset + consumedBytes);
-  return { lines, nextOffset, eof: nextOffset >= fileStat.size };
+  const diagnostics = buildMalformedSourceDiagnostics(malformedCount, malformedPositions);
+  return {
+    lines,
+    ...(diagnostics === undefined ? {} : { diagnostics }),
+    nextOffset,
+    eof: nextOffset >= fileStat.size,
+  };
 }
 
 export async function readJsonlFileBackwardPage(params: Readonly<{
@@ -263,6 +414,7 @@ export async function readJsonlFileBackwardPage(params: Readonly<{
   fileSystem?: JsonlScannerFileSystemV1;
 }>): Promise<Readonly<{
   items: readonly JsonlParsedLineV1[];
+  diagnostics?: readonly JsonlSourceDiagnosticV1[];
   nextEndOffsetBytes: number;
   reachedStart: boolean;
 }>> {
@@ -291,6 +443,8 @@ export async function readJsonlFileBackwardPage(params: Readonly<{
   }
 
   const collectedNewestFirst: JsonlParsedLineV1[] = [];
+  const malformedPositions: number[] = [];
+  let malformedCount = 0;
   let bytesReadTotal = 0;
   let end = initialEnd;
   let carry = Buffer.alloc(0);
@@ -325,9 +479,6 @@ export async function readJsonlFileBackwardPage(params: Readonly<{
       const segment = combined.slice(segmentStartIndex, segmentEndIndexExclusive);
       segmentEndIndex = index;
 
-      const parsed = parseJsonLine(segment.toString('utf8'));
-      if (parsed === null) continue;
-
       const startOffsetAbs =
         segmentStartIndex < chunk.length
           ? combinedStartOffset + segmentStartIndex
@@ -336,6 +487,16 @@ export async function readJsonlFileBackwardPage(params: Readonly<{
         segmentEndIndexExclusive < chunk.length
           ? combinedStartOffset + segmentEndIndexExclusive
           : carryStartOffset + (segmentEndIndexExclusive - chunk.length);
+      const decoded = decodeSourceLine(segment);
+      if (!decoded.ok) {
+        malformedCount += 1;
+        if (malformedPositions.length < MAX_SOURCE_DIAGNOSTIC_POSITIONS) {
+          malformedPositions.push(startOffsetAbs + decoded.malformedOffsetBytes);
+        }
+        continue;
+      }
+      const parsed = parseJsonLine(decoded.value);
+      if (parsed === null) continue;
       collectedNewestFirst.push({ value: parsed, startOffsetBytes: startOffsetAbs, endOffsetBytes: endOffsetAbs });
     }
 
@@ -343,18 +504,31 @@ export async function readJsonlFileBackwardPage(params: Readonly<{
     end = start;
 
     if (end === 0 && carry.length > 0 && collectedNewestFirst.length < maxItems) {
-      const parsed = parseJsonLine(carry.toString('utf8'));
-      if (parsed !== null) {
-        collectedNewestFirst.push({ value: parsed, startOffsetBytes: 0, endOffsetBytes: carry.length });
+      const decoded = decodeSourceLine(carry);
+      if (!decoded.ok) {
+        malformedCount += 1;
+        if (malformedPositions.length < MAX_SOURCE_DIAGNOSTIC_POSITIONS) {
+          malformedPositions.push(decoded.malformedOffsetBytes);
+        }
         carry = Buffer.alloc(0);
+      } else {
+        const parsed = parseJsonLine(decoded.value);
+        if (parsed !== null) {
+          collectedNewestFirst.push({ value: parsed, startOffsetBytes: 0, endOffsetBytes: carry.length });
+          carry = Buffer.alloc(0);
+        }
       }
     }
   }
 
   const items = collectedNewestFirst.reverse();
-  const nextEndOffsetBytes = items.length > 0 ? items[0]!.startOffsetBytes : initialEnd;
+  // A malformed-only page must still consume the bytes that were inspected.
+  // Returning initialEnd here would hand the caller the same cursor forever.
+  const nextEndOffsetBytes = items.length > 0 ? items[0]!.startOffsetBytes : end;
+  const diagnostics = buildMalformedSourceDiagnostics(malformedCount, malformedPositions);
   return {
     items,
+    ...(diagnostics === undefined ? {} : { diagnostics }),
     nextEndOffsetBytes,
     reachedStart: nextEndOffsetBytes <= 0,
   };
@@ -370,6 +544,7 @@ export async function readJsonlFileForwardLines(params: Readonly<{
   fileSystem?: JsonlScannerFileSystemV1;
 }>): Promise<Readonly<{
   items: readonly JsonlForwardLineV1[];
+  diagnostics?: readonly JsonlSourceDiagnosticV1[];
   nextOffsetBytes: number;
   truncated: boolean;
   reachedEnd: boolean;
@@ -396,6 +571,8 @@ export async function readJsonlFileForwardLines(params: Readonly<{
   }
 
   const items: JsonlForwardLineV1[] = [];
+  const malformedPositions: number[] = [];
+  let malformedCount = 0;
   let bytesReadTotal = 0;
   let carry = Buffer.alloc(0);
   let carryStartOffset = offsetBytes;
@@ -426,7 +603,16 @@ export async function readJsonlFileForwardLines(params: Readonly<{
       if (combined[index] !== 0x0a) continue;
 
       const line = combined.slice(lineStartIndex, index);
-      const rawLine = line.toString('utf8').trim();
+      const decoded = decodeSourceLine(line);
+      if (!decoded.ok) {
+        malformedCount += 1;
+        if (malformedPositions.length < MAX_SOURCE_DIAGNOSTIC_POSITIONS) {
+          malformedPositions.push(combinedStartOffset + lineStartIndex + decoded.malformedOffsetBytes);
+        }
+        lineStartIndex = index + 1;
+        continue;
+      }
+      const rawLine = decoded.value.trim();
       if (rawLine.length > 0) {
         items.push({
           rawLine,
@@ -443,21 +629,38 @@ export async function readJsonlFileForwardLines(params: Readonly<{
   }
 
   if (items.length < maxItems && nextReadOffset >= fileSize && carry.length > 0) {
-    const rawLine = carry.toString('utf8').trim();
-    if (rawLine.length > 0) {
-      items.push({
-        rawLine,
-        value: parseJsonLine(rawLine),
-        startOffsetBytes: carryStartOffset,
-        endOffsetBytes: carryStartOffset + carry.length,
-      });
+    const decoded = decodeSourceLine(carry);
+    if (!decoded.ok) {
+      malformedCount += 1;
+      if (malformedPositions.length < MAX_SOURCE_DIAGNOSTIC_POSITIONS) {
+        malformedPositions.push(carryStartOffset + decoded.malformedOffsetBytes);
+      }
       carry = Buffer.alloc(0);
       carryStartOffset = fileSize;
+    } else {
+      const rawLine = decoded.value.trim();
+      if (rawLine.length > 0) {
+        items.push({
+          rawLine,
+          value: parseJsonLine(rawLine),
+          startOffsetBytes: carryStartOffset,
+          endOffsetBytes: carryStartOffset + carry.length,
+        });
+        carry = Buffer.alloc(0);
+        carryStartOffset = fileSize;
+      }
     }
   }
 
   const reachedEnd = carry.length === 0 && nextReadOffset >= fileSize;
-  return { items, nextOffsetBytes: carryStartOffset, truncated: false, reachedEnd };
+  const diagnostics = buildMalformedSourceDiagnostics(malformedCount, malformedPositions);
+  return {
+    items,
+    ...(diagnostics === undefined ? {} : { diagnostics }),
+    nextOffsetBytes: carryStartOffset,
+    truncated: false,
+    reachedEnd,
+  };
 }
 
 export async function readJsonlFileForward(params: Readonly<{
@@ -470,6 +673,7 @@ export async function readJsonlFileForward(params: Readonly<{
   fileSystem?: JsonlScannerFileSystemV1;
 }>): Promise<Readonly<{
   items: readonly JsonlParsedLineV1[];
+  diagnostics?: readonly JsonlSourceDiagnosticV1[];
   nextOffsetBytes: number;
   truncated: boolean;
   reachedEnd: boolean;
@@ -485,6 +689,7 @@ export async function readJsonlFileForward(params: Readonly<{
           endOffsetBytes: line.endOffsetBytes,
         }],
     ),
+    ...(page.diagnostics === undefined ? {} : { diagnostics: page.diagnostics }),
     nextOffsetBytes: page.nextOffsetBytes,
     truncated: page.truncated,
     reachedEnd: page.reachedEnd,

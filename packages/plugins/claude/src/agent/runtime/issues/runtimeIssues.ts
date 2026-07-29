@@ -1,11 +1,174 @@
-import {
-  buildSessionRuntimeIssueV1,
-  type BuildSessionRuntimeIssueV1Input,
-  type SessionRuntimeIssueV1,
-  type SessionRuntimeUsageLimitDetailsV1,
-} from '@happier-dev/plugin-sdk/experimental/runtime/session';
+import { z } from 'zod';
 
-type ClaudeLimitCategory = NonNullable<SessionRuntimeUsageLimitDetailsV1['limitCategory']>;
+const ClaudeSessionRuntimeIssueSourceSchema = z.enum([
+  'agent_status_error',
+  'agent_process_exit',
+  'agent_process_exit_after_switch',
+  'agent_session_error',
+  'usage_limit',
+  'auth_error',
+  'dependency_failure',
+  'stream_error',
+  'permission_blocked',
+  'unknown',
+]);
+
+const ClaudeSessionRuntimeUsageLimitDetailsSchema = z.object({
+  v: z.literal(1),
+  resetAtMs: z.number().int().nonnegative().nullable(),
+  retryAfterMs: z.number().int().nonnegative().nullable(),
+  quotaScope: z.enum(['account', 'workspace', 'organization', 'model', 'provider', 'unknown']),
+  recoverability: z.enum(['wait', 'switch_account', 'manual', 'unknown']),
+  providerLimitId: z.string().trim().min(1).optional(),
+  planType: z.string().trim().min(1).nullable().optional(),
+  utilization: z.number().finite().min(0).max(100).nullable().optional(),
+  limitCategory: z.enum([
+    'usage_limit',
+    'rate_limit',
+    'capacity',
+    'temporary_throttle',
+    'auth_invalid',
+    'plan_invalid',
+    'validation_failed',
+    'disabled',
+    'unknown',
+  ]).optional(),
+  quotaSnapshotRef: z.object({
+    serviceId: z.string().trim().min(1),
+    profileId: z.string().trim().min(1).optional(),
+    groupId: z.string().trim().min(1).optional(),
+    fetchedAtMs: z.number().int().nonnegative().optional(),
+  }).strict().optional(),
+  effectiveMeterId: z.string().trim().min(1).optional(),
+  effectiveRemainingPct: z.number().finite().min(0).max(100).optional(),
+  allWindows: z.array(z.object({
+    meterId: z.string().trim().min(1),
+    scope: z.string().trim().min(1).optional(),
+    remainingPct: z.number().finite().min(0).max(100).optional(),
+    resetAtMs: z.number().int().nonnegative().optional(),
+    status: z.string().trim().min(1).optional(),
+  }).strict()).optional(),
+  recoveryDecision: z.enum([
+    'switching',
+    'waiting_for_reset',
+    'manual_intervention',
+    'not_recoverable',
+  ]).optional(),
+  overage: z.object({
+    status: z.enum(['allowed', 'allowed_warning', 'rejected', 'unknown']),
+    resetAtMs: z.number().int().nonnegative().nullable(),
+    disabledReason: z.string().trim().min(1).nullable().optional(),
+  }).strict().nullable().optional(),
+  action: z.discriminatedUnion('kind', [
+    z.object({
+      kind: z.literal('open_url'),
+      labelKey: z.string().trim().min(1).optional(),
+      url: z.string().url(),
+    }).strict(),
+    z.object({ kind: z.literal('settings') }).strict(),
+    z.object({ kind: z.literal('none') }).strict(),
+  ]).nullable().optional(),
+  connectedService: z.object({
+    serviceId: z.string().trim().min(1),
+    profileId: z.string().trim().min(1).nullable(),
+    groupId: z.string().trim().min(1).nullable(),
+    groupExhausted: z.boolean().optional(),
+  }).strict().nullable().optional(),
+}).strict();
+
+const ClaudeSessionRuntimeTemporaryThrottleDetailsSchema = z.object({
+  v: z.literal(1),
+  retryAfterMs: z.number().int().nonnegative().nullable(),
+  recoverability: z.enum(['retry', 'manual', 'wait', 'unknown']),
+}).strict();
+
+export const ClaudeSessionRuntimeIssueSchema = z.object({
+  v: z.literal(1),
+  scope: z.literal('primary_session'),
+  status: z.literal('failed'),
+  code: z.string().trim().min(1).max(256),
+  source: ClaudeSessionRuntimeIssueSourceSchema,
+  occurredAt: z.number().int().nonnegative(),
+  sessionSeq: z.number().int().nonnegative().optional(),
+  agentId: z.string().trim().min(1).max(128).optional(),
+  agentTurnId: z.string().trim().min(1).max(256).optional(),
+  sanitizedPreview: z.string().trim().min(1).max(2_000).optional(),
+  usageLimit: ClaudeSessionRuntimeUsageLimitDetailsSchema.optional(),
+  temporaryThrottle: ClaudeSessionRuntimeTemporaryThrottleDetailsSchema.optional(),
+  agentProcessExitAfterSwitch: z.object({
+    exitCode: z.number().int().nullable(),
+    signal: z.string().trim().min(1).max(128).nullable(),
+    lastStderrLine: z.string().trim().min(1).max(2_000).nullable(),
+    vendorResumeId: z.string().trim().min(1).max(512).nullable(),
+    materializationRoot: z.string().trim().min(1).max(2_000).nullable(),
+    effectiveStateMode: z.enum(['shared', 'isolated']).nullable(),
+  }).strict().optional(),
+}).readonly();
+
+export type ClaudeSessionRuntimeIssue = z.infer<typeof ClaudeSessionRuntimeIssueSchema>;
+export type ClaudeSessionRuntimeIssueSource = ClaudeSessionRuntimeIssue['source'];
+export type ClaudeSessionRuntimeTemporaryThrottleDetails = NonNullable<
+  ClaudeSessionRuntimeIssue['temporaryThrottle']
+>;
+export type ClaudeSessionRuntimeUsageLimitDetails = NonNullable<
+  ClaudeSessionRuntimeIssue['usageLimit']
+>;
+
+export type ClaudeSessionRuntimeIssueInput = Readonly<{
+  code: string;
+  source: ClaudeSessionRuntimeIssueSource;
+  occurredAt: number;
+  sessionSeq?: number | null;
+  agentId?: string | null;
+  agentTurnId?: string | null;
+  sanitizedPreview?: string | null;
+  usageLimit?: ClaudeSessionRuntimeUsageLimitDetails | null;
+  temporaryThrottle?: ClaudeSessionRuntimeTemporaryThrottleDetails | null;
+  agentProcessExitAfterSwitch?: ClaudeSessionRuntimeIssue['agentProcessExitAfterSwitch'] | null;
+}>;
+
+function normalizeNonNegativeInteger(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  const normalized = Math.trunc(value);
+  return normalized >= 0 ? normalized : null;
+}
+
+function normalizeBoundedString(value: unknown, maxLength: number): string | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim();
+  return normalized ? normalized.slice(0, maxLength) : null;
+}
+
+export function buildClaudeSessionRuntimeIssue(
+  input: ClaudeSessionRuntimeIssueInput,
+): ClaudeSessionRuntimeIssue {
+  const code = normalizeBoundedString(input.code, 256) ?? input.source;
+  const occurredAt = normalizeNonNegativeInteger(input.occurredAt) ?? Date.now();
+  const sessionSeq = normalizeNonNegativeInteger(input.sessionSeq);
+  const agentId = normalizeBoundedString(input.agentId, 128);
+  const agentTurnId = normalizeBoundedString(input.agentTurnId, 256);
+  const sanitizedPreview = normalizeBoundedString(input.sanitizedPreview, 2_000);
+
+  return {
+    v: 1,
+    scope: 'primary_session',
+    status: 'failed',
+    code,
+    source: input.source,
+    occurredAt,
+    ...(sessionSeq === null ? {} : { sessionSeq }),
+    ...(agentId === null ? {} : { agentId }),
+    ...(agentTurnId === null ? {} : { agentTurnId }),
+    ...(sanitizedPreview === null ? {} : { sanitizedPreview }),
+    ...(input.usageLimit ? { usageLimit: input.usageLimit } : {}),
+    ...(input.temporaryThrottle ? { temporaryThrottle: input.temporaryThrottle } : {}),
+    ...(input.agentProcessExitAfterSwitch
+      ? { agentProcessExitAfterSwitch: input.agentProcessExitAfterSwitch }
+      : {}),
+  };
+}
+
+type ClaudeLimitCategory = NonNullable<ClaudeSessionRuntimeUsageLimitDetails['limitCategory']>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -154,7 +317,7 @@ function createUsageDetails(params: Readonly<{
   category: ClaudeLimitCategory;
   providerLimitId: string;
   evidence: unknown;
-}>): SessionRuntimeUsageLimitDetailsV1 {
+}>): ClaudeSessionRuntimeUsageLimitDetails {
   return {
     v: 1,
     resetAtMs: readResetAtMs(params.evidence),
@@ -172,11 +335,11 @@ function createUsageDetails(params: Readonly<{
 }
 
 function buildClaudeIssue(
-  issue: BuildSessionRuntimeIssueV1Input,
+  issue: ClaudeSessionRuntimeIssueInput,
   evidence: unknown,
   fallbackMessage?: string | null,
-): SessionRuntimeIssueV1 {
-  return buildSessionRuntimeIssueV1({
+): ClaudeSessionRuntimeIssue {
+  return buildClaudeSessionRuntimeIssue({
     ...issue,
     sanitizedPreview: readPreview(evidence, fallbackMessage),
   });
@@ -184,7 +347,7 @@ function buildClaudeIssue(
 
 export function mapClaudeProviderFailureToUsageDetails(
   evidence: unknown,
-): SessionRuntimeUsageLimitDetailsV1 | null {
+): ClaudeSessionRuntimeUsageLimitDetails | null {
   const status = readStatusEvidence(evidence);
   if (status === 529 || containsCapacityEvidence(evidence)) {
     return createUsageDetails({
@@ -207,7 +370,7 @@ export function buildClaudeRuntimeIssue(params: Readonly<{
   evidence: unknown;
   occurredAt: number;
   fallbackMessage?: string | null;
-}>): SessionRuntimeIssueV1 {
+}>): ClaudeSessionRuntimeIssue {
   const usageLimit = mapClaudeProviderFailureToUsageDetails(params.evidence);
   if (usageLimit?.limitCategory === 'capacity') {
     return buildClaudeIssue({
@@ -240,7 +403,7 @@ export function buildClaudeProcessExitRuntimeIssue(params: Readonly<{
   exitCode: number | null;
   signal: string | null;
   turnWasInFlight: boolean;
-}>): SessionRuntimeIssueV1 {
+}>): ClaudeSessionRuntimeIssue {
   const exitCode = params.exitCode === null ? '' : ` code ${params.exitCode}`;
   const signal = params.signal ? ` signal ${params.signal}` : '';
   const fallbackMessage = params.turnWasInFlight

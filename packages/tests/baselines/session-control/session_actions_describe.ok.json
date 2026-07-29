@@ -33,7 +33,7 @@
       "surfaces": {
         "ui": true,
         "voice": true,
-        "session_agent": true,
+        "agent": true,
         "mcp": true,
         "cli": true,
         "rpc": false,

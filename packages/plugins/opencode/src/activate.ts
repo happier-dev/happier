@@ -1,11 +1,14 @@
+import type { PluginApi } from '@happier-dev/plugin-sdk';
 import type {
-  PluginApi,
   McpServerSpecV1,
-} from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/experimental/mcp';
 
 import { readOpenCodeMcpConfigServers } from './agent/mcp/discovery.js';
 import { OPENCODE_PROVIDER_BINDING_ADAPTER_V1 } from './agent/providerBinding/adapter.js';
-import { createOpenCodeBackendEngine } from './agent/runtime/engine.js';
+import { createOpenCodeAgentRuntime } from './agent/runtime/nativeRuntime.js';
+import { openCodeExternalSessionsContribution } from './agent/surfaces/sessions/external/contribution.js';
+import { openCodeExternalSessionObservationContribution } from './agent/surfaces/sessions/external/observation.js';
+import { openCodeExternalSessionTakeoverContribution } from './agent/surfaces/sessions/external/provider.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
 
 function toRedactedEnvKeys(envKeys: readonly string[]): Readonly<Record<string, string>> | undefined {
@@ -57,7 +60,7 @@ function toOpenCodeMcpServerSpec(server: Awaited<ReturnType<typeof readOpenCodeM
 }
 
 function readOpenCodeConfigDiscoveryProvider(): typeof PLUGIN_MANIFEST.contributes.mcp.discoveryProviders[number] {
-  const provider = PLUGIN_MANIFEST.contributes.mcp.discoveryProviders.find((entry) => entry.id === 'opencode.config');
+  const provider = PLUGIN_MANIFEST.contributes.mcp.discoveryProviders.find((entry) => entry.id === 'config');
   if (!provider) {
     throw new Error('OpenCode plugin manifest must declare opencode.config MCP discovery provider');
   }
@@ -65,18 +68,22 @@ function readOpenCodeConfigDiscoveryProvider(): typeof PLUGIN_MANIFEST.contribut
 }
 
 export function activate(api: PluginApi): void {
-  api.registerAgentRuntime({
-    agentId: 'opencode',
-    providerBinding: OPENCODE_PROVIDER_BINDING_ADAPTER_V1,
-    create: async (ctx) => {
-      ctx.logger.debug('[plugins/opencode] Creating backend engine');
-      return createOpenCodeBackendEngine(ctx);
-    },
-  });
+  api.agents.register(
+    'opencode',
+    createOpenCodeAgentRuntime,
+    { providerBinding: OPENCODE_PROVIDER_BINDING_ADAPTER_V1 },
+  );
+  api.agents.registerExternalSessions('opencode', openCodeExternalSessionsContribution);
+  api.agents.registerExternalSessionTakeover(
+    'opencode',
+    openCodeExternalSessionTakeoverContribution,
+  );
+  api.agents.registerExternalSessionObservation(
+    'opencode',
+    openCodeExternalSessionObservationContribution,
+  );
   const configDiscoveryProvider = readOpenCodeConfigDiscoveryProvider();
-  api.registerMcpDiscoveryProvider({
-    id: configDiscoveryProvider.id,
-    discover: async (input) => {
+  api.mcp.registerDiscoveryProvider(configDiscoveryProvider.id, async (input) => {
       const detected = await readOpenCodeMcpConfigServers({
         directory: input?.directory ?? null,
       });
@@ -88,9 +95,9 @@ export function activate(api: PluginApi): void {
         countsById.set(server.id, (countsById.get(server.id) ?? 0) + 1);
       }
       return {
+        items: [],
         servers: servers.filter((server) => countsById.get(server.id) === 1),
         warnings: detected.warnings,
       };
-    },
   });
 }

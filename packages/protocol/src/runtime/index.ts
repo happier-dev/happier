@@ -1,3 +1,51 @@
 export * from './events/index.js';
 export * from './catalog/index.js';
 export * from './input/index.js';
+export {
+  AGENT_SESSION_STARTUP_INSTRUCTIONS_V1_MAX_ID_CODE_UNITS,
+  AGENT_SESSION_STARTUP_INSTRUCTIONS_V1_MAX_REVISION,
+  AGENT_SESSION_STARTUP_INSTRUCTIONS_V1_MAX_UTF8_BYTES,
+  AgentSessionStartupInstructionsMarkerV1Schema,
+  AgentSessionStartupInstructionsV1Schema,
+  type AgentSessionStartupInstructionsMarkerV1,
+  type AgentSessionStartupInstructionsV1,
+} from './agentSessionStartupInstructionsV1.js';
+export {
+  AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1,
+  type AgentSessionRuntimeLimitsCandidateV1,
+} from './agentSessionLimitsV1.js';
+export {
+  AGENT_SESSION_RUNTIME_EVENT_KINDS_V1,
+  SESSION_RUNTIME_ACTIVITY_SLOT_ACTIVE_COUNT_MAX,
+  AgentSessionProviderCheckpointMaxJsonBytesV1,
+  AgentLaunchEnvironmentV1Schema,
+  AgentSessionCompactRequestV1Schema,
+  AgentSessionConfigurationSnapshotV1Schema,
+  AgentSessionConfigurationUpdateV1Schema,
+  AgentSessionConversationRollbackReconciliationResultV1Schema,
+  AgentSessionConversationRollbackRequestV1Schema,
+  AgentSessionConversationRollbackResultV1Schema,
+  AgentSessionProviderCheckpointV1Schema,
+  AgentRuntimeJsonValueSchema,
+  AgentRuntimeJsonValueV1Schema,
+  AgentSessionRuntimeEventSchema,
+  AgentSessionRuntimeEventV1Schema,
+  AgentSessionSendRequestV1Schema,
+  type AgentConfigurationScalarV1,
+  type AgentLaunchEnvironmentV1,
+  type AgentPermissionIntentV1,
+  type AgentSessionCompactRequest,
+  type AgentSessionCompactRequestV1,
+  type AgentSessionConfigurationSnapshotV1,
+  type AgentSessionConfigurationUpdateV1,
+  type AgentSessionConversationRollbackReconciliationResult,
+  type AgentSessionConversationRollbackReconciliationResultV1,
+  type AgentSessionConversationRollbackRequest,
+  type AgentSessionConversationRollbackRequestV1,
+  type AgentSessionConversationRollbackResult,
+  type AgentSessionConversationRollbackResultV1,
+  type AgentSessionRuntimeEvent,
+  type AgentSessionRuntimeEventV1,
+  type AgentSessionSendRequest,
+  type AgentSessionSendRequestV1,
+} from './agentSessionV1.js';

@@ -1,4 +1,4 @@
-import type { ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm';
+import type { ScmHostingProviderRef } from '@happier-dev/plugin-sdk/experimental/scm';
 import { describe, expect, it } from 'vitest';
 
 const provider: ScmHostingProviderRef = {
@@ -90,18 +90,22 @@ describe('GitHub CLI pull request adapter', () => {
     expect(mod).not.toBeNull();
     if (!mod) return;
 
-    const calls: Array<Readonly<{ binPath: string; args: readonly string[]; timeoutMs: number }>> = [];
+    const calls: Array<Readonly<{
+      executable: Readonly<{ kind: 'systemTool'; id: string }>;
+      args: readonly string[];
+      timeoutMs: number;
+    }>> = [];
     const adapter = mod.createGithubCliAdapter();
     const input = {
       provider,
       head: 'feature/runtime-cli',
       state: 'open' as const,
       runtimeServices: {
-        resolveInstallableCommand: async (request: Readonly<{ capabilityId: string }>) =>
-          request.capabilityId === 'dep.gh'
-            ? { kind: 'available' as const, source: 'managed' as const, binPath: '/managed/gh/current/bin/gh' }
-            : { kind: 'missing' as const },
-        runCommand: async (request: Readonly<{ binPath: string; args: readonly string[]; timeoutMs: number }>) => {
+        executeCommand: async (request: Readonly<{
+          executable: Readonly<{ kind: 'systemTool'; id: string }>;
+          args: readonly string[];
+          timeoutMs: number;
+        }>) => {
           calls.push(request);
           if (request.args[0] === 'auth') {
             return { ok: true, stdout: '', stderr: '', exitCode: 0 };
@@ -136,7 +140,7 @@ describe('GitHub CLI pull request adapter', () => {
       ['auth', 'status', '--hostname', 'ghe.internal.test'],
       ['pr', 'list', '--repo', 'ghe.internal.test/happier-dev/happier'],
     ]);
-    expect(calls[0]?.binPath).toBe('/managed/gh/current/bin/gh');
+    expect(calls[0]?.executable).toEqual({ kind: 'systemTool', id: 'github-cli' });
   });
 
   it('creates pull requests without invoking install or login commands', async () => {

@@ -1,1 +1,0 @@
-export { OPENCODE_AGENT_SETTINGS_DESCRIPTOR } from '../agentSettings/definition.js';

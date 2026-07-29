@@ -1,6 +1,32 @@
-import { openBoxBundle, sealBoxBundle } from './boxBundle.js';
+import { BOX_BUNDLE_MIN_BYTES, openBoxBundle, sealBoxBundle } from './boxBundle.js';
 
 export const ENCRYPTED_DATA_KEY_ENVELOPE_V1_VERSION_BYTE = 0;
+export const DIRECT_SHARE_DATA_KEY_V1_BYTES = 32;
+export const DIRECT_SHARE_ENCRYPTED_DATA_KEY_ENVELOPE_V1_BYTES =
+  1 + BOX_BUNDLE_MIN_BYTES + DIRECT_SHARE_DATA_KEY_V1_BYTES;
+
+export type DirectShareEncryptedDataKeyEnvelopeV1 = Readonly<{
+  encryptedDataKey: Uint8Array<ArrayBuffer>;
+}>;
+
+/**
+ * Validates the structural contract used when a named session share transports
+ * its 32-byte data key. The server cannot authenticate the sealed box, but it
+ * can reject envelopes that no conforming direct-share producer could emit.
+ */
+export function parseDirectShareEncryptedDataKeyEnvelopeV1(
+  envelope: Uint8Array,
+): DirectShareEncryptedDataKeyEnvelopeV1 | null {
+  if (envelope.byteLength !== DIRECT_SHARE_ENCRYPTED_DATA_KEY_ENVELOPE_V1_BYTES) {
+    return null;
+  }
+  if (envelope[0] !== ENCRYPTED_DATA_KEY_ENVELOPE_V1_VERSION_BYTE) {
+    return null;
+  }
+  const encryptedDataKey = new Uint8Array(envelope.byteLength);
+  encryptedDataKey.set(envelope);
+  return { encryptedDataKey };
+}
 
 export function sealEncryptedDataKeyEnvelopeV1(params: {
   dataKey: Uint8Array;
@@ -29,4 +55,3 @@ export function openEncryptedDataKeyEnvelopeV1(params: {
     recipientSecretKeyOrSeed: params.recipientSecretKeyOrSeed,
   });
 }
-

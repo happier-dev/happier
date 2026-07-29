@@ -29,42 +29,6 @@ export const AGENT_DEFINITION = Object.freeze({
     defaultMode: 'default',
     allowedModes: ['default'],
   },
-  authProbeConfig: {
-    agentId: COPILOT_AGENT_ID,
-    binaryNames: ['copilot'],
-    statusCommand: null,
-    parser: 'copilotGhAuth',
-    backgroundChecks: 'safe',
-    envVars: ['COPILOT_GITHUB_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN'],
-  },
-  localCli: {
-    agentId: COPILOT_AGENT_ID,
-    detectKey: 'copilot',
-    machineLoginKey: 'copilot',
-    supportKind: 'login_terminal',
-    loginLaunch: {
-      command: 'copilot',
-      args: ['login'],
-    },
-  },
-  agentCliRuntime: {
-    id: COPILOT_AGENT_ID,
-    title: 'GitHub Copilot CLI',
-    binaryName: 'copilot',
-    knownUserBinDirSuffixes: null,
-    sourcePreferenceDefault: 'system-first',
-    managedInstall: {
-      kind: 'managed_package',
-      packageName: '@github/copilot',
-      binaryName: 'copilot',
-    },
-    manualInstallKind: 'command',
-    manualInstallRecipes: null,
-    acceptsJavaScriptFileOverride: false,
-    installGuideUrl: null,
-    docsUrl: 'https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli',
-  },
-  agentSettings: null,
   runtimeContributions: {
     agentCatalogEntry: {
       importName: 'COPILOT_AGENT_RUNTIME_CONTRIBUTION',

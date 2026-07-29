@@ -13,6 +13,19 @@ export type ModelPackVoiceCatalogEntry = z.infer<typeof ModelPackVoiceCatalogEnt
 export const ModelPackKindSchema = z.enum(['tts_sherpa', 'stt_sherpa']);
 export type ModelPackKind = z.infer<typeof ModelPackKindSchema>;
 
+/**
+ * Declarative runtime ABI required by a model pack. The protocol owns stable
+ * identifiers only; each execution host independently reports which families
+ * it can actually run.
+ */
+export const ModelPackRuntimeFamilySchema = z.enum([
+  'sherpa_kokoro_offline',
+  'sherpa_zipformer_streaming',
+  'sherpa_parakeet_offline',
+  'sherpa_moonshine_offline',
+]);
+export type ModelPackRuntimeFamily = z.infer<typeof ModelPackRuntimeFamilySchema>;
+
 export const ModelPackManifestSchema = z.object({
   packId: z.string().min(1),
   kind: ModelPackKindSchema,

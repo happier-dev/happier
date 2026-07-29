@@ -10,9 +10,14 @@ export {
   type SavedSecret,
 } from './backendProfileSchema.js';
 
+export * from './read.js';
+export * from './v2/schema.js';
+export * from './visibilityV1.js';
+
 export {
   DEFAULT_BUILT_IN_BACKEND_PROFILES,
   getBuiltInBackendProfile,
+  PROVIDER_MIGRATION_SOURCE_PROFILE_IDS,
 } from './builtInBackendProfiles.js';
 
 export { isProfileCompatibleWithAgent, isProfileCompatibleWithBackendTarget } from './profileCompatibility.js';

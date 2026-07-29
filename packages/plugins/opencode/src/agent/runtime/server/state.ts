@@ -1,5 +1,5 @@
 import { asRecord, normalizeString } from './openCodeParsing.js';
-import type { OpenCodeToolPart } from './providerActivity/createOpenCodeProviderActivityTracker.js';
+import type { OpenCodeToolPart } from './foregroundToolTracker.js';
 
 export type OpenCodeServerRuntimeState = {
   providerSessionId: string | null;
@@ -14,17 +14,14 @@ export type OpenCodeServerRuntimeState = {
   currentTurnObservedToolCallKeys: Set<string>;
   currentTurnPublishedToolCallKeys: Set<string>;
   currentTurnPublishedToolResultKeys: Set<string>;
+  currentTurnProviderUserMessageId: string | null;
   currentTurnProviderUserMessageIds: Set<string>;
   currentTurnProviderPromptTexts: Set<string>;
   currentTurnPromptSubmittedAtMs: number | null;
   currentTurnPromptAcceptedAtMs: number | null;
+  currentTurnTerminalAssistantMessageIds: Set<string>;
   currentTurnPublishedAssistantMessageIds: Set<string>;
   emittedAssistantMessageIds: Set<string>;
-  pendingProviderAutonomousBackgroundWake: {
-    source: 'native-background-task' | 'oh-my-openagent-background-task';
-    observedAtMs: number;
-    messageId?: string | null;
-  } | null;
 };
 
 export function createOpenCodeServerRuntimeState(): OpenCodeServerRuntimeState {
@@ -41,23 +38,20 @@ export function createOpenCodeServerRuntimeState(): OpenCodeServerRuntimeState {
     currentTurnObservedToolCallKeys: new Set<string>(),
     currentTurnPublishedToolCallKeys: new Set<string>(),
     currentTurnPublishedToolResultKeys: new Set<string>(),
+    currentTurnProviderUserMessageId: null,
     currentTurnProviderUserMessageIds: new Set<string>(),
     currentTurnProviderPromptTexts: new Set<string>(),
     currentTurnPromptSubmittedAtMs: null,
     currentTurnPromptAcceptedAtMs: null,
+    currentTurnTerminalAssistantMessageIds: new Set<string>(),
     currentTurnPublishedAssistantMessageIds: new Set<string>(),
     emittedAssistantMessageIds: new Set<string>(),
-    pendingProviderAutonomousBackgroundWake: null,
   };
 }
 
 export function readStatusType(status: unknown): string {
   const record = asRecord(status);
   return normalizeString(record?.type);
-}
-
-export function createOpenCodeTurnId(): string {
-  return `turn_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
 export function claimOpenCodeActiveTurnForTerminalEvent(
@@ -114,17 +108,4 @@ export function readOpenCodeToolPart(value: unknown): OpenCodeToolPart | null {
 
 export function readOpenCodeToolCallKey(part: Pick<OpenCodeToolPart, 'sessionID' | 'callID'>): string {
   return `${part.sessionID}:${part.callID}`;
-}
-
-export function recordOpenCodeProviderAutonomousBackgroundWake(params: Readonly<{
-  state: OpenCodeServerRuntimeState;
-  source: 'native-background-task' | 'oh-my-openagent-background-task';
-  messageId?: string | null;
-}>): void {
-  if (!params.state.providerSessionId || params.state.turnInFlight) return;
-  params.state.pendingProviderAutonomousBackgroundWake = {
-    source: params.source,
-    observedAtMs: Date.now(),
-    ...(params.messageId ? { messageId: params.messageId } : null),
-  };
 }

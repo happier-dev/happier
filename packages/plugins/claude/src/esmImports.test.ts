@@ -16,10 +16,15 @@ const ALLOWED_RELATIVE_IMPORT_EXTENSIONS = new Set([
   '.sass',
   '.scss',
 ]);
-const DISALLOWED_FIRST_PARTY_RUNTIME_IMPORTS = [
-  ['@happier-dev', 'agents'].join('/'),
+const DISALLOWED_FIRST_PARTY_RUNTIME_IMPORT_PREFIXES = [
   ['@happier-dev', 'protocol'].join('/'),
 ] as const;
+
+function isDisallowedFirstPartyRuntimeImport(specifier: string): boolean {
+  return DISALLOWED_FIRST_PARTY_RUNTIME_IMPORT_PREFIXES.some(
+    (prefix) => specifier === prefix || specifier.startsWith(`${prefix}/`),
+  );
+}
 
 function listProductionTypeScriptFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -73,7 +78,7 @@ describe('Claude plugin ESM imports', () => {
     expect(violations).toEqual([]);
   });
 
-  it('keeps production source on the public plugin SDK instead of direct shared package imports', () => {
+  it('keeps production source on public package boundaries instead of the Protocol implementation package', () => {
     const violations = listProductionTypeScriptFiles(SOURCE_ROOT).flatMap((path) => {
       const sourceText = readFileSync(path, 'utf8');
       const sourceFile = ts.createSourceFile(path, sourceText, ts.ScriptTarget.Latest, true);
@@ -84,9 +89,7 @@ describe('Claude plugin ESM imports', () => {
           ts.isImportDeclaration(node)
           && node.moduleSpecifier
           && ts.isStringLiteral(node.moduleSpecifier)
-          && DISALLOWED_FIRST_PARTY_RUNTIME_IMPORTS.includes(
-            node.moduleSpecifier.text as typeof DISALLOWED_FIRST_PARTY_RUNTIME_IMPORTS[number],
-          )
+          && isDisallowedFirstPartyRuntimeImport(node.moduleSpecifier.text)
         ) {
           importViolations.push(`${relative(SOURCE_ROOT, path)} -> ${node.moduleSpecifier.text}`);
         }

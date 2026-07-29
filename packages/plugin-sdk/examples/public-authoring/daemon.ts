@@ -1,10 +1,15 @@
 import type {
-    PluginActionHandler,
-    PluginApiV1,
-    PluginHookHandler,
-    PluginLifecycleHandler,
+    PluginApi,
 } from '@happier-dev/plugin-sdk';
-import { defineAcpBackend } from '@happier-dev/plugin-sdk/agent-runtime';
+import type {
+    ActionHandler,
+    HookHandler,
+    PluginConnectedAccountAuthenticationModeRuntime,
+} from '@happier-dev/plugin-sdk/runtime';
+import type {
+    AgentAcpRuntimeOptions,
+    AgentRuntimeFactory,
+} from '@happier-dev/plugin-sdk/agent-runtime';
 
 type ReviewSummaryInput = Readonly<{
     transcript: string;
@@ -18,6 +23,20 @@ type ReviewSummaryData = Readonly<{
 
 const DEFAULT_MAX_BULLETS = 3;
 
+export const manualConnectedAccountAuthenticationMode = {
+    kind: 'manual',
+    async complete() {
+        return {
+            status: 'unavailable',
+            diagnostic: {
+                code: 'public_authoring_manual_auth_unavailable',
+                severity: 'warning',
+                message: 'The public-authoring fixture does not connect a real account.',
+            },
+        };
+    },
+} satisfies PluginConnectedAccountAuthenticationModeRuntime;
+
 function readReviewSummaryInput(input: unknown): ReviewSummaryInput {
     const record = typeof input === 'object' && input !== null
         ? input as Readonly<Record<string, unknown>>
@@ -30,25 +49,27 @@ function readReviewSummaryInput(input: unknown): ReviewSummaryInput {
     return { transcript, maxBullets };
 }
 
-export const runReviewSummary: PluginActionHandler<unknown, ReviewSummaryData> = (request) => {
-    const input = readReviewSummaryInput(request.input);
+export const runReviewSummary: ActionHandler = async (value, context) => {
+    await context.ui.status.set('review-summary', 'Summarizing review…');
+    const input = readReviewSummaryInput(value);
     const source = input.transcript || 'No transcript was provided.';
     const firstSentence = source.split(/[.!?]\s/u)[0]?.trim() || source;
 
-    return {
-        ok: true,
-        data: {
+    try {
+        return {
             summary: firstSentence,
             bullets: source
                 .split(/\n+/u)
                 .map((line) => line.trim())
                 .filter(Boolean)
                 .slice(0, input.maxBullets),
-        },
-    };
+        };
+    } finally {
+        await context.ui.status.set('review-summary', null);
+    }
 };
 
-export const observeAgentResponse: PluginHookHandler<'agent.response.after'> = async (
+export const observeSessionSpawned: HookHandler = async (
     payload,
     context,
 ) => {
@@ -57,63 +78,28 @@ export const observeAgentResponse: PluginHookHandler<'agent.response.after'> = a
     void context.signal;
 };
 
-export const recordActivation: PluginLifecycleHandler = async (request) => {
-    await Promise.resolve();
-    void request.pluginId;
-    void request.generation;
+const reviewAcpTransport = {
+    kind: 'stdio',
+    executable: { kind: 'systemTool', id: 'acme-review-agent' },
+    args: ['acp'],
+    timeouts: {
+        initializeMs: 10_000,
+        idleMs: 120_000,
+    },
+} as const satisfies AgentAcpRuntimeOptions['transport'];
+
+export const createReviewAgentRuntime: AgentRuntimeFactory = () => ({
+    sessions: {
+        open(request, context) {
+            return context.protocols.acp.open(request, {
+                transport: reviewAcpTransport,
+            });
+        },
+    },
+});
+
+export function activate(api: PluginApi): void {
+    api.actions.register('review-summary', runReviewSummary);
+    api.hooks.register('session-spawned', observeSessionSpawned);
+    api.agents.register('review-agent', createReviewAgentRuntime);
 };
-
-export function activate(api: PluginApiV1): void {
-    api.registerAction({
-        id: 'examples.publicSdk.reviewSummary',
-        handler: runReviewSummary,
-    });
-
-    api.registerHook({
-        hookId: 'agent.response.after',
-        category: 'lifecycle',
-        scope: 'agent',
-        executionKind: 'observe',
-        priority: 50,
-        handler: observeAgentResponse,
-    });
-
-    api.registerLifecycleHandler({
-        id: 'examples.publicSdk.activation',
-        event: 'activated',
-        priority: 10,
-        handler: recordActivation,
-    });
-
-    api.registerAgentRuntime({
-        agentId: 'examples.publicSdk.reviewAcp',
-        create: () => defineAcpBackend({
-            backendId: 'examples.publicSdk.reviewAcp',
-            transport: {
-                kind: 'stdio',
-                launch: {
-                    kind: 'executable',
-                    command: 'acme-review-agent',
-                    args: ['acp'],
-                },
-                timeouts: {
-                    initMs: 10_000,
-                    idleMs: 120_000,
-                },
-            },
-            ux: {
-                title: 'Acme Review ACP',
-                defaultMode: 'review',
-            },
-            capabilities: {
-                supportsResume: true,
-                supportsStreaming: true,
-                supportsToolUse: true,
-                supportsPermissionRequests: true,
-            },
-            mcp: {
-                policy: 'drop',
-            },
-        }),
-    });
-}

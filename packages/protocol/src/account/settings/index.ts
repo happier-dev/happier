@@ -41,6 +41,7 @@ export {
   ConnectedServicesProviderStateSharingModeV1Schema,
   ConnectedServicesProviderStateSharingPolicyV1Schema,
   ConnectedServicesProviderStateSharingSettingsV1Schema,
+  DEFAULT_CONNECTED_ACCOUNT_PURPOSE_BINDINGS_V1,
   DEFAULT_CONNECTED_SERVICES_DEFAULT_AUTH_BY_AGENT_ID_V1,
   DEFAULT_CONNECTED_SERVICES_PROVIDER_STATE_SHARING_SETTINGS_V1,
   resolveConnectedServicesProviderStateSharingPolicyV1,
@@ -75,3 +76,13 @@ export {
   type AccountSettingsV2UpdateRequest,
   type AccountSettingsV2UpdateResponse,
 } from './accountSettingsApiV2.js';
+
+export {
+  AccountSettingsSavedSecretMutationError,
+  CONNECTED_ACCOUNT_SERVICE_CONFIGURATIONS_SETTINGS_KEY,
+  applyAccountSettingsSavedSecretMutation,
+  listAccountSettingsSavedSecretReferences,
+  type AccountSettingsSavedSecretMutation,
+  type AccountSettingsSavedSecretReference,
+  type AccountSettingsSavedSecretReferenceOwner,
+} from './savedSecretMutationOwner.js';

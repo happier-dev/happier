@@ -1,3 +1,5 @@
+import type { ClaudeRemoteAdvancedOptions } from '../../protocol/remoteSettings.js';
+
 export interface SDKMessage {
     type: string;
     [key: string]: unknown;
@@ -44,6 +46,20 @@ export interface SDKSystemMessage extends SDKMessage {
     slash_commands?: string[];
 }
 
+export interface SDKHookResponseMessage extends SDKSystemMessage {
+    type: 'system';
+    subtype: 'hook_response';
+    outcome: 'success' | 'error' | 'cancelled';
+    hook_event?: string;
+    hook_name?: string;
+    exit_code?: number;
+    output?: string;
+    stdout?: string;
+    stderr?: string;
+    uuid?: string;
+    session_id?: string;
+}
+
 export interface SDKResultMessage extends SDKMessage {
     type: 'result';
     subtype: 'success' | 'error_max_turns' | 'error_during_execution';
@@ -81,7 +97,7 @@ export interface GetOAuthTokenCallback {
 
 export type QueryPrompt = string | AsyncIterable<SDKMessage>;
 
-export interface QueryOptions {
+export interface QueryOptions extends ClaudeRemoteAdvancedOptions {
     abort?: AbortSignal;
     appendSystemPrompt?: string;
     customSystemPrompt?: string;

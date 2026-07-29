@@ -47,13 +47,14 @@ describe('Sapling SCM plugin runtime', () => {
         });
         expect(calls).toEqual([
             {
-                installableKey: 'dep.sapling',
+                installableKey: 'sapling-cli',
                 command: 'sl',
                 cwd: '/repo',
                 args: ['status'],
                 timeoutMs: 123,
                 stdin: 'input',
                 maxOutputBytes: 456,
+                env: undefined,
             },
         ]);
     });

@@ -5,6 +5,7 @@ export type {
   JsonlScannerFileSystemV1,
   JsonlScanBoundsV1,
   JsonlSessionFileDescriptorV1,
+  JsonlSourceDiagnosticV1,
 } from './boundedJsonlScanner.js';
 export {
   decodeJsonlByteCursor,

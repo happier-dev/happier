@@ -25,37 +25,6 @@ export const CODEX_HOOK_PARITY_ROWS = [
     catalogStatus: 'catalog-backed',
   },
   { id: 'agent.spawnEnv.augment', role: 'codex-handled', catalogStatus: 'catalog-backed' },
-  { id: 'agent.response.after', role: 'codex-handled', catalogStatus: 'catalog-backed' },
-  { id: 'tool.call.before', role: 'codex-handled', catalogStatus: 'catalog-backed' },
-  { id: 'tool.result.after', role: 'codex-handled', catalogStatus: 'catalog-backed' },
-  { id: 'resource.discovery', role: 'codex-handled', catalogStatus: 'catalog-backed' },
-  { id: 'plugin.reload.before', role: 'codex-handled', catalogStatus: 'catalog-backed' },
-  { id: 'plugin.reload.after', role: 'codex-handled', catalogStatus: 'catalog-backed' },
-  {
-    id: 'session.attached',
-    role: 'host-bridge-emitted',
-    catalogStatus: 'catalog-backed',
-  },
-  {
-    id: 'session.detached',
-    role: 'host-bridge-emitted',
-    catalogStatus: 'catalog-backed',
-  },
-  {
-    id: 'approval.decision.made',
-    role: 'host-bridge-emitted',
-    catalogStatus: 'catalog-backed',
-  },
-  {
-    id: 'subagent.started',
-    role: 'extension-projector-emitted',
-    catalogStatus: 'catalog-backed',
-  },
-  {
-    id: 'subagent.ended',
-    role: 'extension-projector-emitted',
-    catalogStatus: 'catalog-backed',
-  },
 ] as const satisfies readonly CodexHookParityRow[];
 
 export const CODEX_CATALOG_BACKED_HOOK_IDS = CODEX_HOOK_PARITY_ROWS

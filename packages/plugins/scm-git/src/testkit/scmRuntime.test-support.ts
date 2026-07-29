@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import {
     runWithScmHostingProviderRuntimeServices,
     type ScmHostingProviderRuntimeServices,
-} from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/experimental/scm/hostingProvider';
 import {
     runWithScmBackendRuntimeServices,
     type ScmBackendCommandRunInput,

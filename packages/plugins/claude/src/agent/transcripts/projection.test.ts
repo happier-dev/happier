@@ -41,6 +41,23 @@ describe('Claude JSONL projection', () => {
         expect((projected as { message?: { content?: Array<{ name?: string }> } })?.message?.content?.[0]?.name).toBe('SubAgent');
     });
 
+    it.each([
+        ['message-less assistant', { type: 'assistant', uuid: 'assistant-api-error', isApiErrorMessage: true }, 'event'],
+        [
+            'assistant text with missing nested role',
+            { type: 'assistant', uuid: 'assistant-missing-role', message: { content: [{ type: 'text', text: 'hello' }] } },
+            'agent',
+        ],
+    ] as const)('projects canonical role metadata for %s', (_name, lineValue, expectedRole) => {
+        const [projected] = projectClaudeJsonlLineToDirectMessages({
+            fileRelPath: 'session.jsonl',
+            lineStartOffsetBytes: 42,
+            lineValue,
+        });
+
+        expect(projected?.messageRole).toBe(expectedRole);
+    });
+
     it('drops Claude slash-command rows from raw message projection', () => {
         for (const row of [
             {

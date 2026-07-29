@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_BUILT_IN_BACKEND_PROFILES } from './builtInBackendProfiles.js';
+import {
+  DEFAULT_BUILT_IN_BACKEND_PROFILES,
+  PROVIDER_MIGRATION_SOURCE_PROFILE_IDS,
+} from './builtInBackendProfiles.js';
 import {
   AIBackendProfileSchema,
   SavedSecretSchema,
@@ -40,13 +43,46 @@ describe('profiles (protocol)', () => {
     });
   });
 
-  it('resolves built-in profiles by id', () => {
-    const result = resolveBackendProfile({ query: 'openai', customProfiles: [] });
+  it('resolves retained built-in profiles by id', () => {
+    const result = resolveBackendProfile({ query: 'azure-openai', customProfiles: [] });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 
-    expect(result.profile.id).toBe('openai');
+    expect(result.profile.id).toBe('azure-openai');
     expect(result.profile.isBuiltIn).toBe(true);
+  });
+
+  it('keeps provider migration sources out of live built-in profile resolution', () => {
+    expect(PROVIDER_MIGRATION_SOURCE_PROFILE_IDS).toContain('openai');
+    expect(getBuiltInBackendProfile('openai')).toBeNull();
+    expect(resolveBackendProfile({ query: 'openai', customProfiles: [] })).toEqual({
+      ok: false,
+      reason: 'not_found',
+      query: 'openai',
+    });
+  });
+
+  it('still resolves an explicitly persisted legacy provider profile for migration compatibility', () => {
+    const persistedLegacyProfile = AIBackendProfileSchema.parse({
+      id: 'openai',
+      name: 'OpenAI (GPT-5)',
+      environmentVariables: [{ name: 'OPENAI_MODEL', value: 'gpt-5-codex-high' }],
+      envVarRequirements: [{ name: 'OPENAI_API_KEY', kind: 'secret', required: true }],
+      compatibilityByTargetKey: { 'agent:codex': true },
+      isBuiltIn: true,
+      createdAt: 0,
+      updatedAt: 0,
+      version: '1.0.0',
+    });
+
+    expect(resolveBackendProfile({
+      query: 'openai',
+      customProfiles: [persistedLegacyProfile],
+    })).toEqual({
+      ok: true,
+      profile: persistedLegacyProfile,
+      resolvedBy: 'id',
+    });
   });
 
   it('preserves Gemini built-in profile model defaults', () => {

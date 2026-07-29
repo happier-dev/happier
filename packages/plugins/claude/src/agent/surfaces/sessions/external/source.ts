@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import { expandHomePath } from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
-import type { ExternalSessionsSource } from '@happier-dev/plugin-sdk/sessions';
+import type { ExternalSessionsSource } from '@happier-dev/plugin-sdk/experimental/sessions';
 import { HAPPIER_CLAUDE_CONFIG_DIR_ENV } from '@happier-dev/plugin-sdk/experimental/envConstants';
 
 export type ClaudeExternalSessionSourceValidationResult =

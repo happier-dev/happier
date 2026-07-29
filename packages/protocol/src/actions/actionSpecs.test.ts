@@ -150,6 +150,7 @@ const RESULT_REQUIRED_BLOCKING_ACTION_IDS = [
   'session.usageLimit.checkNow',
   'session.usageLimit.consumeResetCredit',
   'session.terminalComposer.clear',
+  'session.pendingInput.interruptAndRun',
   'session.vendor_plugin_catalog.list',
   'session.skill_catalog.list',
   'session.history.get',
@@ -175,12 +176,14 @@ const RESULT_REQUIRED_BLOCKING_ACTION_IDS = [
   'approval.request.get',
   'plugins.permissions.grants.list',
   'plugins.list',
+  'plugins.sessionHooks.status.get',
   'session.log.tail',
   'transcript.page',
   'transcript.readAfter',
   'transcript.follow',
   'transcript.search',
   'sessions.external.candidates.list',
+  'sessions.external.operation.status.get',
   'sessions.external.status.get',
   'sessions.external.transcript.page',
   'sessions.external.transcript.readAfter',
@@ -255,6 +258,7 @@ const RESULT_OPTIONAL_DEFERRED_ACTION_IDS = [
   'session.restore',
   'session.handoff',
   'session.handoff.prepare_target',
+  'session.handoff.prepare_target.resume',
   'session.handoff.commit',
   'session.handoff.abort',
   'session.spawn_new',
@@ -274,8 +278,14 @@ const RESULT_OPTIONAL_DEFERRED_ACTION_IDS = [
   'sessions.external.link.ensure',
   'sessions.external.follow',
   'sessions.external.unfollow',
-  'sessions.external.followPolicy.set',
+  'sessions.external.backgroundFollow.set',
   'sessions.external.takeover',
+  'sessions.external.materialize.start',
+  'sessions.external.takeover.start',
+  'sessions.external.operation.cancel',
+  'sessions.external.operation.resume',
+  'sessions.external.operation.retry',
+  'sessions.external.operation.discard',
   'scm.pullRequest.openOrReuse',
   'scm.pullRequest.checkout',
   'scm.pullRequest.prepareWorktree',
@@ -288,6 +298,10 @@ const RESULT_OPTIONAL_DEFERRED_ACTION_IDS = [
   'plugins.install',
   'plugins.uninstall',
   'plugins.reload',
+  'plugins.sessionHooks.install',
+  'plugins.sessionHooks.disable',
+  'plugins.sessionHooks.enable',
+  'plugins.sessionHooks.uninstall',
 ] as const;
 
 function sorted(values: readonly string[]): string[] {
@@ -318,6 +332,30 @@ describe('Action Spec Registry', () => {
       expect(spec.surfaces.mcp).toBe(true);
       expect(spec.bindings?.mcpToolName).toBe(actionId.replaceAll('.', '_'));
       expect(spec.outputSchema).toBeDefined();
+    }
+  });
+
+  it('keeps package trust approval outside Plugin, Agent, ActionSpec RPC, and SDK surfaces', () => {
+    for (const retiredActionId of ['plugins.call', 'plugins.trust']) {
+      expect(ActionIdSchema.safeParse(retiredActionId).success).toBe(false);
+      expect(() => getActionSpec(retiredActionId as ActionId)).toThrow();
+    }
+
+    const install = getActionSpec('plugins.install');
+    expect(install.approval.result).toBe('optional');
+    expect(resolveExpectedApprovalFlow(install.approval)).toBe('deferred');
+    expect(install.surfaces.rpc).toBe(false);
+    expect(install.surfaces.sdk).toBe(false);
+
+    for (const actionId of [
+      'plugins.permissions.grants.request',
+      'plugins.permissions.grants.grant',
+      'plugins.permissions.grants.revoke',
+      'plugins.permissions.grants.dismissRequest',
+    ] as const) {
+      const spec = getActionSpec(actionId);
+      expect(spec.surfaces.agent).toBe(false);
+      expect(spec.surfaces.mcp).toBe(false);
     }
   });
 
@@ -1301,7 +1339,6 @@ describe('Action Spec Registry', () => {
       ['sessions.external.link.ensure', RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE, RPC_METHODS.DAEMON_DIRECT_SESSION_LINK_ENSURE_LEGACY, null, 'write'],
       ['sessions.external.follow', RPC_METHODS.DAEMON_EXTERNAL_SESSION_ATTACH, RPC_METHODS.DAEMON_DIRECT_SESSION_ATTACH_LEGACY, null, 'write'],
       ['sessions.external.unfollow', RPC_METHODS.DAEMON_EXTERNAL_SESSION_DETACH, RPC_METHODS.DAEMON_DIRECT_SESSION_DETACH_LEGACY, null, 'write'],
-      ['sessions.external.followPolicy.set', RPC_METHODS.DAEMON_EXTERNAL_SESSION_FOLLOW_POLICY_SET, RPC_METHODS.DAEMON_DIRECT_SESSION_FOLLOW_POLICY_SET_LEGACY, null, 'write'],
       ['sessions.external.status.get', RPC_METHODS.DAEMON_EXTERNAL_SESSION_STATUS_GET, RPC_METHODS.DAEMON_DIRECT_SESSION_STATUS_GET_LEGACY, null, 'read'],
       ['sessions.external.transcript.page', RPC_METHODS.DAEMON_EXTERNAL_SESSION_TRANSCRIPT_PAGE, RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_PAGE_LEGACY, 'sessions.external.pageTranscript', 'read'],
       ['sessions.external.transcript.readAfter', RPC_METHODS.DAEMON_EXTERNAL_SESSION_TRANSCRIPT_READ_AFTER, RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_READ_AFTER_LEGACY, 'sessions.external.readAfterTranscript', 'read'],
@@ -1320,11 +1357,44 @@ describe('Action Spec Registry', () => {
       expect(spec.sideEffectClass).toBe(sideEffectClass);
     }
 
+    const backgroundFollow = getActionSpec('sessions.external.backgroundFollow.set');
+    expect(backgroundFollow.bindings?.rpcMethod).toBe(
+      RPC_METHODS.DAEMON_EXTERNAL_SESSION_BACKGROUND_FOLLOW_SET,
+    );
+    expect(backgroundFollow.bindings?.rpcMethodAliases).toBeUndefined();
+    expect(backgroundFollow.surfaces.rpc).toBe(true);
+    expect(backgroundFollow.sideEffectClass).toBe('write');
+
     const takeover = getActionSpec('sessions.external.takeover');
     expect(takeover.bindings?.rpcMethodAliases).toEqual([
       RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_LEGACY,
       RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST_LEGACY,
     ]);
+  });
+
+  it('projects operation actions without inventing compatibility aliases or a second takeover owner', () => {
+    const expected: readonly [ActionId, string, 'read' | 'write' | 'danger'][] = [
+      ['sessions.external.materialize.start', RPC_METHODS.DAEMON_EXTERNAL_SESSION_MATERIALIZE_START, 'write'],
+      ['sessions.external.takeover.start', RPC_METHODS.DAEMON_EXTERNAL_SESSION_TAKEOVER_START, 'danger'],
+      ['sessions.external.operation.status.get', RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_STATUS_GET, 'read'],
+      ['sessions.external.operation.cancel', RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_CANCEL, 'write'],
+      ['sessions.external.operation.resume', RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_RESUME, 'write'],
+      ['sessions.external.operation.retry', RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_RETRY, 'write'],
+      ['sessions.external.operation.discard', RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_DISCARD, 'danger'],
+    ];
+
+    for (const [id, rpcMethod, sideEffectClass] of expected) {
+      const spec = getActionSpec(id);
+      expect(spec.bindings?.rpcMethod).toBe(rpcMethod);
+      expect(spec.bindings?.rpcMethodAliases).toBeUndefined();
+      expect(spec.surfaces.rpc).toBe(true);
+      expect(spec.surfaces.sdk).toBe(false);
+      expect(spec.sideEffectClass).toBe(sideEffectClass);
+    }
+
+    expect(getActionSpec('sessions.external.takeover').bindings?.rpcMethod).toBe(
+      RPC_METHODS.DAEMON_EXTERNAL_SESSION_TAKEOVER,
+    );
   });
 
   it('binds non-external transcript RPC wire methods to ActionSpec rows', () => {
@@ -1619,6 +1689,55 @@ describe('Action Spec Registry', () => {
     });
 
     expect(parsed.success).toBe(false);
+  });
+
+  it.each([
+    ['agentId', { agentId: 'claude' }],
+    ['backendTargetKey', { backendTargetKey: 'agent:claude' }],
+    ['runtimeDescriptorV1', {
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'claude',
+        agent: {},
+      },
+    }],
+  ] as const)(
+    'rejects a structured spawn target that conflicts with %s (remote-dev 490a27a compatibility vector)',
+    (_label, conflictingInput) => {
+      const spec = getActionSpec('session.spawn_new');
+      const parsed = spec.inputSchema.safeParse({
+        backendTarget: {
+          kind: 'backend',
+          backendId: 'codex',
+          sourceKind: 'built_in',
+        },
+        path: '/tmp/project',
+        ...conflictingInput,
+      });
+
+      expect(parsed.success).toBe(false);
+    },
+  );
+
+  it('accepts matching structured, key, Agent, and runtime-descriptor spawn carriers', () => {
+    const spec = getActionSpec('session.spawn_new');
+    const parsed = spec.inputSchema.safeParse({
+      agentId: 'codex',
+      backendTargetKey: 'backend:codex',
+      backendTarget: {
+        kind: 'backend',
+        backendId: 'codex',
+        sourceKind: 'built_in',
+      },
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        agent: {},
+      },
+      path: '/tmp/project',
+    });
+
+    expect(parsed.success).toBe(true);
   });
 
   it('rejects agent:customAcp as a backendTargetKey when spawning a session directly', () => {
@@ -1983,6 +2102,7 @@ describe('Action Spec Registry', () => {
       ['session.restore', 'session.restore'],
       ['session.handoff', 'daemon.sessionHandoff.start'],
       ['session.handoff.prepare_target', 'daemon.sessionHandoff.prepareTarget'],
+      ['session.handoff.prepare_target.resume', 'daemon.sessionHandoff.prepareTarget.resume'],
       ['session.handoff.prepare_target_result.get', 'daemon.sessionHandoff.prepareTargetResult.get'],
       ['session.handoff.commit', 'daemon.sessionHandoff.commit'],
       ['session.handoff.abort', 'daemon.sessionHandoff.abort'],
@@ -1995,6 +2115,42 @@ describe('Action Spec Registry', () => {
       expect(spec.surfaces.rpc).toBe(true);
       expect(spec.bindings?.rpcMethod).toBe(rpcMethod);
     }
+  });
+
+  it('binds prepare-target result-get output to its bounded shared response schema', () => {
+    const spec = getActionSpec('session.handoff.prepare_target_result.get' as ActionId);
+
+    expect(spec.outputSchema).toBe(protocol.SessionHandoffPrepareTargetResultGetResponseSchema);
+    expect(spec.outputSchema.parse({
+      ok: false,
+      errorCode: 'target_identity_conflict',
+      error: 'The native handoff target conflicts with the exported session identity',
+    })).toEqual({
+      ok: false,
+      errorCode: 'target_identity_conflict',
+      error: 'The native handoff target conflicts with the exported session identity',
+    });
+    expect(spec.outputSchema.safeParse({
+      ok: false,
+      errorCode: 'target_import_failed',
+      error: 'generic failure must not enter this bounded seam',
+    }).success).toBe(false);
+    expect(spec.outputSchema.parse({
+      ok: false,
+      errorCode: 'not_found',
+    })).toEqual({
+      ok: false,
+      errorCode: 'not_found',
+    });
+    expect(spec.outputSchema.parse({
+      ok: false,
+      errorCode: 'awaiting_recovery',
+      error: 'Prepare-target job is awaiting_recovery',
+    })).toEqual({
+      ok: false,
+      errorCode: 'awaiting_recovery',
+      error: 'Prepare-target job is awaiting_recovery',
+    });
   });
 
   it('binds session permission RPC wire methods to existing ActionSpec rows', () => {
@@ -2419,7 +2575,9 @@ describe('Action Spec Registry', () => {
 
     // Baseline expectations: these must exist so local voice and realtime voice can share one tool surface.
     expect(byVoiceToolName.has('sendSessionMessage')).toBe(true);
-    expect(byVoiceToolName.has('processPermissionRequest')).toBe(true);
+    // Voice can describe pending permissions, but the canonical approval UI is
+    // the only authority that may answer them.
+    expect(byVoiceToolName.has('processPermissionRequest')).toBe(false);
     expect(byVoiceToolName.has('answerUserActionRequest')).toBe(true);
     expect(byVoiceToolName.has('setPrimaryActionSession')).toBe(true);
     expect(byVoiceToolName.has('setTrackedSessions')).toBe(true);
@@ -2437,6 +2595,15 @@ describe('Action Spec Registry', () => {
     expect(byVoiceToolName.has('listReviewEngines')).toBe(true);
     expect(byVoiceToolName.has('listAgentBackends')).toBe(true);
     expect(byVoiceToolName.has('listAgentModels')).toBe(true);
+  });
+
+  it('classifies every provider-reachable voice tool at the canonical ActionSpec owner', () => {
+    const unclassified = listActionSpecs()
+      .filter((spec) => spec.surfaces.voice && Boolean(spec.bindings?.voiceClientToolName))
+      .filter((spec) => spec.sideEffectClass === undefined)
+      .map((spec) => spec.id);
+
+    expect(unclassified).toEqual([]);
   });
 
   it('uses concrete schema-shaped voice args examples for all voice surfaces', () => {

@@ -7,6 +7,8 @@
  * `SessionWorkflowActivityHeadlineV1` cross the boundary, so the internal shape is not re-declared
  * here to avoid a documentary copy that could drift.
  */
+import type { ClaudeProviderTaskActivity } from '../runtime/remote/sdk/providerActivity.js';
+
 
 export const CLAUDE_WORKFLOW_BACKEND_ID = 'claude' as const;
 
@@ -30,10 +32,6 @@ export type WorkflowActivityObservation = Readonly<{
   startedRunIds: readonly string[];
   terminalRunIds: readonly string[];
   statusChangedRunIds: readonly string[];
-  /**
-   * Runs whose provider-liveness source was observed even when the durable workflow snapshot did
-   * not materially change. This keeps runtime.activity source-keyed without forcing extra
-   * workflow-run record writes for bookkeeping-only facts such as learning the provider task id.
-   */
-  runtimeActivityRunIds?: readonly string[];
+  /** Exact provider-task membership changes derived at the Workflow correlation owner. */
+  providerTaskActivities?: readonly ClaudeProviderTaskActivity[];
 }>;

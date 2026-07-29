@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { AGENT_DEFINITION } from './definition.js';
+import { PI_DIRECT_AUTH_ENV_KEYS } from './launchEnvironment.js';
+import { PLUGIN_MANIFEST } from '../manifest.js';
 
 describe('Pi AGENT_DEFINITION', () => {
   it('advertises Claude subscription credentials as OAuth-or-token', () => {
@@ -8,5 +10,10 @@ describe('Pi AGENT_DEFINITION', () => {
       'oauth',
       'token',
     ]);
+  });
+
+  it('probes every direct Pi provider credential admitted by the launch environment', () => {
+    expect(PLUGIN_MANIFEST.contributes.agents[0]?.cli?.auth.probe.envVars).toEqual(PI_DIRECT_AUTH_ENV_KEYS);
+    expect(AGENT_DEFINITION).not.toHaveProperty('authProbeConfig');
   });
 });

@@ -4,45 +4,42 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import { PLUGIN_MANIFEST } from '../../manifest.js';
 import * as runtimeContribution from './runtime.js';
-
-type RuntimeControlMaterializeInput = Readonly<{
-  runtimeControl: Readonly<{
-    appServer: Readonly<{
-      checkAvailable: () => Promise<Readonly<{ ok: true; value: true }>>;
-      request: (input: Readonly<{ method: string; params?: unknown }>) => Promise<Readonly<{ ok: true; value: unknown }>>;
-    }>;
-    session: Readonly<{
-      checkConnectedServiceAuthTransportInvalidation: () => Promise<Readonly<{ ok: true; value: true }>>;
-      invalidateConnectedServiceAuthTransports: () => Promise<Readonly<{ ok: true; value: true }>>;
-    }>;
-    context: Readonly<{
-      metadata?: unknown;
-    }>;
-  }>;
-  params: Readonly<{
-    input: Readonly<{ serviceId: string }>;
-    baseSelection: Readonly<Record<string, unknown>>;
-  }>;
-}>;
 
 type CodexRuntimeContributionModule = typeof runtimeContribution & Partial<{
   CODEX_AGENT_RUNTIME_CONTRIBUTION: Readonly<{
+    agentCliSystemTool?: Readonly<{
+      toolId?: unknown;
+    }>;
+    sessionStartup?: Readonly<{
+      shouldUseDeferredBootstrap?: (params: Readonly<{
+        startedBy: 'terminal' | 'daemon';
+        startingMode: 'terminal' | 'remote' | 'local' | null;
+        existingSessionId: string | null;
+        sessionAttachFilePath: string | null;
+        providerResumeId: string | null;
+        hasExplicitPermissionMode: boolean;
+        permissionModeSeedSource: 'explicit' | 'inferred' | 'account_default' | 'fallback' | 'released_cache_v1';
+        hasTerminalTty: boolean;
+      }>) => boolean;
+    }>;
     connectedServices?: Readonly<{
       recoveryCapabilities?: unknown;
+      resolveLegacyRuntimeAuthFailureSourceRevision?: unknown;
+      runtimeAuthAdapter?: Readonly<{
+        canHotApply?: (input: Readonly<{ target: Readonly<{ agentId: string }>; selection: unknown }>) => unknown;
+      }>;
+      verifyResumeReachable?: unknown;
+      resolveCandidatePersistedSessionFile?: unknown;
     }>;
-    externalSessions?: Readonly<{
-      createCandidateHostAdapter?: unknown;
-      createTranscriptStoreAdapter?: unknown;
-    }>;
-    runtimeControl?: Readonly<{
-      connectedServices?: Readonly<{
-        createRuntimeAuthAdapter?: () => Readonly<{
-          canHotApply?: (input: Readonly<{ target: Readonly<{ agentId: string }>; selection: unknown }>) => unknown;
-        }>;
-        materializeRuntimeAuthSelection?: (input: RuntimeControlMaterializeInput) => Promise<unknown>;
+    sessionHandoff?: Readonly<{
+      surface?: () => Readonly<{
+        exportBundle?: unknown;
+        importBundle?: unknown;
       }>;
     }>;
+    runtimeControl?: unknown;
   }>;
   CODEX_SESSION_CONTROL_ADAPTER: Readonly<{
     normalizeRuntimeKindOverride?: (value: unknown) => unknown;
@@ -78,11 +75,159 @@ type CodexRuntimeContributionModule = typeof runtimeContribution & Partial<{
 const moduleWithA16y3Exports = runtimeContribution as CodexRuntimeContributionModule;
 
 describe('Codex runtime contribution leaves', () => {
-  it('declares the full provider-owned direct-live runtime auth capability', () => {
+  it('binds the manifest-declared Codex CLI system tool to the Agent runtime', () => {
+    const codexCliSystemTool = PLUGIN_MANIFEST.contributes.systemTools?.find(
+      (systemTool) => systemTool.id === 'codex-cli',
+    );
+
+    expect(codexCliSystemTool).toBeDefined();
+    expect(moduleWithA16y3Exports.CODEX_AGENT_RUNTIME_CONTRIBUTION?.agentCliSystemTool).toEqual({
+      toolId: codexCliSystemTool?.id,
+    });
+  });
+
+  it.each([
+    {
+      name: 'fresh implicit terminal TTY start',
+      input: {
+        startedBy: 'terminal' as const,
+        startingMode: null,
+        existingSessionId: null,
+        sessionAttachFilePath: null,
+        providerResumeId: null,
+        hasExplicitPermissionMode: false,
+        permissionModeSeedSource: 'fallback' as const,
+        hasTerminalTty: true,
+      },
+      expected: true,
+    },
+    {
+      name: 'explicit local provider resume with a permission seed',
+      input: {
+        startedBy: 'terminal' as const,
+        startingMode: 'local' as const,
+        existingSessionId: null,
+        sessionAttachFilePath: null,
+        providerResumeId: 'codex-thread',
+        hasExplicitPermissionMode: true,
+        permissionModeSeedSource: 'explicit' as const,
+        hasTerminalTty: true,
+      },
+      expected: true,
+    },
+    {
+      name: 'provider resume with the released V1 cache seed',
+      input: {
+        startedBy: 'terminal' as const,
+        startingMode: 'terminal' as const,
+        existingSessionId: null,
+        sessionAttachFilePath: null,
+        providerResumeId: 'codex-thread',
+        hasExplicitPermissionMode: false,
+        permissionModeSeedSource: 'released_cache_v1' as const,
+        hasTerminalTty: true,
+      },
+      expected: true,
+    },
+    {
+      name: 'provider resume without an explicit permission seed',
+      input: {
+        startedBy: 'terminal' as const,
+        startingMode: 'terminal' as const,
+        existingSessionId: null,
+        sessionAttachFilePath: null,
+        providerResumeId: 'codex-thread',
+        hasExplicitPermissionMode: false,
+        permissionModeSeedSource: 'fallback' as const,
+        hasTerminalTty: true,
+      },
+      expected: false,
+    },
+    {
+      name: 'provider resume with a canonical account-default seed',
+      input: {
+        startedBy: 'terminal' as const,
+        startingMode: 'terminal' as const,
+        existingSessionId: null,
+        sessionAttachFilePath: null,
+        providerResumeId: 'codex-thread',
+        hasExplicitPermissionMode: false,
+        permissionModeSeedSource: 'account_default' as const,
+        hasTerminalTty: true,
+      },
+      expected: false,
+    },
+    {
+      name: 'existing Happier resume',
+      input: {
+        startedBy: 'terminal' as const,
+        startingMode: 'terminal' as const,
+        existingSessionId: 'happy-session',
+        sessionAttachFilePath: '/tmp/session-attach.json',
+        providerResumeId: 'codex-thread',
+        hasExplicitPermissionMode: true,
+        permissionModeSeedSource: 'explicit' as const,
+        hasTerminalTty: true,
+      },
+      expected: false,
+    },
+    {
+      name: 'non-TTY start',
+      input: {
+        startedBy: 'terminal' as const,
+        startingMode: null,
+        existingSessionId: null,
+        sessionAttachFilePath: null,
+        providerResumeId: null,
+        hasExplicitPermissionMode: true,
+        permissionModeSeedSource: 'explicit' as const,
+        hasTerminalTty: false,
+      },
+      expected: false,
+    },
+    {
+      name: 'daemon start',
+      input: {
+        startedBy: 'daemon' as const,
+        startingMode: 'terminal' as const,
+        existingSessionId: null,
+        sessionAttachFilePath: null,
+        providerResumeId: null,
+        hasExplicitPermissionMode: true,
+        permissionModeSeedSource: 'explicit' as const,
+        hasTerminalTty: true,
+      },
+      expected: false,
+    },
+  ])('owns deferred startup eligibility for $name', ({ input, expected }) => {
+    expect(
+      moduleWithA16y3Exports.CODEX_AGENT_RUNTIME_CONTRIBUTION
+        ?.sessionStartup
+        ?.shouldUseDeferredBootstrap?.(input),
+    ).toBe(expected);
+  });
+
+  it('keeps predecessor failure-source evidence in the Codex provider leaf', () => {
+    expect(
+      moduleWithA16y3Exports.CODEX_AGENT_RUNTIME_CONTRIBUTION?.connectedServices
+        ?.resolveLegacyRuntimeAuthFailureSourceRevision,
+    ).toBeTypeOf('function');
+  });
+
+  it('publishes the native handoff surface through the generated Agent contribution', () => {
+    expect(moduleWithA16y3Exports.CODEX_AGENT_RUNTIME_CONTRIBUTION?.sessionHandoff?.surface?.())
+      .toMatchObject({
+        exportBundle: expect.any(Function),
+        importBundle: expect.any(Function),
+      });
+  });
+
+  it('declares the provider-owned in-turn hot-auth capability that its routable runtime implements', () => {
     expect(moduleWithA16y3Exports.CODEX_AGENT_RUNTIME_CONTRIBUTION?.connectedServices?.recoveryCapabilities)
       .toMatchObject({
         predictiveSoftSwitch: { mode: 'supported' },
         sameAccountFanoutStrategy: 'provider_account_id',
+        generationApplicationScope: 'per_session_runtime',
         runtimeAuthApply: {
           directLiveHotAuth: {
             supportsInTurnApply: true,
@@ -130,52 +275,101 @@ describe('Codex runtime contribution leaves', () => {
     }
   });
 
-  it('exports host-mediated runtime-control hooks for generated projection', async () => {
-    const runtimeControl = moduleWithA16y3Exports.CODEX_AGENT_RUNTIME_CONTRIBUTION?.runtimeControl;
-    const adapter = runtimeControl?.connectedServices?.createRuntimeAuthAdapter?.();
+  it('materializes only the primary Codex OAuth source when a secondary OpenAI key is also present', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-dual-auth-materialize-'));
+    try {
+      const result = await runtimeContribution.materializeCodexAuthEnvironment({
+        rootDir: codexHome,
+        openaiCodex: {
+          kind: 'oauth',
+          serviceId: 'openai-codex',
+          oauth: {
+            accessToken: 'coding-access-token',
+            refreshToken: 'coding-refresh-token',
+            idToken: 'coding-id-token',
+            providerAccountId: 'coding-account',
+          },
+        },
+        openai: {
+          kind: 'token',
+          serviceId: 'openai',
+          token: {
+            token: 'sk-realtime-account',
+          },
+        },
+      });
 
-    expect(runtimeControl?.appServer).toMatchObject({
-      checkAvailable: expect.any(Function),
-      request: expect.any(Function),
-    });
+      expect(result.env).toEqual({ CODEX_HOME: codexHome });
+      expect(JSON.parse(await readFile(join(codexHome, 'auth.json'), 'utf8'))).toMatchObject({
+        auth_mode: 'chatgpt',
+        access_token: 'coding-access-token',
+        account_id: 'coding-account',
+      });
+    } finally {
+      await rm(codexHome, { recursive: true, force: true });
+    }
+  });
+
+  it('leaves current qualified purpose credentials to the canonical Connected Accounts owner', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-qualified-materialize-'));
+    try {
+      const result = await runtimeContribution.materializeCodexAuthEnvironment({
+        rootDir: codexHome,
+        qualifiedPurposeMaterialization: true,
+        openaiCodex: {
+          kind: 'oauth',
+          serviceId: 'openai-codex',
+          oauth: {
+            accessToken: 'legacy-coding-access',
+            refreshToken: 'legacy-coding-refresh',
+            idToken: 'legacy-coding-id',
+            providerAccountId: 'legacy-coding-account',
+          },
+        },
+        openai: {
+          kind: 'token',
+          serviceId: 'openai',
+          token: {
+            token: 'legacy-realtime-key',
+          },
+        },
+      });
+
+      expect(result.env).toEqual({ CODEX_HOME: codexHome });
+      await expect(readFile(join(codexHome, 'auth.json'), 'utf8')).rejects.toMatchObject({
+        code: 'ENOENT',
+      });
+    } finally {
+      await rm(codexHome, { recursive: true, force: true });
+    }
+  });
+
+  it('requires restart/rematerialization when either Codex process-scoped auth selection changes', () => {
+    const policy = moduleWithA16y3Exports.CODEX_AGENT_RUNTIME_CONTRIBUTION?.connectedServices as
+      | Readonly<{ shouldRestartForServiceSwitch?: (selection: unknown) => boolean }>
+      | undefined;
+
+    expect(policy?.shouldRestartForServiceSwitch?.('openai-codex')).toBe(true);
+    expect(policy?.shouldRestartForServiceSwitch?.('openai')).toBe(true);
+    expect(policy?.shouldRestartForServiceSwitch?.('anthropic')).toBe(false);
+  });
+
+  it('exports native connected-service policy without a reflective runtime-control row', () => {
+    const contribution = moduleWithA16y3Exports.CODEX_AGENT_RUNTIME_CONTRIBUTION;
+    const connectedServices = contribution?.connectedServices;
+    const adapter = connectedServices?.runtimeAuthAdapter;
+
+    expect(contribution).not.toHaveProperty('runtimeControl');
+    expect(connectedServices?.verifyResumeReachable).toEqual(expect.any(Function));
+    expect(connectedServices?.resolveCandidatePersistedSessionFile).toEqual(expect.any(Function));
     expect(adapter?.canHotApply?.({
-      target: { providerId: 'codex' },
+      target: { agentId: 'codex' },
       selection: {
         record: { serviceId: 'openai-codex', kind: 'oauth', oauth: { providerAccountId: 'acct' } },
-        invalidateTransports: async () => undefined,
       },
     })).toEqual({
-      supported: true,
-      mode: 'transport_recycle',
-      recovery: 'restart_resume',
-    });
-
-    const selection = await runtimeControl?.connectedServices?.materializeRuntimeAuthSelection?.({
-      runtimeControl: {
-        context: { metadata: {} },
-        appServer: {
-          checkAvailable: async () => ({ ok: true, value: true }),
-          request: async ({ method }) => ({ ok: true, value: { method } }),
-        },
-        session: {
-          checkConnectedServiceAuthTransportInvalidation: async () => ({ ok: true, value: true }),
-          invalidateConnectedServiceAuthTransports: async () => ({ ok: true, value: true }),
-        },
-      },
-      params: {
-        input: { serviceId: 'openai-codex' },
-        baseSelection: {
-          serviceId: 'openai-codex',
-          profileId: 'work',
-          record: { serviceId: 'openai-codex' },
-        },
-      },
-    });
-
-    expect(selection).toMatchObject({
-      serviceId: 'openai-codex',
-      client: { request: expect.any(Function) },
-      invalidateTransports: expect.any(Function),
+      supported: false,
+      reason: 'runtime_apply_callback_unavailable',
     });
   });
 
@@ -281,11 +475,9 @@ describe('Codex runtime contribution leaves', () => {
     });
   });
 
-  it('exports public external-session host adapter factories from the runtime contribution', () => {
-    const externalSessions = moduleWithA16y3Exports.CODEX_AGENT_RUNTIME_CONTRIBUTION?.externalSessions;
-
-    expect(externalSessions?.createCandidateHostAdapter).toBeTypeOf('function');
-    expect(externalSessions?.createTranscriptStoreAdapter).toBeTypeOf('function');
+  it('does not retain the superseded internal external-session carrier', () => {
+    expect(moduleWithA16y3Exports.CODEX_AGENT_RUNTIME_CONTRIBUTION)
+      .not.toHaveProperty('externalSessions');
   });
 
   it('exports plugin-owned protocol descriptor functions for generated projection', () => {

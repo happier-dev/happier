@@ -24,7 +24,7 @@ export const KIRO_UI_DESCRIPTOR = Object.freeze({
     },
     picker: {
       iconName: 'flash-outline',
-      cliGlyphTokenId: 'agentGlyph.kiro',
+      cliGlyph: 'KR',
       cliGlyphScale: 1.0,
       profileCompatibilityGlyphScale: 1.0,
       iconScale: 1.25,
@@ -39,9 +39,6 @@ export const KIRO_UI_DESCRIPTOR = Object.freeze({
     mcpDelivery: 'supported',
     modelSelection: 'experimental',
     resume: 'experimental',
-  },
-  settings: {
-    descriptorId: 'kiro.agentSettings.v1',
   },
   behavior: {},
   session: {},

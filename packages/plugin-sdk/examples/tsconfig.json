@@ -6,11 +6,8 @@
     "lib": ["ES2022", "DOM"],
     "strict": true,
     "skipLibCheck": true,
-    "noEmit": true,
-    "paths": {
-      "@happier-dev/plugin-sdk": ["./../src/index.ts"],
-      "@happier-dev/plugin-sdk/*": ["./../src/*"]
-    }
+    "jsx": "preserve",
+    "noEmit": true
   },
-  "include": ["**/*.ts"]
+  "include": ["**/*.ts", "**/*.tsx"]
 }

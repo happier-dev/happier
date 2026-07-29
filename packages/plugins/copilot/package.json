@@ -10,6 +10,10 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./manifest": {
+      "types": "./dist/manifest.d.ts",
+      "default": "./dist/manifest.js"
+    },
     "./agent": {
       "types": "./dist/agent/index.d.ts",
       "default": "./dist/agent/index.js"
@@ -21,11 +25,6 @@
     "./agent/promptAssets": {
       "types": "./dist/agent/promptAssets/index.d.ts",
       "default": "./dist/agent/promptAssets/index.js"
-    },
-    "./ui": {
-      "types": "./dist/ui/index.d.ts",
-      "react-native": "./dist/ui/index.js",
-      "default": "./dist/ui/index.js"
     }
   },
   "files": [
@@ -34,11 +33,12 @@
   ],
   "scripts": {
     "tsc": "node ../../../scripts/workspaces/runTypeScriptCli.mjs",
-    "build": "node ../../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.json",
+    "build": "node ../../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
     "test": "vitest run",
     "typecheck": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@happier-dev/agents": "0.0.0",
     "@happier-dev/plugin-sdk": "0.0.0"
   },
   "devDependencies": {

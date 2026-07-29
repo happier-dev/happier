@@ -54,7 +54,7 @@ describe('createPluginUiHostRuntimeExternalsVitePlugin', () => {
 
         expect(plugin.resolveId('react')).toMatch(/^\0happier-plugin-host-runtime:react$/);
         expect(plugin.resolveId('react-native-web')).toMatch(/^\0happier-plugin-host-runtime:react-native-web$/);
-        expect(plugin.resolveId('@happier-dev/plugin-sdk/ui/hostApiClient')).toBeNull();
+        expect(plugin.resolveId('@happier-dev/plugin-sdk/ui/client')).toBeNull();
         expect(plugin.resolveId('./local-module')).toBeNull();
     });
 
@@ -81,8 +81,11 @@ describe('createPluginUiHostRuntimeExternalsVitePlugin', () => {
         const plugin = createPluginUiHostRuntimeExternalsVitePlugin();
 
         expect(plugin.resolveId('react')).not.toBeNull();
+        expect(plugin.resolveId('react/jsx-runtime')).not.toBeNull();
+        expect(plugin.resolveId('react/jsx-dev-runtime')).not.toBeNull();
         expect(plugin.resolveId('react-native-web')).not.toBeNull();
-        expect(plugin.resolveId('@happier-dev/plugin-sdk/ui/hostApiClient')).not.toBeNull();
+        expect(plugin.resolveId('@happier-dev/plugin-sdk/ui/client')).not.toBeNull();
+        expect(plugin.resolveId('react/compiler-runtime')).toBeNull();
     });
 });
 

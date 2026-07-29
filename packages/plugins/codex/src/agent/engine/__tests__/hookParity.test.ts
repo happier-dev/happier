@@ -1,7 +1,7 @@
 import {
   PLUGIN_HOOK_CATALOG_V1,
   getPluginHookDefinitionV1,
-} from '@happier-dev/plugin-sdk/hooks';
+} from '@happier-dev/plugin-sdk/experimental/hooks';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -19,17 +19,6 @@ const EXPECTED_B6_HOOK_IDS = [
   'executionRun.completed',
   'agent.resolvePrerequisites',
   'agent.spawnEnv.augment',
-  'agent.response.after',
-  'tool.call.before',
-  'tool.result.after',
-  'resource.discovery',
-  'plugin.reload.before',
-  'plugin.reload.after',
-  'session.attached',
-  'session.detached',
-  'approval.decision.made',
-  'subagent.started',
-  'subagent.ended',
 ] as const;
 
 const BROAD_SURFACE_LABELS = [

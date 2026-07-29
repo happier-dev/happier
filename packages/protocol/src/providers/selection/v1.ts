@@ -23,12 +23,134 @@ export const SessionModelSelectionV1Schema = z.object({
 }).strict();
 export type SessionModelSelectionV1 = z.infer<typeof SessionModelSelectionV1Schema>;
 
+export const SESSION_APPLIED_MODEL_V1_METADATA_KEY = 'sessionAppliedModelV1';
+
+/**
+ * Last model attached to an exact provider-accepted new-turn input.
+ *
+ * `provider` + `modelId` are the Remote Dev predecessor projection. Dev adds the
+ * structured selection so provider-connection identity is not lost. Remote Dev
+ * readers ignore the additive field and Dev readers accept predecessor records
+ * without it.
+ */
+export const SessionAppliedModelV1Schema = z.object({
+  v: z.literal(1),
+  provider: z.string().min(1).max(256),
+  updatedAt: z.number().finite().nonnegative(),
+  modelId: ProviderModelIdSchema,
+  selection: ProviderBoundModelRefSchema.optional(),
+}).strict().superRefine((value, ctx) => {
+  if (value.selection && value.selection.modelId !== value.modelId) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['selection', 'modelId'],
+      message: 'Structured applied-model selection must match modelId',
+    });
+  }
+});
+export type SessionAppliedModelV1 = z.infer<typeof SessionAppliedModelV1Schema>;
+
+export const SESSION_MESSAGE_MODEL_SELECTION_V1_META_KEY = 'modelSelectionV1';
+
+export const SessionMessageModelSelectionV1Schema = SessionModelSelectionV1Schema.superRefine(
+  (selection, ctx) => {
+    if (selection.ref.providerConnectionId === null && selection.ref.modelId === 'default') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['ref', 'modelId'],
+        message: 'Native per-message model selection cannot use the legacy default reset token',
+      });
+    }
+  },
+);
+
+export type SessionMessageModelSelectionV1ReadResult =
+  | Readonly<{ status: 'absent' }>
+  | Readonly<{ status: 'invalid' }>
+  | Readonly<{ status: 'valid'; selection: SessionModelSelectionV1 }>;
+
+/**
+ * Reads the additive, structured per-message selection seam. The discriminated
+ * result lets current readers fail closed when the key is present but malformed,
+ * rather than falling back to an ambiguous legacy `model` value.
+ */
+export function readSessionMessageModelSelectionV1(
+  meta: unknown,
+): SessionMessageModelSelectionV1ReadResult {
+  if (!meta || typeof meta !== 'object' || Array.isArray(meta)) return { status: 'absent' };
+  const record = meta as Record<string, unknown>;
+  if (!Object.prototype.hasOwnProperty.call(record, SESSION_MESSAGE_MODEL_SELECTION_V1_META_KEY)) {
+    return { status: 'absent' };
+  }
+  const parsed = SessionMessageModelSelectionV1Schema.safeParse(
+    record[SESSION_MESSAGE_MODEL_SELECTION_V1_META_KEY],
+  );
+  return parsed.success
+    ? { status: 'valid', selection: parsed.data }
+    : { status: 'invalid' };
+}
+
+export function withSessionMessageModelSelectionV1(
+  meta: Readonly<Record<string, unknown>> | null | undefined,
+  selection: SessionModelSelectionV1,
+): Record<string, unknown> & { modelSelectionV1: SessionModelSelectionV1 } {
+  const parsed = SessionMessageModelSelectionV1Schema.parse(selection);
+  const next: Record<string, unknown> & { modelSelectionV1: SessionModelSelectionV1 } = {
+    ...(meta ?? {}),
+    [SESSION_MESSAGE_MODEL_SELECTION_V1_META_KEY]: parsed,
+  };
+  const legacyModel = projectSessionMessageModelSelectionToLegacyModelV1(parsed);
+  if (legacyModel === undefined) {
+    delete next.model;
+  } else {
+    next.model = legacyModel;
+  }
+  return next;
+}
+
+/**
+ * Projects a structured per-message selection onto the released providerless
+ * message seam. Old readers receive native models only; provider-bound choices
+ * and the legacy `default` reset token are omitted so they degrade closed.
+ */
+export function projectSessionMessageModelSelectionToLegacyModelV1(
+  value: SessionModelSelectionV1,
+): string | undefined {
+  const selection = SessionModelSelectionV1Schema.parse(value);
+  return selection.ref.providerConnectionId === null && selection.ref.modelId !== 'default'
+    ? selection.ref.modelId
+    : undefined;
+}
+
 export const SessionModelSelectionIntentV1Schema = z.object({
   v: z.literal(1),
   updatedAt: z.number().finite().nonnegative(),
   selection: ProviderBoundModelRefSchema.nullable(),
 }).strict();
 export type SessionModelSelectionIntentV1 = z.infer<typeof SessionModelSelectionIntentV1Schema>;
+
+export type LegacyModelOverrideProjectionV1 = Readonly<{
+  v: 1;
+  updatedAt: number;
+  modelId: string;
+}>;
+
+/**
+ * Projects canonical model intent onto the released providerless metadata seam.
+ * Native selections and clears remain representable; provider-bound selections
+ * are omitted because old readers cannot preserve their connection identity.
+ *
+ * Remove only after every supported CLI/web reader consumes the canonical
+ * intent and the mixed-version rollback window for `modelOverrideV1` is closed.
+ */
+export function projectSessionModelSelectionIntentToLegacyModelOverrideV1(
+  value: SessionModelSelectionIntentV1,
+): LegacyModelOverrideProjectionV1 | undefined {
+  const intent = SessionModelSelectionIntentV1Schema.parse(value);
+  if (intent.selection && intent.selection.providerConnectionId !== null) return undefined;
+  const modelId = intent.selection?.modelId ?? 'default';
+  return { v: 1, updatedAt: intent.updatedAt, modelId };
+}
 
 /**
  * Converts a flat model-selection boundary into the canonical structured ref.
@@ -64,6 +186,58 @@ const LegacyModelOverrideV1Schema = z.object({
   modelId: z.string().nullable(),
 }).passthrough();
 
+type NormalizedLegacyModelSelectionIntentV1 = Readonly<{
+  updatedAt: number;
+  modelId: string | null;
+}>;
+
+function normalizeLegacyModelSelectionIntentV1(value: unknown): NormalizedLegacyModelSelectionIntentV1 | null {
+  const legacy = LegacyModelOverrideV1Schema.safeParse(value);
+  if (!legacy.success) return null;
+
+  const modelId = legacy.data.modelId?.trim() ?? null;
+  if (modelId === null || modelId === 'default') {
+    return { updatedAt: legacy.data.updatedAt, modelId: null };
+  }
+  if (!modelId) return null;
+
+  const parsedModelId = ProviderModelIdSchema.safeParse(modelId);
+  return parsedModelId.success
+    ? { updatedAt: legacy.data.updatedAt, modelId: parsedModelId.data }
+    : null;
+}
+
+type EffectiveModelSelectionIntentSourceV1 =
+  | Readonly<{ kind: 'canonical'; intent: SessionModelSelectionIntentV1 }>
+  | Readonly<{ kind: 'legacy'; intent: NormalizedLegacyModelSelectionIntentV1 }>;
+
+function selectEffectiveModelSelectionIntentSourceV1(
+  canonical: SessionModelSelectionIntentV1 | null,
+  legacy: NormalizedLegacyModelSelectionIntentV1 | null,
+): EffectiveModelSelectionIntentSourceV1 | null {
+  if (canonical?.selection && canonical.selection.providerConnectionId !== null) {
+    return { kind: 'canonical', intent: canonical };
+  }
+  if (canonical && (!legacy || canonical.updatedAt >= legacy.updatedAt)) {
+    return { kind: 'canonical', intent: canonical };
+  }
+  return legacy ? { kind: 'legacy', intent: legacy } : null;
+}
+
+export function sessionModelSelectionIntentRequiresAgentTargetV1(input: Readonly<{
+  canonical: unknown;
+  legacy: unknown;
+}>): boolean {
+  const canonical = SessionModelSelectionIntentV1Schema.safeParse(input.canonical);
+  const normalizedCanonical = canonical.success ? canonical.data : null;
+  const legacy = normalizeLegacyModelSelectionIntentV1(input.legacy);
+  const source = selectEffectiveModelSelectionIntentSourceV1(normalizedCanonical, legacy);
+  if (!source) return false;
+  return source.kind === 'canonical'
+    ? source.intent.selection !== null
+    : source.intent.modelId !== null;
+}
+
 export type SessionModelSelectionResolutionErrorCode =
   | 'model_selection_agent_target_unknown'
   | 'model_selection_agent_target_mismatch';
@@ -85,36 +259,37 @@ export function resolveSessionModelSelectionIntentV1(input: Readonly<{
   legacy: unknown;
   agentTargetKey: string;
 }>): SessionModelSelectionIntentV1 | null {
+  const canonical = SessionModelSelectionIntentV1Schema.safeParse(input.canonical);
+  const normalizedCanonical = canonical.success ? canonical.data : null;
+  const legacy = normalizeLegacyModelSelectionIntentV1(input.legacy);
+  const source = selectEffectiveModelSelectionIntentSourceV1(normalizedCanonical, legacy);
+  if (!source) return null;
+  if (source.kind === 'canonical' && source.intent.selection === null) return source.intent;
+  if (source.kind === 'legacy' && source.intent.modelId === null) {
+    return { v: 1, updatedAt: source.intent.updatedAt, selection: null };
+  }
+
   const parsedAgentTargetKey = ProviderAgentTargetKeySchema.safeParse(input.agentTargetKey);
   if (!parsedAgentTargetKey.success) {
     throw new SessionModelSelectionResolutionError('model_selection_agent_target_unknown');
   }
   const agentTargetKey = parsedAgentTargetKey.data;
-  const canonical = SessionModelSelectionIntentV1Schema.safeParse(input.canonical);
-  if (canonical.success
-    && canonical.data.selection !== null
-    && canonical.data.selection.agentTargetKey !== agentTargetKey) {
-    throw new SessionModelSelectionResolutionError('model_selection_agent_target_mismatch');
-  }
-
-  const legacy = LegacyModelOverrideV1Schema.safeParse(input.legacy);
-  const legacyIntent: SessionModelSelectionIntentV1 | null = legacy.success
-    ? {
-      v: 1,
-      updatedAt: legacy.data.updatedAt,
-      selection: legacy.data.modelId === null || legacy.data.modelId === 'default'
-        ? null
-        : ProviderBoundModelRefSchema.parse({
-          agentTargetKey,
-          providerConnectionId: null,
-          modelId: legacy.data.modelId,
-        }),
+  if (source.kind === 'canonical') {
+    if (source.intent.selection !== null
+      && source.intent.selection.agentTargetKey !== agentTargetKey) {
+      throw new SessionModelSelectionResolutionError('model_selection_agent_target_mismatch');
     }
-    : null;
-
-  if (!canonical.success) return legacyIntent;
-  if (!legacyIntent || canonical.data.updatedAt >= legacyIntent.updatedAt) return canonical.data;
-  return legacyIntent;
+    return source.intent;
+  }
+  return {
+    v: 1,
+    updatedAt: source.intent.updatedAt,
+    selection: ProviderBoundModelRefSchema.parse({
+      agentTargetKey,
+      providerConnectionId: null,
+      modelId: source.intent.modelId,
+    }),
+  };
 }
 
 export function parseSessionModelSelectionV1(

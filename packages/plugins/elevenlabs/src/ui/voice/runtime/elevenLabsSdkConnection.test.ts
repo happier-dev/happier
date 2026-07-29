@@ -2,12 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Callbacks } from '@elevenlabs/client';
 import type { ElevenLabsConversationHandleEvent } from './createElevenLabsConversationHandle.js';
 
-import {
-  createElevenLabsSdkConnection,
-  createRegisteredElevenLabsSdkConnection,
-} from './elevenLabsSdkConnection.js';
-import { createElevenLabsConversationHandleRegistry } from './elevenLabsConversationHandleRegistry.js';
-import type { RealtimeConnection } from './types.js';
+import { createElevenLabsSdkConnection } from './elevenLabsSdkConnection.js';
+import type { VoiceRealtimeConnection } from '@happier-dev/bundled-voice-runtime-contract';
 
 function createTestConnection(input: Readonly<{ driver: Readonly<{
   open(input: Readonly<{
@@ -18,7 +14,7 @@ function createTestConnection(input: Readonly<{ driver: Readonly<{
   }>): Promise<void>;
   sendControl(event: never): Promise<void>;
   close(): Promise<void>;
-}> }>): RealtimeConnection {
+}> }>): VoiceRealtimeConnection {
   let state: 'idle' | 'connecting' | 'open' | 'closed' = 'idle';
   let sessionId: string | null = null;
   const controls: unknown[] = [];
@@ -62,6 +58,46 @@ function createTestConnection(input: Readonly<{ driver: Readonly<{
 }
 
 describe('createElevenLabsSdkConnection', () => {
+  it('routes provider-owned watchdog stalls through remote close for host-owned reconnect', async () => {
+    let reportStall!: (reason: string) => void;
+    const liveness = {
+      connected: vi.fn(),
+      disconnected: vi.fn(),
+      noteInboundEvent: vi.fn(),
+      modeChanged: vi.fn(),
+      userTurnCommitted: vi.fn(),
+    };
+    const handle = {
+      startSession: vi.fn(async () => 'conversation-stall'),
+      endSession: vi.fn(async () => undefined),
+      sendUserMessage: vi.fn(),
+      sendContextualUpdate: vi.fn(),
+      setMicMuted: vi.fn(),
+      readOutboundAudioBytes: vi.fn(async () => 10),
+      getId: vi.fn(() => 'conversation-stall'),
+      dispose: vi.fn(),
+      subscribe: vi.fn(() => () => undefined),
+    };
+    const connection = createElevenLabsSdkConnection({
+      createSdkHandleConnection: createTestConnection,
+      handle,
+      startConfig: {},
+      createLiveness(onFailure) {
+        reportStall = onFailure;
+        return liveness;
+      },
+    });
+
+    await connection.connect(new AbortController().signal);
+    expect(liveness.connected).toHaveBeenCalledTimes(1);
+    reportStall('realtime_inbound_stall');
+    reportStall('realtime_outbound_audio_plateau');
+
+    await vi.waitFor(() => expect(connection.state()).toBe('closed'));
+    expect(liveness.disconnected).toHaveBeenCalledTimes(1);
+    expect(handle.endSession).toHaveBeenCalledTimes(1);
+  });
+
   it('owns the SDK lifecycle and projects callbacks through connection channels', async () => {
     let publish!: (event: ElevenLabsConversationHandleEvent) => void;
     const handle = {
@@ -111,6 +147,7 @@ describe('createElevenLabsSdkConnection', () => {
     });
     await connection.close({ code: 'user_stop' });
     expect(handle.endSession).toHaveBeenCalledTimes(1);
+    expect(handle.dispose).toHaveBeenCalledTimes(1);
   });
 
   it('translates canonical SDK commands and turns disconnects into remote close', async () => {
@@ -148,6 +185,7 @@ describe('createElevenLabsSdkConnection', () => {
     await vi.waitFor(() => expect(connection.state()).toBe('closed'));
     expect(dispose).toHaveBeenCalledTimes(1);
     expect(handle.endSession).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(handle.dispose).toHaveBeenCalledTimes(1));
   });
 
   it('ends the SDK session once when a disconnect races with start completion', async () => {
@@ -198,7 +236,72 @@ describe('createElevenLabsSdkConnection', () => {
 
     await expect(connecting).rejects.toMatchObject({ name: 'AbortError' });
     expect(handle.endSession).toHaveBeenCalled();
+    expect(handle.dispose).toHaveBeenCalledTimes(1);
     expect(connection.state()).toBe('closed');
+  });
+
+  it('settles the Happier connection while SDK setup remains indefinitely pending', async () => {
+    const handle = {
+      startSession: vi.fn(async () => await new Promise<string | null>(() => {})),
+      endSession: vi.fn(async () => undefined),
+      sendUserMessage: vi.fn(),
+      sendContextualUpdate: vi.fn(),
+      setMicMuted: vi.fn(),
+      readOutboundAudioBytes: vi.fn(async () => null),
+      getId: vi.fn(() => null),
+      dispose: vi.fn(),
+      subscribe: vi.fn(() => () => undefined),
+    };
+    const connection = createElevenLabsSdkConnection({
+      createSdkHandleConnection: createTestConnection,
+      handle,
+      startConfig: {},
+    });
+    const controller = new AbortController();
+    const connecting = connection.connect(controller.signal);
+    await vi.waitFor(() => expect(handle.startSession).toHaveBeenCalledTimes(1));
+
+    controller.abort();
+
+    await expect(connecting).rejects.toMatchObject({ name: 'AbortError' });
+    expect(connection.state()).toBe('closed');
+    expect(handle.endSession).toHaveBeenCalledTimes(1);
+    expect(handle.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a late SDK setup rejection inert after attempt abort', async () => {
+    let rejectStart!: (error: Error) => void;
+    const handle = {
+      startSession: vi.fn(async () => await new Promise<string | null>((_resolve, reject) => {
+        rejectStart = reject;
+      })),
+      endSession: vi.fn(async () => undefined),
+      sendUserMessage: vi.fn(),
+      sendContextualUpdate: vi.fn(),
+      setMicMuted: vi.fn(),
+      readOutboundAudioBytes: vi.fn(async () => null),
+      getId: vi.fn(() => null),
+      dispose: vi.fn(),
+      subscribe: vi.fn(() => () => undefined),
+    };
+    const connection = createElevenLabsSdkConnection({
+      createSdkHandleConnection: createTestConnection,
+      handle,
+      startConfig: {},
+    });
+    const controller = new AbortController();
+    const connecting = connection.connect(controller.signal);
+    await vi.waitFor(() => expect(handle.startSession).toHaveBeenCalledTimes(1));
+    controller.abort();
+
+    await expect(connecting).rejects.toMatchObject({ name: 'AbortError' });
+    rejectStart(new Error('late_provider_rejection'));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(connection.state()).toBe('closed');
+    expect(handle.endSession).toHaveBeenCalledTimes(1);
+    expect(handle.dispose).toHaveBeenCalledTimes(1);
   });
 
   it('fails closed and ends the SDK session when no exact conversation identity is returned', async () => {
@@ -222,49 +325,4 @@ describe('createElevenLabsSdkConnection', () => {
     expect(connection.state()).toBe('closed');
   });
 
-  it('waits for a late-mounted registered handle and aborts without starting when no handle arrives', async () => {
-    const registry = createElevenLabsConversationHandleRegistry();
-    const lateHandle = {
-      startSession: vi.fn(async () => 'late-mounted'),
-      endSession: vi.fn(async () => undefined),
-      getId: vi.fn(() => 'late-mounted'),
-      sendUserMessage: vi.fn(),
-      sendContextualUpdate: vi.fn(),
-      setMicMuted: vi.fn(),
-      readOutboundAudioBytes: vi.fn(async () => null),
-      subscribe: vi.fn(() => () => undefined),
-      dispose: vi.fn(),
-    };
-    const connection = createRegisteredElevenLabsSdkConnection({ createSdkHandleConnection: createTestConnection, registry, mode: 'voice', startConfig: {} });
-    const connecting = connection.connect(new AbortController().signal);
-    expect(lateHandle.startSession).not.toHaveBeenCalled();
-    registry.register('voice', lateHandle);
-    await expect(connecting).resolves.toBeUndefined();
-    expect(lateHandle.startSession).toHaveBeenCalledTimes(1);
-
-    const emptyRegistry = createElevenLabsConversationHandleRegistry();
-    const abortedConnection = createRegisteredElevenLabsSdkConnection({
-      createSdkHandleConnection: createTestConnection,
-      registry: emptyRegistry,
-      mode: 'text',
-      startConfig: {},
-    });
-    const controller = new AbortController();
-    const abortedConnect = abortedConnection.connect(controller.signal);
-    controller.abort();
-    await expect(abortedConnect).rejects.toMatchObject({ name: 'AbortError' });
-  });
-
-  it('cancels an unresolved registry wait when the connection closes before a handle mounts', async () => {
-    const registry = createElevenLabsConversationHandleRegistry();
-    const connection = createRegisteredElevenLabsSdkConnection({ createSdkHandleConnection: createTestConnection, registry, mode: 'voice', startConfig: {} });
-    const connecting = connection.connect(new AbortController().signal);
-
-    await connection.close({ code: 'user_stop' });
-    const settled = Promise.race([
-      connecting,
-      new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error('connection_wait_not_cancelled')), 25)),
-    ]);
-    await expect(settled).rejects.toMatchObject({ name: 'AbortError' });
-  });
 });

@@ -61,6 +61,7 @@ import {
   type SessionHandoffCommitRequest,
   type SessionHandoffPrepareTargetResultGetRequest,
   type SessionHandoffPrepareTargetRequest,
+  type SessionHandoffPrepareTargetResumeRequest,
   type SessionHandoffStatusGetRequest,
   SessionHandoffWorkspaceTransferSchema,
   type SessionHandoffWorkspaceTransfer,
@@ -238,7 +239,7 @@ function buildSessionSpawnNewArgs(
 ): Parameters<ActionExecutorDeps['sessionSpawnNew']>[0] {
   const args: Record<string, unknown> = {};
   assignIfDefined(args, 'tag', readNonEmptyString(data.tag));
-  assignIfDefined(args, 'agentId', selection.agentId ?? readNonEmptyString(data.agentId));
+  assignIfDefined(args, 'agentId', selection.agentId ?? undefined);
   assignIfDefined(args, 'modelId', readNonEmptyString(data.modelId));
   assignIfDefined(args, 'providerConnectionId', data.providerConnectionId === null
     ? null
@@ -269,6 +270,8 @@ function buildSessionSpawnNewArgs(
   assignIfDefined(args, 'windowsRemoteSessionConsole', data.windowsRemoteSessionConsole);
   assignIfDefined(args, 'windowsTerminalWindowName', readNonEmptyString(data.windowsTerminalWindowName));
   assignIfDefined(args, 'runtimeDescriptorV1', data.runtimeDescriptorV1);
+  assignIfDefined(args, 'actionRequestId', ctx.actionRequestId ?? undefined);
+  assignIfDefined(args, 'resumeActionRequest', ctx.resumeActionRequest === true ? true : undefined);
   if (ctx.surface === 'agent') {
     assignIfDefined(args, 'callerSurface', 'agent');
     assignIfDefined(args, 'callerPermissionMode', ctx.callerPermissionMode ?? null);
@@ -528,11 +531,15 @@ function normalizeResolvedOptions(value: unknown): readonly Readonly<{ value: st
 function resolveExecutionBackendTargetSelectionForValue(value: string): ActionBackendTargetSelection | null {
   const normalizedValue = normalizeId(value);
   if (!normalizedValue) return null;
-  const candidateKey =
-    BackendTargetKeySchema.safeParse(normalizedValue).success || BackendTargetKeyV2Schema.safeParse(normalizedValue).success
-      ? normalizedValue
-      : buildBackendTargetKey({ kind: 'builtInAgent', agentId: normalizedValue });
-  const resolved = resolveActionBackendTargetSelection({ backendTargetKey: candidateKey });
+  const isExplicitTargetKey = BackendTargetKeySchema.safeParse(normalizedValue).success
+    || BackendTargetKeyV2Schema.safeParse(normalizedValue).success;
+  const candidateKey = isExplicitTargetKey
+    ? normalizedValue
+    : buildBackendTargetKey({ kind: 'builtInAgent', agentId: normalizedValue });
+  const resolved = resolveActionBackendTargetSelection({
+    backendTargetKey: candidateKey,
+    ...(!isExplicitTargetKey ? { agentId: normalizedValue } : {}),
+  });
   return resolved.ok ? resolved.selection : null;
 }
 
@@ -864,8 +871,15 @@ function resolveApprovalRequestExecutionSurface(createdBySurface: ApprovalReques
   return null;
 }
 
-function normalizeActionExecutorThrownError(error: unknown): Readonly<{ errorCode: string; error: string }> {
+function normalizeActionExecutorThrownError(error: unknown): Readonly<{ errorCode: string; error: string; details?: unknown }> {
   const errorRecord = readRecord(error);
+  const rawDetails = errorRecord.details;
+  const details = rawDetails && typeof rawDetails === 'object'
+    && Object.hasOwn(rawDetails, 'spawnResponse')
+    && typeof (rawDetails as { spawnNonce?: unknown }).spawnNonce === 'string'
+    && (rawDetails as { spawnNonce: string }).spawnNonce.trim().length > 0
+    ? { spawnNonce: (rawDetails as { spawnNonce: string }).spawnNonce.trim(), accepted: true as const }
+    : undefined;
   const rawCodes = [errorRecord.code, errorRecord.errorCode]
     .map((value) => (typeof value === 'string' ? String(value).trim() : ''))
     .filter((value) => value.length > 0);
@@ -888,15 +902,27 @@ function normalizeActionExecutorThrownError(error: unknown): Readonly<{ errorCod
               : '';
 
   if (protocolCode) {
-    return { errorCode: protocolCode, error: message || protocolCode };
+    return {
+      errorCode: protocolCode,
+      error: message || protocolCode,
+      ...(details !== undefined ? { details } : {}),
+    };
   }
 
   // Common network failures from axios/node.
   if (rawCode && ['ECONNREFUSED', 'ECONNRESET', 'ENOTFOUND', 'EAI_AGAIN', 'ETIMEDOUT'].includes(rawCode)) {
-    return { errorCode: 'server_unreachable', error: message || 'server_unreachable' };
+    return {
+      errorCode: 'server_unreachable',
+      error: message || 'server_unreachable',
+      ...(details !== undefined ? { details } : {}),
+    };
   }
 
-  return { errorCode: 'action_failed', error: message || 'action_failed' };
+  return {
+    errorCode: 'action_failed',
+    error: message || 'action_failed',
+    ...(details !== undefined ? { details } : {}),
+  };
 }
 
 function readFailureEnvelopeDetails(record: Readonly<Record<string, unknown>>): unknown | undefined {
@@ -1210,6 +1236,7 @@ const execute = async (actionId: ActionId, input: unknown, context?: ActionExecu
           actionId: reviewCommentActionId.data,
           input: parsed.data,
           ...(serverId ? { serverId } : {}),
+          ...(ctx.reviewCommentPrincipal ? { reviewCommentPrincipal: ctx.reviewCommentPrincipal } : {}),
         });
         const failure = readActionFailureEnvelope(result);
         return failure ?? { ok: true, result };
@@ -1253,6 +1280,13 @@ const execute = async (actionId: ActionId, input: unknown, context?: ActionExecu
 
         const reviewInput = parsed.data as ReviewStartInput;
         const engineIds = reviewInput.engineIds;
+        if (reviewInput.profileId && engineIds.length !== 1) {
+          return {
+            ok: false,
+            errorCode: 'execution_run_profile_requires_single_engine',
+            error: 'execution_run_profile_requires_single_engine',
+          };
+        }
         const instructions = reviewInput.instructions.trim();
         const permissionDecision = resolveAgentPermission(ctx, reviewInput.permissionMode, [
           'read_only',
@@ -1334,6 +1368,12 @@ const execute = async (actionId: ActionId, input: unknown, context?: ActionExecu
                 runClass: 'bounded',
                 // Reviews should stream sidechain progress (and tool traffic) into the parent session.
                 ioMode: 'streaming',
+                ...(reviewInput.profileId && reviewInput.profileGenerationId
+                  ? {
+                      profileId: reviewInput.profileId,
+                      profileGenerationId: reviewInput.profileGenerationId,
+                    }
+                  : {}),
                 intentInput: { ...intentInputBase, engineId },
               },
               opts,
@@ -1353,6 +1393,13 @@ const execute = async (actionId: ActionId, input: unknown, context?: ActionExecu
         const backendTargetKeys: readonly string[] = Array.isArray(data.backendTargetKeys)
           ? data.backendTargetKeys
           : [];
+        if (data.profileId && backendTargetKeys.length !== 1) {
+          return {
+            ok: false,
+            errorCode: 'execution_run_profile_requires_single_engine',
+            error: 'execution_run_profile_requires_single_engine',
+          };
+        }
         const instructions = String(data.instructions ?? '').trim();
         const intent: 'plan' | 'delegate' | 'voice_agent' =
           actionId === 'subagents.plan.start' ? 'plan' : actionId === 'subagents.delegate.start' ? 'delegate' : 'voice_agent';
@@ -1419,6 +1466,12 @@ const execute = async (actionId: ActionId, input: unknown, context?: ActionExecu
                   retentionPolicy: data.retentionPolicy ?? 'ephemeral',
                   runClass: data.runClass ?? 'bounded',
                   ioMode: data.ioMode ?? 'request_response',
+                  ...(typeof data.profileId === 'string' && typeof data.profileGenerationId === 'string'
+                    ? {
+                        profileId: data.profileId,
+                        profileGenerationId: data.profileGenerationId,
+                      }
+                    : {}),
                   ...(runOptions.options.modelId ? { modelId: runOptions.options.modelId } : {}),
                   ...(runOptions.options.sessionConfigOptionOverrides
                     ? { sessionConfigOptionOverrides: runOptions.options.sessionConfigOptionOverrides }
@@ -1913,6 +1966,14 @@ const execute = async (actionId: ActionId, input: unknown, context?: ActionExecu
           return completeActionResult(res);
         }
 
+        if (actionId === 'session.handoff.prepare_target.resume') {
+          if (!deps.sessionHandoffPrepareTargetResume) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.handoff.prepare_target.resume' };
+          }
+          const res = await deps.sessionHandoffPrepareTargetResume(parsed.data as SessionHandoffPrepareTargetResumeRequest);
+          return completeActionResult(res);
+        }
+
         if (actionId === 'session.handoff.prepare_target_result.get') {
           if (!deps.sessionHandoffPrepareTargetResultGet) {
             return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.handoff.prepare_target_result.get' };
@@ -1950,6 +2011,8 @@ const execute = async (actionId: ActionId, input: unknown, context?: ActionExecu
           const resolvedSelection = resolveActionBackendTargetSelection({
             agentId: readNonEmptyString(spawnInput.agentId),
             backendTargetKey: readNonEmptyString(spawnInput.backendTargetKey),
+            backendTarget: spawnInput.backendTarget as Parameters<typeof resolveActionBackendTargetSelection>[0]['backendTarget'],
+            runtimeDescriptorV1: spawnInput.runtimeDescriptorV1 as Parameters<typeof resolveActionBackendTargetSelection>[0]['runtimeDescriptorV1'],
           });
           if (!resolvedSelection.ok) {
             return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
@@ -2215,6 +2278,26 @@ const execute = async (actionId: ActionId, input: unknown, context?: ActionExecu
           return completeActionResult(res);
         }
 
+        if (actionId === 'session.pendingInput.interruptAndRun') {
+          const sessionId = normalizeId(data.sessionId);
+          const localId = normalizeId(data.localId);
+          if (!sessionId || !localId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          if (!deps.sessionPendingInputInterruptAndRun) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.pendingInput.interruptAndRun' };
+          }
+          const expectedStateAtMs = typeof data.expectedStateAtMs === 'number'
+            ? data.expectedStateAtMs
+            : undefined;
+          const serverId = resolveServerIdForSession(deps, ctx, sessionId);
+          const res = await deps.sessionPendingInputInterruptAndRun({
+            sessionId,
+            localId,
+            ...(expectedStateAtMs !== undefined ? { expectedStateAtMs } : {}),
+            ...(serverId ? { serverId } : {}),
+          });
+          return completeActionResult(res);
+        }
+
         if (actionId === 'session.permission_mode.set') {
           const sessionId = normalizeId(data.sessionId);
           if (!sessionId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
@@ -2380,12 +2463,20 @@ const execute = async (actionId: ActionId, input: unknown, context?: ActionExecu
           }
           const serverId = resolveServerIdForSession(deps, ctx, sessionId);
           const issueFingerprint = data.issueFingerprint;
+          const armedAtMs = typeof data.armedAtMs === 'number' && Number.isFinite(data.armedAtMs)
+            ? Math.trunc(data.armedAtMs)
+            : undefined;
+          const runtimeAuthRecoveryAttemptId = typeof data.runtimeAuthRecoveryAttemptId === 'string'
+            ? data.runtimeAuthRecoveryAttemptId.trim()
+            : '';
           const res = await deps.sessionUsageLimitWaitResumeCancel({
             sessionId,
             ...(Object.prototype.hasOwnProperty.call(data, 'issueFingerprint')
               && (typeof issueFingerprint === 'string' || issueFingerprint === null)
               ? { issueFingerprint }
               : {}),
+            ...(armedAtMs !== undefined ? { armedAtMs } : {}),
+            ...(runtimeAuthRecoveryAttemptId.length > 0 ? { runtimeAuthRecoveryAttemptId } : {}),
             ...(serverId ? { serverId } : {}),
           });
           return completeActionResult(res);
@@ -2602,7 +2693,11 @@ const execute = async (actionId: ActionId, input: unknown, context?: ActionExecu
               const answer = readRecord(entry);
               return {
                 question: String(answer.question ?? ''),
-                answer: String(answer.answer ?? ''),
+                values: Array.isArray(answer.values)
+                  ? answer.values.map((value) => String(value))
+                  : typeof answer.answer === 'string'
+                    ? [answer.answer]
+                    : [],
               };
             }) : [],
             ...(readUserActionDecision(data.decision) ? { decision: readUserActionDecision(data.decision) } : {}),
@@ -3079,7 +3174,12 @@ const execute = async (actionId: ActionId, input: unknown, context?: ActionExecu
       return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
     } catch (error) {
       const normalized = normalizeActionExecutorThrownError(error);
-      return { ok: false, errorCode: normalized.errorCode, error: normalized.error };
+      return {
+        ok: false,
+        errorCode: normalized.errorCode,
+        error: normalized.error,
+        ...(normalized.details !== undefined ? { details: normalized.details } : {}),
+      };
     }
   };
 

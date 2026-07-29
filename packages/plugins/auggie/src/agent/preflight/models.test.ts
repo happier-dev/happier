@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ExecRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
+import type { PluginExecService } from '@happier-dev/plugin-sdk/runtime';
 
 import {
   AUGGIE_PREFLIGHT_SESSION_CONTROLS,
@@ -41,24 +41,35 @@ describe('Auggie preflight model probing', () => {
 
   it('probes Auggie models through the provider-owned preflight hook', async () => {
     const launches: unknown[] = [];
-    const exec: Pick<ExecRuntimeServiceV1, 'run'> = {
+    const executable = { kind: 'systemTool' as const, id: 'auggie-cli' };
+    const exec = {
+      systemTools: {
+        resolve: async () => ({ executable, executablePath: '/managed/auggie' }),
+      },
       run: async (launch) => {
         launches.push(launch);
         return {
-          exitCode: 0,
-          signal: null,
-          stdout: JSON.stringify({
+          termination: {
+            observed: { kind: 'exit' as const, exitCode: 0 },
+            requestedBy: { kind: 'none' as const },
+          },
+          stdout: new TextEncoder().encode(JSON.stringify({
             models: [
               { displayName: 'Prism', shortName: 'prism-a' },
             ],
-          }),
-          stderr: '',
+          })),
+          stderr: new Uint8Array(),
+          stdoutTruncated: false,
+          stderrTruncated: false,
         };
       },
-    };
+      spawn: async () => { throw new Error('spawn should not be used'); },
+      clients: { spawn: async () => { throw new Error('protocol clients should not be used'); } },
+      agentCli: { checkReadiness: async () => { throw new Error('agent CLI readiness should not be used'); } },
+    } satisfies PluginExecService;
 
     await expect(AUGGIE_PREFLIGHT_SESSION_CONTROLS.probeModelsRaw?.({
-      exec: exec as ExecRuntimeServiceV1,
+      exec,
       cwd: '/repo',
       timeoutMs: 5000,
       env: { AUGMENT_SESSION_AUTH: 'auth-json' },
@@ -68,11 +79,13 @@ describe('Auggie preflight model probing', () => {
 
     expect(launches).toEqual([
       {
-        kind: 'agent-cli',
-        agentId: 'auggie',
+        executable: { kind: 'systemTool', id: 'auggie-cli' },
         args: ['model', 'list', '--json'],
-        cwd: '/repo',
+        cwd: { root: 'workspace', relativePath: '' },
         env: { AUGMENT_SESSION_AUTH: 'auth-json', CI: '1' },
+        maxStderrBytes: 262_144,
+        maxStdoutBytes: 262_144,
+        timeoutMs: 5_000,
       },
     ]);
   });

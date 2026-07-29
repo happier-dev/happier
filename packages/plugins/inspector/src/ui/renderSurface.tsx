@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import type { PluginUiRenderContext } from '@happier-dev/plugin-sdk/ui';
 
 /**
  * RN-DOGFOOD: the inspector's ONE RN-authored surface, rendered on BOTH web
@@ -15,23 +16,12 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
  * working inspector UI. See `../manifest.ts`'s module doc for the retirement
  * rationale.
  *
- * Host API contract: `context.hostApi` is the SAME `dispatchAction`-shaped
- * object every `reactNative`-mode surface receives (native props injection
- * AND the new `@happier-dev/plugin-sdk/ui/hostApiClient` direct-import
- * carrier — RN-DOGFOOD item 1, LEDGER DEC-7 — both resolve to this identical
- * shape). This file only depends on the minimal duck-typed slice it actually
- * calls, not a host-internal type, per the plugin-authoring package boundary
- * (no `@/` imports, no host chrome).
+ * Generated renderers receive the canonical public Plugin UI render context.
+ * The Inspector declares and uses only `executeAction`; the host owns its wire
+ * adaptation and action-executor routing.
  */
 
-export type InspectorRenderSurfaceHostApi = Readonly<{
-  dispatchAction: (payload: Readonly<{ actionId: string; input?: unknown }>) => Promise<unknown>;
-}>;
-
-export type InspectorRenderSurfaceContext = Readonly<{
-  surface?: Readonly<{ pluginId?: string }>;
-  hostApi?: InspectorRenderSurfaceHostApi;
-}>;
+export type InspectorRenderSurfaceContext = PluginUiRenderContext;
 
 type InspectorPluginDiagnostic = Readonly<{ code?: string; message?: string }>;
 
@@ -93,12 +83,16 @@ function readErrorMessage(error: unknown): string {
   return 'plugin_inspector_request_failed';
 }
 
-export function InspectorSurface({ hostApi }: InspectorRenderSurfaceContext): React.ReactElement {
+export function InspectorSurface({ hostApi, surface }: InspectorRenderSurfaceContext): React.ReactElement {
   const [plugins, setPlugins] = React.useState<readonly InspectorPluginSummary[] | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [reloadingPluginId, setReloadingPluginId] = React.useState<string | null>(null);
   const [lastReload, setLastReload] = React.useState<InspectorReloadSummary | null>(null);
+  const styles = React.useMemo(
+    () => createInspectorStyles(surface),
+    [surface?.colorScheme, surface?.contrast, surface?.direction],
+  );
 
   const refreshPluginList = React.useCallback(async () => {
     if (!hostApi) {
@@ -108,7 +102,7 @@ export function InspectorSurface({ hostApi }: InspectorRenderSurfaceContext): Re
     setLoading(true);
     setError(null);
     try {
-      const result = await hostApi.dispatchAction({ actionId: 'plugins.list' });
+      const result = await hostApi.executeAction('plugins.list', {});
       setPlugins(readPluginsListResult(result));
     } catch (requestError) {
       setError(readErrorMessage(requestError));
@@ -129,16 +123,14 @@ export function InspectorSurface({ hostApi }: InspectorRenderSurfaceContext): Re
     setReloadingPluginId(pluginId ?? '*');
     setError(null);
     try {
-      const result = await hostApi.dispatchAction({
-        actionId: 'plugins.reload',
-        input: pluginId ? { pluginId } : {},
-      });
+      const result = await hostApi.executeAction(
+        'plugins.reload',
+        pluginId ? { pluginId } : {},
+      );
       setLastReload(readReloadResult(result));
-      // Live update: the reload action result already carries the SAME
-      // changed/affected-plugin-id + diagnostics summary the daemon-side
-      // `plugin.reload.after` hook observes (see `../activate.ts`) — refetch
-      // the list rather than adding a second, separately-delivered event
-      // path for the same information.
+      // The reload action result is the canonical completion signal. Refetch
+      // the list from that result instead of adding a second event path for
+      // the same information.
       await refreshPluginList();
     } catch (requestError) {
       setError(readErrorMessage(requestError));
@@ -150,10 +142,13 @@ export function InspectorSurface({ hostApi }: InspectorRenderSurfaceContext): Re
   return (
     <ScrollView testID="inspector-surface" style={styles.container} contentContainerStyle={styles.content}>
       <View style={styles.header}>
-        <Text style={styles.title}>Plugin Inspector</Text>
+        <Text accessibilityRole="header" style={styles.title}>Plugin Inspector</Text>
         <Pressable
           testID="inspector-reload-all"
           disabled={reloadingPluginId !== null}
+          accessibilityRole="button"
+          accessibilityLabel="Reload all plugins"
+          accessibilityState={{ disabled: reloadingPluginId !== null }}
           onPress={() => { void reloadPlugin(undefined); }}
           style={styles.reloadAllButton}
         >
@@ -162,7 +157,11 @@ export function InspectorSurface({ hostApi }: InspectorRenderSurfaceContext): Re
       </View>
 
       {lastReload ? (
-        <View testID="inspector-last-reload" style={styles.reloadSummary}>
+        <View
+          testID="inspector-last-reload"
+          accessibilityLiveRegion="polite"
+          style={styles.reloadSummary}
+        >
           <Text style={styles.reloadSummaryText}>
             {lastReload.ok ? 'Last reload succeeded' : 'Last reload failed'}
             {lastReload.registryStatus ? ` — registry: ${lastReload.registryStatus}` : ''}
@@ -173,8 +172,19 @@ export function InspectorSurface({ hostApi }: InspectorRenderSurfaceContext): Re
         </View>
       ) : null}
 
-      {error ? <Text testID="inspector-error" style={styles.errorText}>{error}</Text> : null}
-      {loading && !plugins ? <Text style={styles.emptyText}>Loading…</Text> : null}
+      {error ? (
+        <Text
+          testID="inspector-error"
+          accessibilityRole="alert"
+          accessibilityLiveRegion="assertive"
+          style={styles.errorText}
+        >
+          {error}
+        </Text>
+      ) : null}
+      {loading && !plugins ? (
+        <Text accessibilityLiveRegion="polite" style={styles.emptyText}>Loading…</Text>
+      ) : null}
       {plugins && plugins.length === 0 && !loading ? <Text style={styles.emptyText}>No plugins installed.</Text> : null}
 
       {(plugins ?? []).map((plugin) => (
@@ -195,6 +205,9 @@ export function InspectorSurface({ hostApi }: InspectorRenderSurfaceContext): Re
           <Pressable
             testID={`inspector-reload-${plugin.pluginId}`}
             disabled={reloadingPluginId !== null}
+            accessibilityRole="button"
+            accessibilityLabel={`Reload ${plugin.title ?? plugin.pluginId}`}
+            accessibilityState={{ disabled: reloadingPluginId !== null }}
             onPress={() => { void reloadPlugin(plugin.pluginId); }}
             style={styles.reloadButton}
           >
@@ -210,83 +223,167 @@ export function renderSurface(context: InspectorRenderSurfaceContext): React.Rea
   return <InspectorSurface {...context} />;
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  content: {
-    padding: 12,
-    gap: 8,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  title: {
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  reloadAllButton: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 6,
-    backgroundColor: '#2563eb',
-  },
-  reloadAllLabel: {
-    color: '#ffffff',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  reloadSummary: {
-    padding: 8,
-    borderRadius: 6,
-    backgroundColor: 'rgba(37, 99, 235, 0.08)',
-  },
-  reloadSummaryText: {
-    fontSize: 12,
-  },
-  errorText: {
-    fontSize: 12,
-    color: '#dc2626',
-  },
-  emptyText: {
-    fontSize: 12,
-    opacity: 0.6,
-  },
-  pluginRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 8,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: 'rgba(0,0,0,0.1)',
-  },
-  pluginInfo: {
-    flex: 1,
-    gap: 2,
-  },
-  pluginTitle: {
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  pluginMeta: {
-    fontSize: 11,
-    opacity: 0.7,
-  },
-  pluginDiagnostics: {
-    fontSize: 11,
-    color: '#dc2626',
-  },
-  reloadButton: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(0,0,0,0.2)',
-  },
-  reloadLabel: {
-    fontSize: 11,
-    fontWeight: '600',
-  },
-});
+function createInspectorStyles(surface: InspectorRenderSurfaceContext['surface'] | undefined) {
+  const dark = surface?.colorScheme === 'dark';
+  const highContrast = surface?.contrast === 'high';
+  const rtl = surface?.direction === 'rtl';
+  const colors = highContrast
+    ? dark
+      ? {
+          background: '#000000',
+          text: '#ffffff',
+          secondaryText: '#ffffff',
+          error: '#ffff00',
+          border: '#ffffff',
+          buttonBackground: '#ffffff',
+          buttonText: '#000000',
+          summaryBackground: '#000000',
+        }
+      : {
+          background: '#ffffff',
+          text: '#000000',
+          secondaryText: '#000000',
+          error: '#b00020',
+          border: '#000000',
+          buttonBackground: '#000000',
+          buttonText: '#ffffff',
+          summaryBackground: '#ffffff',
+        }
+    : dark
+      ? {
+          background: '#111827',
+          text: '#f9fafb',
+          secondaryText: '#d1d5db',
+          error: '#fca5a5',
+          border: '#9ca3af',
+          buttonBackground: '#2563eb',
+          buttonText: '#ffffff',
+          summaryBackground: '#1e3a5f',
+        }
+      : {
+          background: '#ffffff',
+          text: '#111827',
+          secondaryText: '#374151',
+          error: '#b91c1c',
+          border: '#6b7280',
+          buttonBackground: '#2563eb',
+          buttonText: '#ffffff',
+          summaryBackground: '#dbeafe',
+        };
+  const writingDirection = rtl ? 'rtl' as const : 'ltr' as const;
+
+  return StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: colors.background,
+      writingDirection,
+    },
+    content: {
+      padding: 12,
+      gap: 8,
+    },
+    header: {
+      flexDirection: rtl ? 'row-reverse' : 'row',
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 8,
+    },
+    title: {
+      color: colors.text,
+      fontSize: 15,
+      fontWeight: '600',
+      writingDirection,
+    },
+    reloadAllButton: {
+      minHeight: 48,
+      minWidth: 48,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: 6,
+      borderWidth: highContrast ? 2 : 0,
+      borderColor: colors.border,
+      backgroundColor: colors.buttonBackground,
+    },
+    reloadAllLabel: {
+      color: colors.buttonText,
+      fontSize: 12,
+      fontWeight: '600',
+      writingDirection,
+    },
+    reloadSummary: {
+      padding: 8,
+      borderRadius: 6,
+      borderWidth: highContrast ? 2 : 0,
+      borderColor: colors.border,
+      backgroundColor: colors.summaryBackground,
+    },
+    reloadSummaryText: {
+      color: colors.text,
+      fontSize: 12,
+      writingDirection,
+    },
+    errorText: {
+      fontSize: 12,
+      color: colors.error,
+      writingDirection,
+    },
+    emptyText: {
+      fontSize: 12,
+      color: colors.secondaryText,
+      writingDirection,
+    },
+    pluginRow: {
+      flexDirection: rtl ? 'row-reverse' : 'row',
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 8,
+      paddingVertical: 8,
+      borderBottomWidth: highContrast ? 2 : StyleSheet.hairlineWidth,
+      borderBottomColor: colors.border,
+    },
+    pluginInfo: {
+      flex: 1,
+      flexShrink: 1,
+      minWidth: 160,
+      gap: 2,
+    },
+    pluginTitle: {
+      color: colors.text,
+      fontSize: 13,
+      fontWeight: '600',
+      writingDirection,
+    },
+    pluginMeta: {
+      color: colors.secondaryText,
+      fontSize: 11,
+      writingDirection,
+    },
+    pluginDiagnostics: {
+      fontSize: 11,
+      color: colors.error,
+      writingDirection,
+    },
+    reloadButton: {
+      minHeight: 48,
+      minWidth: 48,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: 6,
+      borderWidth: highContrast ? 2 : StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      backgroundColor: colors.background,
+    },
+    reloadLabel: {
+      color: colors.text,
+      fontSize: 11,
+      fontWeight: '600',
+      writingDirection,
+    },
+  });
+}

@@ -36,6 +36,18 @@ describe('Codex provider-binding runtime config', () => {
       modelProvider: 'ollama',
       config: {},
     })).toEqual({ v: 1, modelProvider: 'ollama', config: {} });
+    expect(CodexProviderBindingEngineConfigV1Schema.safeParse({
+      ...custom,
+      config: {
+        ...custom.config,
+        model_reasoning_effort: 'none',
+      },
+    }).success).toBe(true);
+    expect(CodexProviderBindingEngineConfigV1Schema.safeParse({
+      v: 1,
+      modelProvider: 'ollama',
+      config: { model_reasoning_effort: 'none' },
+    }).success).toBe(true);
   });
 
   it('rejects unknown fields, mutable auth toggles, and mismatched config keys', () => {
@@ -58,6 +70,20 @@ describe('Codex provider-binding runtime config', () => {
     expect(CodexProviderBindingEngineConfigV1Schema.safeParse({
       ...custom,
       websocketMode: true,
+    }).success).toBe(false);
+    expect(CodexProviderBindingEngineConfigV1Schema.safeParse({
+      ...custom,
+      config: {
+        ...custom.config,
+        model_reasoning_effort: 'high',
+      },
+    }).success).toBe(false);
+    expect(CodexProviderBindingEngineConfigV1Schema.safeParse({
+      ...custom,
+      config: {
+        ...custom.config,
+        unrelated: 'none',
+      },
     }).success).toBe(false);
   });
 

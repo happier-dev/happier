@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -7,24 +7,28 @@ import { describe, expect, it, vi } from 'vitest';
 import { buildConnectedServiceCredentialRecord } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
 
 import { formatPiSessionDirectoryForCwd } from '../sessionFiles.js';
+import { PI_DIRECT_AUTH_ENV_KEYS } from '../launchEnvironment.js';
 import {
-  PI_BROKER_DAEMON_STATE_PATH_ENV,
-  PI_BROKER_EXTENSION_VERSION,
-  PI_BROKER_EXTENSION_VERSION_ENV,
-  PI_BROKER_REFRESH_TOKEN_PATH_ENV,
-  PI_BROKER_SELECTIONS_ENV,
-  PI_BROKER_SELECTION_IDENTITY_ENV,
-  resolvePiBrokerExtensionPath,
-} from '../auth/services/broker/index.js';
-import { PI_AGENT_RUNTIME_CONTRIBUTION } from './runtime.js';
+  PI_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
+  PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
+  PI_REQUEST_AUTH_CAPABILITY_PATH_ENV,
+  resolvePiRequestAuthExtensionPath,
+} from '../auth/services/requestAuth/index.js';
+import {
+  PI_AGENT_RUNTIME_CONTRIBUTION,
+  PI_AUTH_ENV_KEYS_TO_NEUTRALIZE,
+} from './runtime.js';
 
 const DAEMON_CONTROL_TOKEN = 'pi-daemon-master-control-token-MUST-NOT-LEAK';
-const DAEMON_STATE_FILE_PATH = '/tmp/happier-pi-broker-daemon.state.json';
+const DAEMON_STATE_FILE_PATH = '/tmp/happier-pi-request-auth-daemon.state.json';
+const REQUEST_AUTH_CAPABILITY_PATH = '/tmp/happier-pi-request-auth-capability.json';
+const RETIRED_PI_BROKER_ENV_KEYS = PI_AUTH_ENV_KEYS_TO_NEUTRALIZE.filter(
+  (key) => key !== PI_REQUEST_AUTH_CAPABILITY_PATH_ENV,
+);
 
 /**
- * No-leak guard: the provider's single-use OAuth refresh token must NEVER appear in the materialized
- * auth, broker extension, or emitted env. The daemon is the sole refresher; Pi only holds a non-secret
- * broker marker plus the current short-lived access token for synchronous first-turn getApiKey calls.
+ * No-leak guard: provider credentials must never enter Pi's materialized home, extension, or env.
+ * The generated extension receives only a private request-auth capability path and exact purposes.
  */
 async function expectNoProviderRefreshTokenLeak(params: Readonly<{
   agentDir: string;
@@ -32,7 +36,7 @@ async function expectNoProviderRefreshTokenLeak(params: Readonly<{
   env: Readonly<Record<string, string>>;
   sentinels: readonly string[];
 }>): Promise<void> {
-  const extensionSource = await readFile(resolvePiBrokerExtensionPath(params.agentDir), 'utf8').catch(() => '');
+  const extensionSource = await readFile(resolvePiRequestAuthExtensionPath(params.agentDir), 'utf8').catch(() => '');
   for (const sentinel of params.sentinels) {
     expect(params.authJson).not.toContain(sentinel);
     expect(extensionSource).not.toContain(sentinel);
@@ -42,11 +46,44 @@ async function expectNoProviderRefreshTokenLeak(params: Readonly<{
   }
 }
 
-type RuntimeControlReachabilityCall = Readonly<Record<string, unknown>>;
-
-function readRuntimeConnectedServices() {
-  return PI_AGENT_RUNTIME_CONTRIBUTION.runtimeControl?.connectedServices;
-}
+const PI_REQUEST_AUTH_PURPOSES = Object.freeze({
+  anthropic: {
+    consumer: { pluginId: 'happier.agent.pi', localId: 'pi' },
+    purpose: PI_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
+  },
+  'openai-codex': {
+    consumer: { pluginId: 'happier.agent.pi', localId: 'pi' },
+    purpose: PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
+  },
+});
+const PI_REQUEST_AUTH_BINDINGS = Object.freeze({
+  anthropic: Object.freeze({
+    purpose: PI_REQUEST_AUTH_PURPOSES.anthropic,
+    target: Object.freeze({
+      kind: 'account' as const,
+      account: Object.freeze({
+        service: Object.freeze({
+          pluginId: 'happier.agent.claude',
+          localId: 'claude-subscription',
+        }),
+        accountId: 'claude-oauth',
+      }),
+    }),
+  }),
+  'openai-codex': Object.freeze({
+    purpose: PI_REQUEST_AUTH_PURPOSES['openai-codex'],
+    target: Object.freeze({
+      kind: 'account' as const,
+      account: Object.freeze({
+        service: Object.freeze({
+          pluginId: 'happier.agent.codex',
+          localId: 'openai-codex',
+        }),
+        accountId: 'codex-pro',
+      }),
+    }),
+  }),
+});
 
 function readConnectedServicesContribution() {
   return (PI_AGENT_RUNTIME_CONTRIBUTION as {
@@ -60,11 +97,50 @@ function readConnectedServicesContribution() {
       stateSharingDescriptor?: unknown;
       recoveryCapabilities?: unknown;
       usageLimitRecovery?: unknown;
+      runtimeAuthAdapter?: unknown;
+      shouldRestartForServiceSwitch?: (serviceId: unknown) => boolean;
+      sameAuthGroupRequiresResumeReachability?: boolean;
+      connectedSwitchSharedStateRequiredReason?: string;
+      nativeSwitchSharedStateRequiredReason?: string;
+      verifyResumeReachable?: (input: Readonly<Record<string, unknown>>) => Promise<unknown>;
+      resolveCandidatePersistedSessionFile?: (input: Readonly<{ metadata: unknown }>) => string | null;
     };
   }).connectedServices;
 }
 
 describe('PI_AGENT_RUNTIME_CONTRIBUTION connected-service materialization', () => {
+  it('pins the exact obsolete/inactive Pi auth environment census', () => {
+    expect(PI_AUTH_ENV_KEYS_TO_NEUTRALIZE).toEqual([
+      'HAPPIER_PI_BROKER_SELECTIONS',
+      'HAPPIER_PI_BROKER_DAEMON_STATE_PATH',
+      'HAPPIER_PI_BROKER_STATE_PATH',
+      'HAPPIER_PI_BROKER_EXTENSION_VERSION',
+      'HAPPIER_PI_CONNECTED_SERVICE_SELECTION_IDENTITY',
+      'HAPPIER_PI_BROKER_LOAD_NONCE',
+      'HAPPIER_CONNECTED_SERVICE_BROKER_REFRESH_TOKEN_PATH',
+      'HAPPIER_CONNECTED_SERVICE_BROKER_REFRESH_TOKEN',
+      'HAPPIER_CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH',
+    ]);
+  });
+
+  it('declares exact request-auth materialization for every request-time purpose', () => {
+    expect(PI_AGENT_RUNTIME_CONTRIBUTION.connectedServices.requestAuthUses).toEqual([{
+      purpose: 'anthropic-model-request',
+      materialization: {
+        kind: 'httpHeaders',
+        origin: 'https://api.anthropic.com',
+        headerNames: ['authorization'],
+      },
+    }, {
+      purpose: 'openai-codex-model-request',
+      materialization: {
+        kind: 'httpHeaders',
+        origin: 'https://chatgpt.com',
+        headerNames: ['authorization', 'chatgpt-account-id'],
+      },
+    }]);
+  });
+
   it('declares the Pi CLI catalog residuals handled through projection', () => {
     expect(PI_AGENT_RUNTIME_CONTRIBUTION).toMatchObject({
       builtInAcpCatalog: true,
@@ -76,7 +152,7 @@ describe('PI_AGENT_RUNTIME_CONTRIBUTION connected-service materialization', () =
     });
   });
 
-  it('declares Pi connected-service ids and restart/rematerialize recovery capabilities', () => {
+  it('declares Pi connected-service ids and request-time auth application capabilities', () => {
     const connectedServices = readConnectedServicesContribution();
 
     expect(connectedServices?.serviceIds).toEqual([
@@ -97,6 +173,7 @@ describe('PI_AGENT_RUNTIME_CONTRIBUTION connected-service materialization', () =
     });
     expect(connectedServices?.recoveryCapabilities).toEqual({
       predictiveSoftSwitch: { mode: 'unsupported' },
+      generationApplicationScope: 'request_time_auth',
     });
     expect(connectedServices?.usageLimitRecovery).toMatchObject({
       agentId: 'pi',
@@ -142,7 +219,117 @@ describe('PI_AGENT_RUNTIME_CONTRIBUTION connected-service materialization', () =
     }
   });
 
-  it('brokers Claude subscription OAuth (NO refresh-token leak: marker cred + daemon-brokered access)', async () => {
+  it('retires competing broker/request-auth assets and neutralizes legacy env across an auth switch', async () => {
+    const connectedServices = readConnectedServicesContribution();
+    const root = await mkdtemp(join(tmpdir(), 'happier-pi-contribution-request-auth-upgrade-'));
+    const agentDir = join(root, 'pi-agent-dir');
+    const extensionsDir = join(agentDir, 'extensions');
+    const legacyBrokerDir = join(root, 'broker');
+    const currentRequestAuthDir = join(root, 'request-auth');
+    const legacyBrokerCapabilityPath = join(legacyBrokerDir, 'capability.json');
+    const currentRequestAuthCapabilityPath = join(
+      currentRequestAuthDir,
+      'capability.json',
+    );
+    const legacyEnv = Object.fromEntries(
+      PI_AUTH_ENV_KEYS_TO_NEUTRALIZE.map((key) => [key, `legacy-${key}`]),
+    );
+
+    try {
+      await Promise.all([
+        mkdir(extensionsDir, { recursive: true }),
+        mkdir(legacyBrokerDir, { recursive: true }),
+        mkdir(currentRequestAuthDir, { recursive: true }),
+      ]);
+      await Promise.all([
+        writeFile(join(extensionsDir, 'happier-pi-broker-1.js'), 'legacy broker\n'),
+        writeFile(join(extensionsDir, 'happier-pi-request-auth-1.js'), 'superseded request auth\n'),
+        writeFile(join(extensionsDir, 'unrelated-extension.js'), 'unrelated\n'),
+        writeFile(legacyBrokerCapabilityPath, 'retired secret\n'),
+        writeFile(currentRequestAuthCapabilityPath, 'current strict V2\n'),
+      ]);
+
+      const requestAuthMaterialized = await connectedServices?.materializeAuthEnvironment?.({
+        rootDir: root,
+        processEnv: legacyEnv,
+        requestAuth: {
+          purposeBindings: [PI_REQUEST_AUTH_BINDINGS.anthropic],
+          capabilityPath: currentRequestAuthCapabilityPath,
+        },
+      });
+      const expectedRequestAuthExtensions = [
+        'happier-pi-request-auth-2.js',
+        'unrelated-extension.js',
+      ];
+
+      expect((await readdir(extensionsDir)).sort()).toEqual(expectedRequestAuthExtensions);
+      expect(Object.fromEntries(
+        RETIRED_PI_BROKER_ENV_KEYS.map((key) => [key, requestAuthMaterialized?.env[key]]),
+      )).toEqual(Object.fromEntries(
+        RETIRED_PI_BROKER_ENV_KEYS.map((key) => [key, '']),
+      ));
+      expect(requestAuthMaterialized?.env[PI_REQUEST_AUTH_CAPABILITY_PATH_ENV])
+        .toBe(currentRequestAuthCapabilityPath);
+      await expect(readFile(resolvePiRequestAuthExtensionPath(agentDir), 'utf8'))
+        .resolves.toContain('registerProvider');
+      await expect(lstat(legacyBrokerDir)).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(readFile(currentRequestAuthCapabilityPath, 'utf8'))
+        .resolves.toBe('current strict V2\n');
+
+      await mkdir(legacyBrokerDir, { recursive: true });
+      await Promise.all([
+        writeFile(join(extensionsDir, 'happier-pi-broker-1.js'), 'legacy broker again\n'),
+        writeFile(join(extensionsDir, 'happier-pi-request-auth-0.js'), 'older request auth\n'),
+        writeFile(legacyBrokerCapabilityPath, 'retired secret again\n'),
+      ]);
+      const directRecord = buildConnectedServiceCredentialRecord({
+        now: 1,
+        serviceId: 'anthropic',
+        profileId: 'direct',
+        kind: 'token',
+        token: {
+          token: 'sk-ant-direct',
+          providerAccountId: null,
+          providerEmail: null,
+        },
+      });
+      const directInput = connectedServices?.createAuthMaterializationInput?.(
+        'anthropic',
+        directRecord,
+      );
+      const directMaterialized = await connectedServices?.materializeAuthEnvironment?.({
+        rootDir: root,
+        processEnv: legacyEnv,
+        ...(directInput ?? {}),
+      });
+
+      expect((await readdir(extensionsDir)).sort()).toEqual([
+        'unrelated-extension.js',
+      ]);
+      await expect(readFile(resolvePiRequestAuthExtensionPath(agentDir), 'utf8'))
+        .rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(readFile(join(agentDir, 'auth.json'), 'utf8')).resolves.toBe(
+        JSON.stringify({
+          anthropic: {
+            type: 'api_key',
+            key: 'sk-ant-direct',
+          },
+        }, null, 2) + '\n',
+      );
+      expect(Object.fromEntries(
+        PI_AUTH_ENV_KEYS_TO_NEUTRALIZE.map((key) => [key, directMaterialized?.env[key]]),
+      )).toEqual(Object.fromEntries(
+        PI_AUTH_ENV_KEYS_TO_NEUTRALIZE.map((key) => [key, '']),
+      ));
+      await expect(lstat(legacyBrokerDir)).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(readFile(currentRequestAuthCapabilityPath, 'utf8'))
+        .resolves.toBe('current strict V2\n');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('materializes Claude subscription OAuth as request-auth-only provider registration', async () => {
     const connectedServices = readConnectedServicesContribution();
     const root = await mkdtemp(join(tmpdir(), 'happier-pi-contribution-claude-oauth-'));
     const record = buildConnectedServiceCredentialRecord({
@@ -166,68 +353,36 @@ describe('PI_AGENT_RUNTIME_CONTRIBUTION connected-service materialization', () =
       const input = connectedServices?.createAuthMaterializationInput?.('claude-subscription', record);
       const materialized = await connectedServices?.materializeAuthEnvironment?.({
         rootDir: root,
-        materializationId: 'mat-pi-claude',
-        daemonControlToken: DAEMON_CONTROL_TOKEN,
-        daemonStateFilePath: DAEMON_STATE_FILE_PATH,
+        requestAuth: {
+          purposeBindings: [PI_REQUEST_AUTH_BINDINGS.anthropic],
+          capabilityPath: REQUEST_AUTH_CAPABILITY_PATH,
+        },
         ...(input ?? {}),
       });
       const env = materialized?.env ?? {};
 
       expect(env.PI_CODING_AGENT_DIR).toBe(join(root, 'pi-agent-dir'));
       const authJson = await readFile(join(root, 'pi-agent-dir', 'auth.json'), 'utf8');
-      // The auth.json cred carries a NON-secret broker marker as `refresh` (NOT the provider refresh
-      // token), plus the current short-lived access token and real expiry for Pi's synchronous
-      // first-turn getApiKey path. Later refreshes still flow through the marker + daemon bridge.
-      expect(authJson).toBe(
-        JSON.stringify({
-          anthropic: {
-            type: 'oauth',
-            refresh: `happier-pi-broker:anthropic:${PI_BROKER_EXTENSION_VERSION}`,
-            access: 'claude-access-token',
-            expires: 1_700_003_600_000,
-            accountId: 'claude-account',
-          },
-        }, null, 2) + '\n',
-      );
-
-      // The broker extension is written into the agent dir's auto-load `extensions/` dir.
-      await expect(readFile(resolvePiBrokerExtensionPath(join(root, 'pi-agent-dir')), 'utf8'))
+      expect(authJson).toBe('{}\n');
+      await expect(readFile(resolvePiRequestAuthExtensionPath(join(root, 'pi-agent-dir')), 'utf8'))
         .resolves.toContain('registerProvider');
-
-      // Broker env is emitted (selections keyed by the SHARED bridge tag + daemon-state path + version +
-      // selection identity + the SCOPED capability token derived from the daemon master control token).
-      expect(JSON.parse(env[PI_BROKER_SELECTIONS_ENV]!)).toEqual({
-        anthropic: { serviceId: 'claude-subscription', profileId: 'claude-oauth', accountId: 'claude-account', planType: null },
-      });
-      expect(env[PI_BROKER_DAEMON_STATE_PATH_ENV]).toBe(DAEMON_STATE_FILE_PATH);
-      expect(env[PI_BROKER_EXTENSION_VERSION_ENV]).toBe(PI_BROKER_EXTENSION_VERSION);
-      expect(env[PI_BROKER_SELECTION_IDENTITY_ENV]).toMatch(/^happier-broker-selection:v1:sha256:[a-f0-9]{64}$/);
-      // F2: the SCOPED broker-refresh token (NOT the master) is injected for the broker to present.
-      expect(env[PI_BROKER_REFRESH_TOKEN_PATH_ENV]).toBe(join(root, 'broker', 'capability.json'));
-      expect((materialized as { brokerCapability?: unknown } | null | undefined)?.brokerCapability).toMatchObject({
-        path: join(root, 'broker', 'capability.json'),
-        materializationId: 'mat-pi-claude',
-        selectionIdentityDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
-        capabilityDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
-      });
-      expect(JSON.parse(await readFile(join(root, 'broker', 'capability.json'), 'utf8'))).toMatchObject({
-        v: 1,
-        materializationId: 'mat-pi-claude',
-      });
-
-      // No-leak: neither the provider refresh token nor the master control token appear anywhere.
+      expect(env[PI_REQUEST_AUTH_CAPABILITY_PATH_ENV]).toBe(REQUEST_AUTH_CAPABILITY_PATH);
+      expect(Object.fromEntries(PI_DIRECT_AUTH_ENV_KEYS.map((key) => [key, env[key]]))).toEqual(
+        Object.fromEntries(PI_DIRECT_AUTH_ENV_KEYS.map((key) => [key, ''])),
+      );
+      expect(materialized).not.toHaveProperty('brokerCapability');
       await expectNoProviderRefreshTokenLeak({
         agentDir: join(root, 'pi-agent-dir'),
         authJson,
         env,
-        sentinels: ['claude-refresh-token', DAEMON_CONTROL_TOKEN],
+        sentinels: ['claude-access-token', 'claude-refresh-token', DAEMON_CONTROL_TOKEN],
       });
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
 
-  it('brokers OpenAI Codex subscription OAuth (NO refresh-token leak: marker cred + daemon-brokered access)', async () => {
+  it('materializes OpenAI Codex subscription OAuth as request-auth-only provider registration', async () => {
     const connectedServices = readConnectedServicesContribution();
     const root = await mkdtemp(join(tmpdir(), 'happier-pi-contribution-codex-oauth-'));
     const record = buildConnectedServiceCredentialRecord({
@@ -251,44 +406,45 @@ describe('PI_AGENT_RUNTIME_CONTRIBUTION connected-service materialization', () =
       const input = connectedServices?.createAuthMaterializationInput?.('openai-codex', record);
       const materialized = await connectedServices?.materializeAuthEnvironment?.({
         rootDir: root,
-        materializationId: 'mat-pi-codex',
-        daemonControlToken: DAEMON_CONTROL_TOKEN,
-        daemonStateFilePath: DAEMON_STATE_FILE_PATH,
+        requestAuth: {
+          purposeBindings: [PI_REQUEST_AUTH_BINDINGS['openai-codex']],
+          capabilityPath: REQUEST_AUTH_CAPABILITY_PATH,
+        },
         ...(input ?? {}),
       });
       const env = materialized?.env ?? {};
 
       const authJson = await readFile(join(root, 'pi-agent-dir', 'auth.json'), 'utf8');
-      expect(authJson).toBe(
-        JSON.stringify({
-          'openai-codex': {
-            type: 'oauth',
-            refresh: `happier-pi-broker:openai-codex:${PI_BROKER_EXTENSION_VERSION}`,
-            access: 'codex-access-token',
-            expires: 1_700_003_600_000,
-            accountId: 'chatgpt-account',
-          },
-        }, null, 2) + '\n',
-      );
-      expect(JSON.parse(env[PI_BROKER_SELECTIONS_ENV]!)).toEqual({
-        openai: { serviceId: 'openai-codex', profileId: 'codex-pro', accountId: 'chatgpt-account', planType: null },
-      });
-      expect(env[PI_BROKER_SELECTION_IDENTITY_ENV]).toMatch(/^happier-broker-selection:v1:sha256:[a-f0-9]{64}$/);
-      expect(env[PI_BROKER_REFRESH_TOKEN_PATH_ENV]).toBe(join(root, 'broker', 'capability.json'));
+      expect(authJson).toBe('{}\n');
+      expect(env[PI_REQUEST_AUTH_CAPABILITY_PATH_ENV]).toBe(REQUEST_AUTH_CAPABILITY_PATH);
+      await expect(readFile(resolvePiRequestAuthExtensionPath(join(root, 'pi-agent-dir')), 'utf8'))
+        .resolves.toContain('openai-codex-model-request');
       await expectNoProviderRefreshTokenLeak({
         agentDir: join(root, 'pi-agent-dir'),
         authJson,
         env,
-        sentinels: ['codex-refresh-token', DAEMON_CONTROL_TOKEN],
+        sentinels: ['codex-access-token', 'codex-refresh-token', DAEMON_CONTROL_TOKEN],
       });
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
 
-  // R3-6/R4-4 (F3): the broker selection identity is GROUP-scoped WITHOUT generation, so two pools
-  // sharing one active profile mint DISTINCT identities and a generation-only bump does not re-mint.
-  it('scopes the broker selection identity by groupId (no generation) for group-bound services', async () => {
+  it.each([
+    ['request-auth projection', {}],
+    ['the exact declared purpose', {
+      requestAuth: {
+        purposeBindings: [{
+          purpose: {
+            consumer: { pluginId: 'happier.agent.pi', localId: 'pi' },
+            purpose: PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
+          },
+          target: PI_REQUEST_AUTH_BINDINGS.anthropic.target,
+        }],
+        capabilityPath: REQUEST_AUTH_CAPABILITY_PATH,
+      },
+    }],
+  ])('fails closed when OAuth materialization is missing %s', async (_missing, extra) => {
     const connectedServices = readConnectedServicesContribution();
     const record = buildConnectedServiceCredentialRecord({
       now: 1_700_000_000_000,
@@ -307,76 +463,14 @@ describe('PI_AGENT_RUNTIME_CONTRIBUTION connected-service materialization', () =
       },
     });
 
-    const materializeForGroup = async (groupIds: Readonly<Record<string, string>> | null) => {
-      const root = await mkdtemp(join(tmpdir(), 'happier-pi-contribution-group-identity-'));
-      try {
-        const input = connectedServices?.createAuthMaterializationInput?.('claude-subscription', record);
-        const materialized = await connectedServices?.materializeAuthEnvironment?.({
-          rootDir: root,
-          daemonControlToken: DAEMON_CONTROL_TOKEN,
-          daemonStateFilePath: DAEMON_STATE_FILE_PATH,
-          ...(groupIds ? { connectedServiceGroupIdsByServiceId: groupIds } : {}),
-          ...(input ?? {}),
-        });
-        return materialized?.env?.[PI_BROKER_SELECTION_IDENTITY_ENV];
-      } finally {
-        await rm(root, { recursive: true, force: true });
-      }
-    };
-
-    const identityPoolA = await materializeForGroup({ 'claude-subscription': 'pool-A' });
-    const identityPoolB = await materializeForGroup({ 'claude-subscription': 'pool-B' });
-    expect(identityPoolA).toMatch(/^happier-broker-selection:v1:sha256:[a-f0-9]{64}$/);
-    expect(identityPoolB).toMatch(/^happier-broker-selection:v1:sha256:[a-f0-9]{64}$/);
-    expect(identityPoolA).not.toBe(identityPoolB);
-
-    // Profile-only selection remains stable but distinct from either group tuple.
-    const profileOnly = await materializeForGroup(null);
-    expect(profileOnly).toMatch(/^happier-broker-selection:v1:sha256:[a-f0-9]{64}$/);
-    expect(profileOnly).not.toBe(identityPoolA);
-    expect(profileOnly).not.toBe(identityPoolB);
-  });
-
-  it('omits the scoped broker token (fail-closed) when no daemon control token is available', async () => {
-    const connectedServices = readConnectedServicesContribution();
-    const root = await mkdtemp(join(tmpdir(), 'happier-pi-contribution-claude-noctl-'));
-    const record = buildConnectedServiceCredentialRecord({
-      now: 1_700_000_000_000,
-      serviceId: 'claude-subscription',
-      profileId: 'claude-oauth',
-      kind: 'oauth',
-      expiresAt: 1_700_003_600_000,
-      oauth: {
-        accessToken: 'claude-access-token',
-        refreshToken: 'claude-refresh-token',
-        idToken: null,
-        scope: 'user:inference',
-        tokenType: 'Bearer',
-        providerAccountId: 'claude-account',
-        providerEmail: null,
-      },
-    });
-
+    const root = await mkdtemp(join(tmpdir(), 'happier-pi-contribution-request-auth-refusal-'));
     try {
       const input = connectedServices?.createAuthMaterializationInput?.('claude-subscription', record);
-      const materialized = await connectedServices?.materializeAuthEnvironment?.({
-        rootDir: root,
-        // No daemonControlToken supplied.
-        daemonStateFilePath: DAEMON_STATE_FILE_PATH,
-        ...(input ?? {}),
-      });
-      const env = materialized?.env ?? {};
-      // Broker env is still emitted, but the scoped token is omitted (the preflight reports it; the
-      // broker fails closed at request time rather than presenting any token).
-      expect(env[PI_BROKER_SELECTION_IDENTITY_ENV]).toBeDefined();
-      expect(env[PI_BROKER_REFRESH_TOKEN_PATH_ENV]).toBeUndefined();
-      const authJson = await readFile(join(root, 'pi-agent-dir', 'auth.json'), 'utf8');
-      await expectNoProviderRefreshTokenLeak({
-        agentDir: join(root, 'pi-agent-dir'),
-        authJson,
-        env,
-        sentinels: ['claude-refresh-token'],
-      });
+      await expect(connectedServices?.materializeAuthEnvironment?.({
+          rootDir: root,
+          ...extra,
+          ...(input ?? {}),
+      })).rejects.toThrow(/request-auth/i);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -418,12 +512,13 @@ describe('PI_AGENT_RUNTIME_CONTRIBUTION connected-service materialization', () =
   });
 });
 
-describe('PI_AGENT_RUNTIME_CONTRIBUTION connected-service runtime-control hooks', () => {
-  it('exports provider-owned resume reachability through the public runtime-control contribution', async () => {
-    const connectedServices = readRuntimeConnectedServices();
+describe('PI_AGENT_RUNTIME_CONTRIBUTION native connected-service policy', () => {
+  it('exports provider-owned resume reachability without a reflective runtime-control row', async () => {
+    const connectedServices = readConnectedServicesContribution();
     const root = await mkdtemp(join(tmpdir(), 'happier-pi-contribution-reachable-'));
 
     try {
+      expect(PI_AGENT_RUNTIME_CONTRIBUTION).not.toHaveProperty('runtimeControl');
       const piAgentDir = join(root, 'pi-agent-dir');
       const finalDir = join(piAgentDir, 'sessions', formatPiSessionDirectoryForCwd('/tmp/project'));
       const sessionFile = join(finalDir, '2026-05-27T00-00-00-000Z_pi-session-1.jsonl');
@@ -443,7 +538,7 @@ describe('PI_AGENT_RUNTIME_CONTRIBUTION connected-service runtime-control hooks'
   });
 
   it('exports provider-owned persisted session-file metadata resolution', () => {
-    const connectedServices = readRuntimeConnectedServices();
+    const connectedServices = readConnectedServicesContribution();
 
     expect(connectedServices?.resolveCandidatePersistedSessionFile?.({
       metadata: { piSessionFile: ' /tmp/pi-session.jsonl ' },
@@ -453,60 +548,16 @@ describe('PI_AGENT_RUNTIME_CONTRIBUTION connected-service runtime-control hooks'
     })).toBeNull();
   });
 
-  it('exports same-home switch continuity through host-mediated reachability', async () => {
-    const connectedServices = readRuntimeConnectedServices();
-    const verifyMaterializedState = vi.fn(async (_input: RuntimeControlReachabilityCall) => ({
-      ok: true,
-      value: { ok: true },
-    }));
+  it('declares the host-owned generic switch-continuity policy', () => {
+    const connectedServices = readConnectedServicesContribution();
 
-    const binding = {
-      source: 'connected' as const,
-      selection: 'profile' as const,
-      serviceId: 'anthropic',
-      profileId: 'primary',
-      groupId: null,
-    };
-    const params = {
-      sessionId: 'sess_1',
-      providerId: 'pi',
-      serviceId: 'anthropic',
-      previousBinding: binding,
-      nextBinding: binding,
-      connectedServiceMaterializationIdentityV1: {
-        v: 1,
-        id: 'mat_pi_primary',
-        createdAt: 1,
-      },
-      vendorResumeId: 'pi-session-1',
-      targetMaterializedRoot: '/tmp/materialized',
-      targetMaterializedEnv: { PI_CODING_AGENT_DIR: '/tmp/materialized/pi-agent-dir' },
-      cwd: '/tmp/project',
-      candidatePersistedSessionFile: '/tmp/pi-session.jsonl',
-    };
-
-    await expect(connectedServices?.resolveSwitchContinuity?.({
-      runtimeControl: {
-        context: { providerId: 'pi' },
-        reachability: { verifyMaterializedState },
-      } as never,
-      params,
-    })).resolves.toEqual({ mode: 'restart_same_home' });
-    expect(verifyMaterializedState).toHaveBeenCalledWith({
-      agentId: 'pi',
-      serviceId: 'anthropic',
-      targetMaterializedRoot: '/tmp/materialized',
-      targetMaterializedEnv: { PI_CODING_AGENT_DIR: '/tmp/materialized/pi-agent-dir' },
-      requestedStateMode: 'isolated',
-      effectiveStateMode: 'isolated',
-      materializationIdentity: {
-        v: 1,
-        id: 'mat_pi_primary',
-        createdAt: 1,
-      },
-      vendorResumeId: 'pi-session-1',
-      cwd: '/tmp/project',
-      candidatePersistedSessionFile: '/tmp/pi-session.jsonl',
+    expect(connectedServices).toMatchObject({
+      runtimeAuthAdapter: expect.any(Object),
+      sameAuthGroupRequiresResumeReachability: true,
+      connectedSwitchSharedStateRequiredReason: 'pi_exact_connected_service_selection_required',
+      nativeSwitchSharedStateRequiredReason: 'pi_session_state_sharing_required',
     });
+    expect(connectedServices?.shouldRestartForServiceSwitch?.('anthropic')).toBe(true);
+    expect(connectedServices?.shouldRestartForServiceSwitch?.('gemini')).toBe(false);
   });
 });

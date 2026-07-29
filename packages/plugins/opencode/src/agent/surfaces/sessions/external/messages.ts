@@ -1,4 +1,4 @@
-import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/plugin-sdk/sessions';
+import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/plugin-sdk/experimental/sessions';
 
 import {
   mapOpenCodeMessageToTranscriptItem,

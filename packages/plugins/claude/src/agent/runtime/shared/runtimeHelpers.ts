@@ -1,19 +1,49 @@
-import type {
-  CreateSessionRuntimeParamsV1,
-  PluginContextV1,
-  SessionRuntimeActivityPublisher,
-} from '@happier-dev/plugin-sdk';
-import { composeSessionIsolationEnvironment } from '@happier-dev/plugin-sdk/experimental/runtime/session';
+import type { ClaudeRuntimeActivityPublisher } from './runtimeActivityPublisher.js';
+import type { ClaudePermissionContext } from '../../permissions/createClaudePermissionEngine.js';
+import type { ClaudeRuntimeLogger } from '../dependencies.js';
 
 import { isolateClaudeRuntimeAuthEnv } from '../../auth/services/runtime/env.js';
-import { isUnsupportedProviderSessionStatePublication } from '../providerSessionStatePublication.js';
 import {
-  buildClaudeProviderTaskRuntimeActivitySourceId,
   createClaudeProviderActivityLedger,
   isReplayClaudeAgentSdkMessage,
-  isClaudeAgentSdkStopHookWithNoBackgroundTasks,
   readClaudeProviderTaskActivity,
+  type ClaudeProviderTaskActivity,
 } from '../remote/sdk/providerActivity.js';
+
+export function composeClaudeRuntimeEnvironment(params: Readonly<{
+  inheritedEnvironment?: Readonly<Record<string, string | undefined>> | null;
+  isolationEnvironment?: Readonly<Record<string, string>> | null;
+  environment?: Readonly<Record<string, string>> | null;
+  unsetEnvKeys?: readonly string[] | null;
+  platform?: 'win32' | 'posix';
+}>): Record<string, string> {
+  const output: Record<string, string> = {};
+  for (const [key, value] of Object.entries(params.inheritedEnvironment ?? {})) {
+    if (typeof value === 'string') output[key] = value;
+  }
+  const unsetNames = new Set((params.unsetEnvKeys ?? []).map((key) => key.toUpperCase()));
+  for (const key of Object.keys(output)) {
+    if (unsetNames.has(key.toUpperCase())) delete output[key];
+  }
+  const platform = params.platform
+    ?? (process.platform === 'win32' ? 'win32' : 'posix');
+  const apply = (
+    entries: Readonly<Record<string, string>> | null | undefined,
+  ): void => {
+    for (const [key, value] of Object.entries(entries ?? {})) {
+      if (platform === 'win32') {
+        const normalized = key.toUpperCase();
+        for (const existingKey of Object.keys(output)) {
+          if (existingKey.toUpperCase() === normalized) delete output[existingKey];
+        }
+      }
+      output[key] = value;
+    }
+  };
+  apply(params.isolationEnvironment);
+  apply(params.environment);
+  return output;
+}
 
 export function readClaudeRuntimeString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -21,14 +51,24 @@ export function readClaudeRuntimeString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-export function readClaudeRuntimeDirectory(sessionParams: CreateSessionRuntimeParamsV1): string {
+export type ClaudeRuntimeSessionParams = Readonly<{
+  cwd?: string | null;
+  directory?: string | null;
+  env?: Readonly<Record<string, string>> | null;
+  isolation?: Readonly<{
+    env?: Readonly<Record<string, string>> | null;
+    unsetEnvKeys?: readonly string[] | null;
+  }> | null;
+}>;
+
+export function readClaudeRuntimeDirectory(sessionParams: ClaudeRuntimeSessionParams): string {
   return readClaudeRuntimeString(sessionParams.cwd)
     ?? readClaudeRuntimeString(sessionParams.directory)
     ?? process.cwd();
 }
 
-export function readClaudeRuntimeEnv(sessionParams: CreateSessionRuntimeParamsV1): Readonly<Record<string, string>> {
-  const source = composeSessionIsolationEnvironment({
+export function readClaudeRuntimeEnv(sessionParams: ClaudeRuntimeSessionParams): Readonly<Record<string, string>> {
+  const source = composeClaudeRuntimeEnvironment({
     isolationEnvironment: sessionParams.isolation?.env,
     environment: sessionParams.env,
     unsetEnvKeys: sessionParams.isolation?.unsetEnvKeys,
@@ -73,38 +113,8 @@ export function readClaudeRuntimeConfigUltracodeUpdate(
   return undefined;
 }
 
-export function publishClaudeProviderSessionId(params: Readonly<{
-  ctx: PluginContextV1;
-  state: { publishedProviderSessionId: string | null };
-  nextSessionId: string;
-  reason: string;
-  logPrefix: string;
-}>): void {
-  if (params.state.publishedProviderSessionId === params.nextSessionId) return;
-  const previousPublishedSessionId = params.state.publishedProviderSessionId;
-  params.state.publishedProviderSessionId = params.nextSessionId;
-  void params.ctx.sessions.current.writeStateField({
-    fieldId: 'identity.providerSessionId',
-    value: {
-      metadataKey: 'claudeSessionId',
-      value: params.nextSessionId,
-    },
-    reason: params.reason,
-  }).catch((error) => {
-    if (
-      !isUnsupportedProviderSessionStatePublication(error)
-      && params.state.publishedProviderSessionId === params.nextSessionId
-    ) {
-      params.state.publishedProviderSessionId = previousPublishedSessionId;
-    }
-    if (!isUnsupportedProviderSessionStatePublication(error)) {
-      params.ctx.logger.debug(`${params.logPrefix} failed to publish provider session id`, error);
-    }
-  });
-}
-
 export function publishClaudeRuntimeActivityUpdate(params: Readonly<{
-  logger: PluginContextV1['logger'];
+  logger: ClaudeRuntimeLogger;
   logPrefix: string;
   promise: Promise<void>;
   reason: string;
@@ -114,109 +124,54 @@ export function publishClaudeRuntimeActivityUpdate(params: Readonly<{
   });
 }
 
-export function clearClaudeRuntimeActivitySources(params: Readonly<{
-  logger: PluginContextV1['logger'];
+export function publishClaudeProviderTaskInventory(params: Readonly<{
+  logger: ClaudeRuntimeLogger;
   logPrefix: string;
-  runtimeActivityPublisher: SessionRuntimeActivityPublisher;
+  ledger: ReturnType<typeof createClaudeProviderActivityLedger>;
+  runtimeActivityPublisher: ClaudeRuntimeActivityPublisher;
   reason: string;
 }>): void {
   publishClaudeRuntimeActivityUpdate({
     logger: params.logger,
     logPrefix: params.logPrefix,
-    promise: params.runtimeActivityPublisher.clearAllSources(),
+    promise: params.runtimeActivityPublisher.publish(params.ledger.getSnapshot()),
     reason: params.reason,
   });
 }
 
 export function observeClaudeProviderTaskActivity(params: Readonly<{
   row: unknown;
+  providerSessionId?: string;
   ledger: ReturnType<typeof createClaudeProviderActivityLedger>;
-  runtimeActivityPublisher: SessionRuntimeActivityPublisher;
-  logger: PluginContextV1['logger'];
+  runtimeActivityPublisher: ClaudeRuntimeActivityPublisher;
+  logger: ClaudeRuntimeLogger;
   logPrefix: string;
-  onLiveProviderTaskEvidence?: (taskId: string, sourceId: string) => void;
-  onProviderTaskSourceActive?: (sourceId: string) => void;
-  onProviderTaskSourceCleared?: (sourceId: string) => void;
 }>): boolean {
   if (isReplayClaudeAgentSdkMessage(params.row)) return false;
-
-  if (isClaudeAgentSdkStopHookWithNoBackgroundTasks(params.row)) {
-    const hadActiveTasks = params.ledger.hasActiveProviderTasks();
-    params.ledger.clearProviderTasks();
-    if (hadActiveTasks) {
-      clearClaudeRuntimeActivitySources({
-        logger: params.logger,
-        logPrefix: params.logPrefix,
-        runtimeActivityPublisher: params.runtimeActivityPublisher,
-        reason: 'stop-hook-empty-background-tasks',
-      });
-    }
-    return hadActiveTasks;
-  }
-
-  const activity = readClaudeProviderTaskActivity(params.row);
+  const activity = readClaudeProviderTaskActivity(params.row, params.providerSessionId);
   if (!activity) return false;
-  const sourceId = buildClaudeProviderTaskRuntimeActivitySourceId(activity.taskId);
-  if (!sourceId) return false;
-  const sourceKind = 'provider_detached_task';
-  switch (activity.type) {
-    case 'background':
-      {
-        const taskId = params.ledger.noteBackgroundProviderTask(activity.taskId);
-        if (!taskId) return false;
-        params.onLiveProviderTaskEvidence?.(taskId, sourceId);
-        params.onProviderTaskSourceActive?.(sourceId);
-      }
-      publishClaudeRuntimeActivityUpdate({
-        logger: params.logger,
-        logPrefix: params.logPrefix,
-        promise: params.runtimeActivityPublisher.markSourceActive({ sourceId, sourceKind }),
-        reason: 'background-task',
-      });
-      return true;
-    case 'started':
-      {
-        const taskId = params.ledger.noteProviderTaskStarted(activity.taskId);
-        if (!taskId) return false;
-        params.onLiveProviderTaskEvidence?.(taskId, sourceId);
-        params.onProviderTaskSourceActive?.(sourceId);
-      }
-      publishClaudeRuntimeActivityUpdate({
-        logger: params.logger,
-        logPrefix: params.logPrefix,
-        promise: params.runtimeActivityPublisher.markSourceActive({ sourceId, sourceKind }),
-        reason: 'task-started',
-      });
-      return true;
-    case 'progress':
-      {
-        const taskId = params.ledger.noteProviderTaskProgress(activity.taskId);
-        if (!taskId) return false;
-        params.onLiveProviderTaskEvidence?.(taskId, sourceId);
-        params.onProviderTaskSourceActive?.(sourceId);
-      }
-      publishClaudeRuntimeActivityUpdate({
-        logger: params.logger,
-        logPrefix: params.logPrefix,
-        promise: params.runtimeActivityPublisher.markSourceActive({ sourceId, sourceKind }),
-        reason: 'task-progress',
-      });
-      return true;
-    case 'terminal':
-      if (!params.ledger.noteProviderTaskFinished(activity.taskId)) return false;
-      params.onProviderTaskSourceCleared?.(sourceId);
-      publishClaudeRuntimeActivityUpdate({
-        logger: params.logger,
-        logPrefix: params.logPrefix,
-        promise: params.runtimeActivityPublisher.clearSource(sourceId),
-        reason: 'task-terminal',
-      });
-      return true;
-  }
+  applyClaudeProviderTaskActivity({ ...params, activity });
+  return true;
+}
+
+export function applyClaudeProviderTaskActivity(params: Readonly<{
+  activity: ClaudeProviderTaskActivity;
+  ledger: ReturnType<typeof createClaudeProviderActivityLedger>;
+  runtimeActivityPublisher: ClaudeRuntimeActivityPublisher;
+  logger: ClaudeRuntimeLogger;
+  logPrefix: string;
+}>): void {
+  const activity = params.activity;
+  const didChange = params.ledger.apply(activity);
+  if (!didChange) return;
+  publishClaudeProviderTaskInventory({
+    ...params,
+    reason: activity.type === 'terminal' ? 'task-terminal' : `task-${activity.type}`,
+  });
 }
 
 export async function respondToClaudePermission(params: Readonly<{
-  ctx: PluginContextV1;
+  ctx: ClaudePermissionContext;
   provider: string;
   requestId: string;
   approved: boolean;

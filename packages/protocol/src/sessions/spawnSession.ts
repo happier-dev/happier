@@ -7,6 +7,15 @@ import {
   normalizeConnectedServiceUxDiagnosticV1,
   type ConnectedServiceUxDiagnosticV1,
 } from '../connect/connectedServiceUxDiagnostics.js';
+import { ProviderErrorV1Schema, type ProviderErrorV1 } from '../providers/errors.js';
+/** Fresh execution authority is bound to the exact opaque user-message local id. */
+export const SpawnSessionExecutionAuthorizationSchema = z.object({
+  provenance: z.literal('user_request'),
+  requestId: z.string().refine((value) => value.trim().length > 0, {
+    message: 'Execution authorization request id must not be blank',
+  }),
+}).strict();
+export type SpawnSessionExecutionAuthorization = z.infer<typeof SpawnSessionExecutionAuthorizationSchema>;
 
 export const SPAWN_SESSION_ERROR_CODES = {
   INVALID_REQUEST: 'INVALID_REQUEST',
@@ -68,6 +77,8 @@ export const SPAWN_SESSION_ERROR_DETAIL_KINDS = {
    * materialization identity during existing-session attach.
    */
   CONNECTED_SERVICE_UX_DIAGNOSTIC: 'connected_service_ux_diagnostic',
+  /** A strict provider-domain refusal preserved for UI/CLI recovery without parsing message prose. */
+  PROVIDER_ERROR: 'provider_error',
 } as const;
 
 export type SpawnSessionErrorDetailKind =
@@ -99,9 +110,15 @@ export type ConnectedServiceUxDiagnosticSpawnErrorDetail = Readonly<{
   uxDiagnostic: ConnectedServiceUxDiagnosticV1;
 }>;
 
+export type ProviderSpawnErrorDetail = Readonly<{
+  kind: typeof SPAWN_SESSION_ERROR_DETAIL_KINDS.PROVIDER_ERROR;
+  providerError: ProviderErrorV1;
+}>;
+
 export type SpawnSessionErrorDetail =
   | ConnectedServiceResumeUnreachableSpawnErrorDetail
-  | ConnectedServiceUxDiagnosticSpawnErrorDetail;
+  | ConnectedServiceUxDiagnosticSpawnErrorDetail
+  | ProviderSpawnErrorDetail;
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
@@ -287,6 +304,16 @@ function normalizeConnectedServiceUxDiagnosticDetail(
   };
 }
 
+function normalizeProviderSpawnErrorDetail(
+  detail: Record<string, unknown>,
+): ProviderSpawnErrorDetail | undefined {
+  if (detail.kind !== SPAWN_SESSION_ERROR_DETAIL_KINDS.PROVIDER_ERROR) return undefined;
+  if (Object.keys(detail).length !== 2 || !hasOwn(detail, 'providerError')) return undefined;
+  const providerError = ProviderErrorV1Schema.safeParse(detail.providerError);
+  if (!providerError.success) return undefined;
+  return { kind: SPAWN_SESSION_ERROR_DETAIL_KINDS.PROVIDER_ERROR, providerError: providerError.data };
+}
+
 export function isConnectedServiceResumeUnreachableSpawnErrorDetail(
   value: unknown,
 ): value is ConnectedServiceResumeUnreachableSpawnErrorDetail {
@@ -313,17 +340,25 @@ export function isConnectedServiceUxDiagnosticSpawnErrorDetail(
 
 export function isSpawnSessionErrorDetail(value: unknown): value is SpawnSessionErrorDetail {
   return isConnectedServiceResumeUnreachableSpawnErrorDetail(value)
-    || isConnectedServiceUxDiagnosticSpawnErrorDetail(value);
+    || isConnectedServiceUxDiagnosticSpawnErrorDetail(value)
+    || normalizeProviderSpawnErrorDetail(asRecord(value) ?? {}) !== undefined;
 }
 
 export function normalizeSpawnSessionErrorDetail(value: unknown): SpawnSessionErrorDetail | undefined {
   const detail = asRecord(value);
   if (!detail) return undefined;
   return normalizeConnectedServiceResumeUnreachableDetail(detail)
-    ?? normalizeConnectedServiceUxDiagnosticDetail(detail);
+    ?? normalizeConnectedServiceUxDiagnosticDetail(detail)
+    ?? normalizeProviderSpawnErrorDetail(detail);
 }
 
 export type SpawnSessionResult =
-  | { type: 'success'; sessionId?: string }
+  | {
+      type: 'success';
+      sessionId?: string;
+      /** Remote predecessor accept-then-async recovery correlation. */
+      spawnNonce?: string;
+      sessionIdStatus?: 'pending' | 'available';
+    }
   | { type: 'requestToApproveDirectoryCreation'; directory: string }
   | { type: 'error'; errorCode: SpawnSessionErrorCode; errorMessage: string; errorDetail?: SpawnSessionErrorDetail };

@@ -1,5 +1,5 @@
-import type { SubscriptionV1 } from '../context.js';
+export type TestSubscription = Readonly<{ unsubscribe(): void }>;
 
-export function createSubscription(unsubscribe: () => void = () => undefined): SubscriptionV1 {
+export function createSubscription(unsubscribe: () => void = () => undefined): TestSubscription {
     return { unsubscribe };
 }

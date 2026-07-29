@@ -1,7 +1,4 @@
-import type {
-  ExecLoopbackWebSocketEndpointCodecV1,
-  ExecLoopbackWebSocketEndpointV1,
-} from '@happier-dev/plugin-sdk';
+import type { PluginLoopbackWebSocketEndpoint } from '@happier-dev/plugin-sdk/runtime';
 
 import type {
   AntigravityLocalharnessInputConfig,
@@ -127,12 +124,42 @@ export function decodeOutputConfigFrame(frame: Uint8Array): AntigravityLocalharn
   };
 }
 
-export type AntigravityLocalharnessEndpoint = ExecLoopbackWebSocketEndpointV1 & Readonly<{
-  protocolFingerprint: string;
-  apiKey: string;
+type AntigravityLocalharnessLegacyEndpointCodec = Readonly<{
+  decodeHandshakeResponse(response: Uint8Array): AntigravityLocalharnessEndpoint | Promise<AntigravityLocalharnessEndpoint>;
+  buildHeaders?(endpoint: AntigravityLocalharnessEndpoint): readonly Readonly<{
+    name: string;
+    value: string;
+    sensitive?: boolean;
+  }>[];
 }>;
 
-export const antigravityLocalharnessEndpointCodec: ExecLoopbackWebSocketEndpointCodecV1 = Object.freeze({
+export type AntigravityLocalharnessEndpoint = Readonly<{
+  protocolFingerprint: string;
+  apiKey: string;
+  url?: string;
+  protocol?: string;
+  host?: string;
+  port?: number;
+  path?: string;
+}>;
+
+export function decodeAntigravityLocalharnessEndpoint(
+  response: Uint8Array,
+): PluginLoopbackWebSocketEndpoint {
+  const decoded = decodeOutputConfigFrame(response);
+  return {
+    host: '127.0.0.1',
+    port: decoded.port,
+    path: '/',
+    headers: [{
+      name: 'x-goog-api-key',
+      value: decoded.apiKey,
+      sensitive: true,
+    }],
+  };
+}
+
+export const antigravityLocalharnessEndpointCodec: AntigravityLocalharnessLegacyEndpointCodec = Object.freeze({
   decodeHandshakeResponse(response) {
     const decoded = decodeOutputConfigFrame(response);
     return {

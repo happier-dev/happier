@@ -1,10 +1,9 @@
 export * from './artifactCompatibility.js';
 export * from './artifactIntegrity.js';
-export * from './artifactRevocation.js';
-export * from './artifactTrust.js';
 export * from './artifacts.js';
 export * from './hostApi.js';
 export * from './hostApiRequests.js';
+export * from './hostApiWire.js';
 export * from './hostedWebBuild.js';
 export * from './hostedWebBridge.js';
 export * from './hostedWebEndpoint.js';
@@ -16,6 +15,10 @@ export * from './resourceSnapshots.js';
 export * from './subscriptions.js';
 export * from './surfaceContext.js';
 export * from './uiArtifactsManifest.js';
+export {
+  PluginUiArtifactFileV1Schema,
+  type PluginUiArtifactFileV1,
+} from '../contributions/ui/artifacts.js';
 export {
   PluginUiActionDescriptorV1Schema,
   PluginUiFallbackRefV1Schema,
@@ -33,26 +36,6 @@ export {
   type PluginHostedWebOriginV1,
   type PluginHostedWebSecurityPolicyV1,
 } from '../contributions/ui/hostedWebSecurity.js';
-export {
-  PluginEmbeddedWebBundleArtifactRefV1Schema,
-  PluginEmbeddedWebBundleCompatibilityV1Schema,
-  PluginEmbeddedWebBundleContributionV1Schema,
-  PluginEmbeddedWebBundleEntryV1Schema,
-  PluginEmbeddedWebBundleFallbackRefV1Schema,
-  PluginEmbeddedWebBundleIntegrityV1Schema,
-  PluginEmbeddedWebBundlePlatformV1Schema,
-  PluginEmbeddedWebBundlePolicyV1Schema,
-  PluginEmbeddedWebHostApiRequirementV1Schema,
-  type PluginEmbeddedWebBundleArtifactRefV1,
-  type PluginEmbeddedWebBundleCompatibilityV1,
-  type PluginEmbeddedWebBundleContributionV1,
-  type PluginEmbeddedWebBundleEntryV1,
-  type PluginEmbeddedWebBundleFallbackRefV1,
-  type PluginEmbeddedWebBundleIntegrityV1,
-  type PluginEmbeddedWebBundlePlatformV1,
-  type PluginEmbeddedWebBundlePolicyV1,
-  type PluginEmbeddedWebHostApiRequirementV1,
-} from '../contributions/ui/embeddedWebBundles.js';
 export {
   PluginUiJsonValueV1Schema,
   type PluginUiJsonValueV1,

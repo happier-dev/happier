@@ -5,12 +5,6 @@ import type {
     ConnectedServiceQuotaSnapshotV1,
 } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
 import { ConnectedServiceQuotaFetchError } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
-import type {
-    FetchRuntimeRequestV1,
-    FetchRuntimeResponseV1,
-    FetchRuntimeServiceV1,
-} from '@happier-dev/plugin-sdk';
-
 import { classifyClaudeCodeCredentialHealth } from '../native/health.js';
 import { parseClaudeUsageLimitReset } from '../runtime/reset.js';
 import { resolveClaudeCodeUsageUserAgent } from './userAgent.js';
@@ -18,6 +12,27 @@ import { resolveClaudeCodeUsageUserAgent } from './userAgent.js';
 export const CLAUDE_DEFAULT_SUBSCRIPTION_USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
 
 const DEFAULT_BETA_HEADER_VALUE = 'oauth-2025-04-20';
+
+type ClaudeRuntimeFetchRequest = Readonly<{
+    url: string;
+    method?: string;
+    headers?: Readonly<Record<string, string>>;
+    body?: unknown;
+    signal?: AbortSignal;
+}>;
+
+type ClaudeRuntimeFetchResponse = Readonly<{
+    ok: boolean;
+    status: number;
+    statusText?: string;
+    headers: Readonly<Record<string, string>>;
+    body?: unknown;
+    text(): Promise<string>;
+    json(): Promise<unknown>;
+    arrayBuffer(): Promise<ArrayBuffer>;
+}>;
+
+type ClaudeRuntimeFetch = (request: ClaudeRuntimeFetchRequest) => Promise<ClaudeRuntimeFetchResponse>;
 
 type ClaudeQuotaFetcher = Readonly<{
     serviceId: ConnectedServiceId;
@@ -538,6 +553,35 @@ function collectUsageWindowMeterEntries(
     return Array.from(windowsByMeterId, ([meterId, window]) => ({ meterId, window }));
 }
 
+export function parseClaudeSubscriptionUsageMeters(
+    value: unknown,
+): ConnectedServiceQuotaSnapshotV1['meters'] {
+    const data = isRecord(value) ? value : {};
+    const meters: ConnectedServiceQuotaSnapshotV1['meters'] =
+        collectUsageWindowMeterEntries(data)
+            .map(({ meterId, window }) => buildUsageWindowMeter(meterId, window));
+    const extra = isRecord(data.extra_usage) ? data.extra_usage : null;
+    if (extra?.is_enabled) {
+        const utilizationPct = normalizePct(extra.utilization);
+        meters.push({
+            meterId: 'extra_usage',
+            label: 'Extra usage',
+            used: typeof extra.used_credits === 'number' && Number.isFinite(extra.used_credits)
+                ? extra.used_credits
+                : null,
+            limit: typeof extra.monthly_limit === 'number' && Number.isFinite(extra.monthly_limit)
+                ? extra.monthly_limit
+                : null,
+            unit: 'credits',
+            utilizationPct,
+            resetsAt: null,
+            status: utilizationPct === null ? 'unavailable' : 'ok',
+            details: {},
+        });
+    }
+    return meters;
+}
+
 function buildQuotaUnknownMeter(meterId: string, label: string): ConnectedServiceQuotaMeterV1 {
     return {
         meterId,
@@ -563,7 +607,7 @@ function headersToRecord(headers: Headers | undefined): Readonly<Record<string, 
 
 type FetchBody = NonNullable<Parameters<typeof globalThis.fetch>[1]>['body'];
 
-function toRequestBody(value: FetchRuntimeRequestV1['body']): FetchBody | undefined {
+function toRequestBody(value: ClaudeRuntimeFetchRequest['body']): FetchBody | undefined {
     if (value === undefined || value === null) return undefined;
     if (
         typeof value === 'string'
@@ -578,8 +622,8 @@ function toRequestBody(value: FetchRuntimeRequestV1['body']): FetchBody | undefi
     return JSON.stringify(value);
 }
 
-function defaultRuntimeFetch(): FetchRuntimeServiceV1 {
-    return async ({ url, method, headers, body, signal }): Promise<FetchRuntimeResponseV1> => {
+function defaultRuntimeFetch(): ClaudeRuntimeFetch {
+    return async ({ url, method, headers, body, signal }): Promise<ClaudeRuntimeFetchResponse> => {
         const response = await globalThis.fetch(url, {
             method,
             headers,
@@ -605,7 +649,7 @@ export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
     staleAfterMs?: number;
     userAgent?: string;
     disablePrivateEndpoint?: boolean;
-    runtimeFetch?: FetchRuntimeServiceV1;
+    runtimeFetch?: ClaudeRuntimeFetch;
 }>): ClaudeQuotaFetcher {
     const usageUrl = typeof params?.usageUrl === 'string' && params.usageUrl.trim().length > 0
         ? params.usageUrl.trim()
@@ -626,7 +670,7 @@ export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
         betaHeaderValue: string;
         userAgent: string;
         signal: AbortSignal;
-    }>): Promise<FetchRuntimeResponseV1> {
+    }>): Promise<ClaudeRuntimeFetchResponse> {
         return runtimeFetch({
             url: input.usageUrl,
             method: 'GET',
@@ -651,7 +695,7 @@ export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
         }
     }
 
-    async function throwUsageError(response: FetchRuntimeResponseV1, now: number): Promise<never> {
+    async function throwUsageError(response: ClaudeRuntimeFetchResponse, now: number): Promise<never> {
         const body = await response.text().catch(() => '');
         const timing = parseClaudeUsageLimitReset({
             nowMs: now,
@@ -742,24 +786,7 @@ export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
             const json: unknown = await response.json();
             const data = isRecord(json) ? json : {};
 
-            const meters: ConnectedServiceQuotaSnapshotV1['meters'] = collectUsageWindowMeterEntries(data)
-                .map(({ meterId, window }) => buildUsageWindowMeter(meterId, window));
-
-            const extra = isRecord(data.extra_usage) ? data.extra_usage : null;
-            if (extra?.is_enabled) {
-                const utilizationPct = normalizePct(extra.utilization);
-                meters.push({
-                    meterId: 'extra_usage',
-                    label: 'Extra usage',
-                    used: typeof extra.used_credits === 'number' && Number.isFinite(extra.used_credits) ? extra.used_credits : null,
-                    limit: typeof extra.monthly_limit === 'number' && Number.isFinite(extra.monthly_limit) ? extra.monthly_limit : null,
-                    unit: 'credits',
-                    utilizationPct,
-                    resetsAt: null,
-                    status: utilizationPct === null ? 'unavailable' : 'ok',
-                    details: {},
-                });
-            }
+            const meters = parseClaudeSubscriptionUsageMeters(data);
 
             return {
                 v: 1,

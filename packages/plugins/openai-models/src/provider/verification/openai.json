@@ -1,0 +1,42 @@
+{
+  "v": 1,
+  "contributionKey": "happier.provider.openai/openai",
+  "reviewedAt": "2026-07-12",
+  "sources": [
+    { "id": "responses", "kind": "official-doc", "url": "https://developers.openai.com/api/reference/resources/responses/methods/create", "accessedAt": "2026-07-12", "revision": "current-2026-07-12" },
+    { "id": "chat", "kind": "official-doc", "url": "https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create", "accessedAt": "2026-07-12", "revision": "current-2026-07-12" },
+    { "id": "models", "kind": "official-doc", "url": "https://developers.openai.com/api/reference/resources/models/methods/list", "accessedAt": "2026-07-12", "revision": "current-2026-07-12" },
+    { "id": "auth", "kind": "official-doc", "url": "https://platform.openai.com/docs/api-reference/authentication", "accessedAt": "2026-07-12", "revision": "current-2026-07-12" },
+    { "id": "legacy-source", "kind": "repository-history", "locator": "packages/protocol/src/agents/generated/profiles/builtInBackendProfiles.ts", "accessedAt": "2026-07-12", "revision": "historical-generated-launch-profile-before-provider-migration; preservation evidence, not current vendor-model validity" }
+  ],
+  "facts": [
+    { "path": "catalog.probes.openai-responses.openai-models", "sourceIds": ["models"], "status": "verified" },
+    { "path": "catalog.source", "sourceIds": ["models"], "status": "verified" },
+    { "path": "credential.keyUrl", "sourceIds": ["auth"], "status": "verified" },
+    { "path": "credential.kind", "sourceIds": ["auth"], "status": "verified" },
+    { "path": "credential.required", "sourceIds": ["auth"], "status": "verified" },
+    { "path": "credential.transports.openai-http-bearer", "sourceIds": ["auth"], "status": "verified" },
+    { "path": "endpointTemplates.openai-chat.baseUrl", "sourceIds": ["auth"], "status": "verified" },
+    { "path": "endpointTemplates.openai-chat.capabilities.reasoningControls", "sourceIds": ["chat"], "status": "verified" },
+    { "path": "endpointTemplates.openai-chat.capabilities.streaming", "sourceIds": ["chat"], "status": "verified" },
+    { "path": "endpointTemplates.openai-chat.capabilities.toolRoundTrips", "sourceIds": ["chat"], "status": "verified" },
+    { "path": "endpointTemplates.openai-chat.protocol", "sourceIds": ["chat"], "status": "verified" },
+    { "path": "endpointTemplates.openai-responses.baseUrl", "sourceIds": ["responses"], "status": "verified" },
+    { "path": "endpointTemplates.openai-responses.capabilities.reasoningControls", "sourceIds": ["responses"], "status": "verified" },
+    { "path": "endpointTemplates.openai-responses.capabilities.statefulResponses", "sourceIds": ["responses"], "status": "verified" },
+    { "path": "endpointTemplates.openai-responses.capabilities.streaming", "sourceIds": ["responses"], "status": "verified" },
+    { "path": "endpointTemplates.openai-responses.capabilities.toolRoundTrips", "sourceIds": ["responses"], "status": "verified" },
+    { "path": "endpointTemplates.openai-responses.protocol", "sourceIds": ["responses"], "status": "verified" },
+    { "path": "kind", "sourceIds": ["auth"], "status": "verified" },
+    { "path": "legacyProfileMigrations.openai.credentialBinding", "sourceIds": ["legacy-source"], "status": "verified" },
+    { "path": "legacyProfileMigrations.openai.descriptorRevision", "sourceIds": ["legacy-source"], "status": "verified" },
+    { "path": "legacyProfileMigrations.openai.migratedEnvironmentVariables.OPENAI_BASE_URL", "sourceIds": ["legacy-source", "auth"], "status": "verified" },
+    { "path": "legacyProfileMigrations.openai.migratedEnvironmentVariables.OPENAI_MODEL", "sourceIds": ["legacy-source"], "status": "verified" },
+    { "path": "legacyProfileMigrations.openai.primaryModel", "sourceIds": ["legacy-source"], "status": "verified" },
+    { "path": "legacyProfileMigrations.openai.retainedEnvironmentVariables.API_TIMEOUT_MS", "sourceIds": ["legacy-source"], "status": "verified" },
+    { "path": "legacyProfileMigrations.openai.retainedEnvironmentVariables.CODEX_SMALL_FAST_MODEL", "sourceIds": ["legacy-source"], "status": "verified" },
+    { "path": "legacyProfileMigrations.openai.retainedEnvironmentVariables.OPENAI_API_TIMEOUT_MS", "sourceIds": ["legacy-source"], "status": "verified" },
+    { "path": "legacyProfileMigrations.openai.retainedEnvironmentVariables.OPENAI_SMALL_FAST_MODEL", "sourceIds": ["legacy-source"], "status": "verified" },
+    { "path": "websiteUrl", "sourceIds": ["auth"], "status": "verified" }
+  ]
+}

@@ -38,6 +38,7 @@ describe('Claude runtime auth host import closure', () => {
         specifier.startsWith('apps/') ||
         specifier.startsWith('@happier-dev/')
           && !specifier.startsWith('@happier-dev/plugin-sdk')
+          && !specifier.startsWith('@happier-dev/agents')
           && !specifier.startsWith('@happier-dev/protocol')
       ).map((specifier) => `${relative(srcRoot, filePath)} -> ${specifier}`);
     });

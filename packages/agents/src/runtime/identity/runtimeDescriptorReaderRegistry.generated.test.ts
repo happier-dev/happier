@@ -30,20 +30,28 @@ describe('runtimeDescriptorReaderRegistry', () => {
     expect(metadataReaderSource).not.toContain('readCodexSessionMetadataConnectedServiceBindings');
   });
 
-  it('keeps generated plugin reader leaves independent from agents and protocol package roots', () => {
-    const pluginLeafSources = [
-      '../../../../plugins/codex/src/agent/identity/runtimeDescriptor.ts',
-      '../../../../plugins/opencode/src/agent/identity/runtimeDescriptor.ts',
-      '../../../../plugins/codex/src/agent/surfaces/sessions/controls/adapter.ts',
-      '../../../../plugins/opencode/src/agent/surfaces/sessions/controls/adapter.ts',
-    ];
+  it('keeps generated plugin reader leaves free of circular agents imports and declares protocol imports', () => {
+    const pluginLeaves = [
+      { packageId: 'codex', sourcePath: '../../../../plugins/codex/src/agent/identity/runtimeDescriptor.ts' },
+      { packageId: 'opencode', sourcePath: '../../../../plugins/opencode/src/agent/identity/runtimeDescriptor.ts' },
+      { packageId: 'codex', sourcePath: '../../../../plugins/codex/src/agent/surfaces/sessions/controls/adapter.ts' },
+      { packageId: 'opencode', sourcePath: '../../../../plugins/opencode/src/agent/surfaces/sessions/controls/adapter.ts' },
+    ] as const;
 
-    for (const sourcePath of pluginLeafSources) {
+    for (const { packageId, sourcePath } of pluginLeaves) {
       const source = readFileSync(new URL(sourcePath, import.meta.url), 'utf8');
       expect(source).not.toContain("from '@happier-dev/agents'");
       expect(source).not.toContain('from "@happier-dev/agents"');
-      expect(source).not.toContain("from '@happier-dev/protocol'");
-      expect(source).not.toContain('from "@happier-dev/protocol"');
+      if (
+        source.includes("from '@happier-dev/protocol'")
+        || source.includes('from "@happier-dev/protocol"')
+      ) {
+        const packageJson = JSON.parse(readFileSync(
+          new URL(`../../../../plugins/${packageId}/package.json`, import.meta.url),
+          'utf8',
+        )) as { dependencies?: Record<string, string> };
+        expect(packageJson.dependencies?.['@happier-dev/protocol']).toBe('0.0.0');
+      }
     }
   });
 

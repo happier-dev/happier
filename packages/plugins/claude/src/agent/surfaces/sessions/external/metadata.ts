@@ -1,10 +1,13 @@
 import type {
-    ExternalSessionActivityV1,
     ExternalSessionsSource,
-} from '@happier-dev/plugin-sdk/sessions';
+} from '@happier-dev/plugin-sdk/experimental/sessions';
+import {
+    isRecord,
+    readJsonlFileBackwardPage,
+    readJsonlFileForward,
+} from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
 import { basename, dirname, join } from 'node:path';
 
-import { readClaudeJsonlFileBackwardPage, readClaudeJsonlFileForward } from './jsonl.js';
 import { resolveClaudeJsonlSessionFile } from './files.js';
 
 const TITLE_SCAN_CHUNK_MAX_BYTES = 128 * 1024;
@@ -13,12 +16,6 @@ const TITLE_SCAN_TOTAL_MAX_BYTES = 1024 * 1024;
 const TITLE_SCAN_TOTAL_MAX_ITEMS = 512;
 const TITLE_TAIL_SCAN_TOTAL_MAX_BYTES = 512 * 1024;
 const TITLE_TAIL_SCAN_TOTAL_MAX_ITEMS = 128;
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-    return value && typeof value === 'object' && !Array.isArray(value)
-        ? value as Record<string, unknown>
-        : null;
-}
 
 function readTitleCandidate(value: string): string | null {
     const normalized = value.replace(/\s+/g, ' ').trim();
@@ -33,8 +30,7 @@ function coerceTextContent(content: unknown): string | null {
 
     const text = content
         .map((item) => {
-            const record = asRecord(item);
-            return typeof record?.text === 'string' ? record.text : '';
+            return isRecord(item) && typeof item.text === 'string' ? item.text : '';
         })
         .filter((part) => part.trim().length > 0)
         .join(' ');
@@ -64,15 +60,15 @@ async function readClaudeJsonlTailTitle(filePath: string): Promise<string | null
     let scannedBytes = 0;
     let scannedItems = 0;
     while (scannedBytes < TITLE_TAIL_SCAN_TOTAL_MAX_BYTES && scannedItems < TITLE_TAIL_SCAN_TOTAL_MAX_ITEMS) {
-        const page = await readClaudeJsonlFileBackwardPage({
+        const page = await readJsonlFileBackwardPage({
             filePath,
             endOffsetBytes,
             maxBytes: Math.min(TITLE_SCAN_CHUNK_MAX_BYTES, TITLE_TAIL_SCAN_TOTAL_MAX_BYTES - scannedBytes),
             maxItems: Math.min(TITLE_SCAN_CHUNK_MAX_ITEMS, TITLE_TAIL_SCAN_TOTAL_MAX_ITEMS - scannedItems),
         });
         for (const line of [...page.items].reverse()) {
-            const record = asRecord(line.value);
-            if (!record) continue;
+            if (!isRecord(line.value)) continue;
+            const record = line.value;
             const title = readTitleRecordCandidate(record, null);
             if (title) return title;
         }
@@ -103,15 +99,15 @@ async function readClaudeHistoryTitle(filePath: string): Promise<string | null> 
     let scannedBytes = 0;
     let scannedItems = 0;
     while (scannedBytes < TITLE_TAIL_SCAN_TOTAL_MAX_BYTES && scannedItems < TITLE_TAIL_SCAN_TOTAL_MAX_ITEMS) {
-        const page = await readClaudeJsonlFileBackwardPage({
+        const page = await readJsonlFileBackwardPage({
             filePath: historyPath,
             endOffsetBytes,
             maxBytes: Math.min(TITLE_SCAN_CHUNK_MAX_BYTES, TITLE_TAIL_SCAN_TOTAL_MAX_BYTES - scannedBytes),
             maxItems: Math.min(TITLE_SCAN_CHUNK_MAX_ITEMS, TITLE_TAIL_SCAN_TOTAL_MAX_ITEMS - scannedItems),
         });
         for (const line of [...page.items].reverse()) {
-            const record = asRecord(line.value);
-            if (!record) continue;
+            if (!isRecord(line.value)) continue;
+            const record = line.value;
             const title = readTitleRecordCandidate(record, sessionId);
             if (title) return title;
         }
@@ -135,7 +131,7 @@ export async function readClaudeJsonlSessionTitle(filePath: string): Promise<str
     let scannedItems = 0;
 
     while (scannedBytes < TITLE_SCAN_TOTAL_MAX_BYTES && scannedItems < TITLE_SCAN_TOTAL_MAX_ITEMS) {
-        const page = await readClaudeJsonlFileForward({
+        const page = await readJsonlFileForward({
             filePath,
             offsetBytes,
             maxBytes: Math.min(TITLE_SCAN_CHUNK_MAX_BYTES, TITLE_SCAN_TOTAL_MAX_BYTES - scannedBytes),
@@ -143,8 +139,8 @@ export async function readClaudeJsonlSessionTitle(filePath: string): Promise<str
         });
 
         for (const line of page.items) {
-            const record = asRecord(line.value);
-            if (!record) continue;
+            if (!isRecord(line.value)) continue;
+            const record = line.value;
             if (record.type === 'summary' && typeof record.summary === 'string') {
                 const summaryTitle = readTitleCandidate(record.summary);
                 if (summaryTitle) return summaryTitle;
@@ -154,7 +150,7 @@ export async function readClaudeJsonlSessionTitle(filePath: string): Promise<str
                 if (queuedTitle) return queuedTitle;
             }
 
-            const message = asRecord(record.message);
+            const message = isRecord(record.message) ? record.message : null;
             const messageTitle = coerceTextContent(message?.content);
             if (record.type === 'user' && messageTitle) return messageTitle;
             if (record.type === 'assistant' && assistantFallback === null && messageTitle) {
@@ -180,39 +176,19 @@ export async function readClaudeJsonlSessionWorkingDirectory(params: Readonly<{
     if (!resolved) return null;
     let offsetBytes = 0;
     while (true) {
-        const page = await readClaudeJsonlFileForward({
+        const page = await readJsonlFileForward({
             filePath: resolved.filePath,
             offsetBytes,
             maxBytes: TITLE_SCAN_CHUNK_MAX_BYTES,
             maxItems: TITLE_SCAN_CHUNK_MAX_ITEMS,
         });
         for (const line of page.items) {
-            const record = asRecord(line.value);
-            const cwd = typeof record?.cwd === 'string' ? record.cwd.trim() : '';
+            const cwd = isRecord(line.value) && typeof line.value.cwd === 'string'
+                ? line.value.cwd.trim()
+                : '';
             if (cwd) return cwd;
         }
         if (page.reachedEnd || page.nextOffsetBytes <= offsetBytes) return null;
         offsetBytes = page.nextOffsetBytes;
     }
-}
-
-function resolveRecentActivityWindowMs(env: NodeJS.ProcessEnv): number {
-    const raw = Number.parseInt(String(env.HAPPIER_EXTERNAL_SESSIONS_RECENT_ACTIVITY_WINDOW_MS ?? ''), 10);
-    const configured = Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : 15_000;
-    return Math.max(1000, Math.min(60 * 60 * 1000, configured));
-}
-
-export function deriveClaudeExternalSessionActivity(params: Readonly<{
-    updatedAtMs: number | null | undefined;
-    env: NodeJS.ProcessEnv;
-    nowMs?: number;
-}>): ExternalSessionActivityV1 {
-    const updatedAtMs = typeof params.updatedAtMs === 'number' && Number.isFinite(params.updatedAtMs)
-        ? Math.trunc(params.updatedAtMs)
-        : null;
-    if (updatedAtMs === null || updatedAtMs < 0) return 'unknown';
-
-    const ageMs = (params.nowMs ?? Date.now()) - updatedAtMs;
-    if (!Number.isFinite(ageMs) || ageMs < 0) return 'unknown';
-    return ageMs <= resolveRecentActivityWindowMs(params.env) ? 'active_recently' : 'idle';
 }

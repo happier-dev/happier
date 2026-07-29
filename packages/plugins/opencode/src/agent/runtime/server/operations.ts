@@ -1,4 +1,4 @@
-import type { RuntimeEventV1 } from '@happier-dev/plugin-sdk/experimental/runtime/session';
+import type { OpenCodeRuntimeEvent } from './runtimeEvents.js';
 
 export type OpenCodePromptSendMeta = Readonly<{
   localInputId?: string | null;
@@ -6,16 +6,44 @@ export type OpenCodePromptSendMeta = Readonly<{
   modelId?: string | null;
   userMessageSeq?: number | null;
   userMessageSeqs?: readonly number[];
+  promptParts?: readonly import('./promptParts.js').OpenCodePromptPart[];
 }>;
 
+export type OpenCodeSessionOpenRequest =
+  | Readonly<{ kind: 'create' }>
+  | Readonly<{ kind: 'resume'; providerSessionId: string }>
+  | Readonly<{
+      kind: 'fork';
+      source: Readonly<{
+        providerSessionId: string;
+        providerCheckpoint?: unknown;
+      }>;
+    }>;
+
 export type OpenCodeRuntimeTurnOperations = Readonly<{
-  beginTurnLifecycle(): void;
-  startOrLoadSession(opts?: Readonly<{ resumeId?: string | null }>): Promise<string | null | Readonly<Record<string, unknown>>>;
-  sendTurnPrompt(prompt: string, meta?: OpenCodePromptSendMeta): Promise<void>;
-  steerInFlightTurn(message: string, meta?: OpenCodePromptSendMeta): Promise<void>;
+  beginTurnLifecycle(turnId: string): void;
+  openSession(request: OpenCodeSessionOpenRequest): Promise<string>;
+  sendTurnPrompt(
+    prompt: string,
+    meta?: OpenCodePromptSendMeta,
+  ): Promise<Readonly<{
+    providerUserMessageId: string;
+    effectiveModelId?: string | null;
+  }>>;
+  steerInFlightTurn(
+    message: string,
+    meta?: OpenCodePromptSendMeta,
+  ): Promise<Readonly<{
+    providerUserMessageId: string;
+    effectiveModelId?: string | null;
+  }>>;
   waitForTurnCompletion(): Promise<void>;
-  subscribeRuntimeEvents(handler: (message: RuntimeEventV1) => void): () => void;
+  subscribeRuntimeEvents(handler: (message: OpenCodeRuntimeEvent) => void): () => void;
   cancelTurn(): Promise<void>;
+  compactContext(request: Readonly<{
+    compactionId: string;
+    instructions?: string;
+  }>): Promise<void>;
   listSkills(input?: Readonly<{ directory?: string | null }>): Promise<unknown>;
   readSessionIdentity(): Readonly<{ sessionId: string | null }>;
   isHappierAuthoredProviderUserMessageId(messageId: string): boolean;

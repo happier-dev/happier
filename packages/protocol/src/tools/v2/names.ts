@@ -19,6 +19,9 @@ export const KNOWN_CANONICAL_TOOL_NAMES_V2 = [
   'TodoRead',
   'SubAgent',
   'Task',
+  // Dynamic Workflow run (provider-agnostic). Distinct from `Task`/`SubAgent`: a `Workflow`
+  // tool call starts an orchestrated multi-agent run rendered by a dedicated workflow card.
+  'Workflow',
   'Reasoning',
   // Structured tool-ish events.
   'EnterPlanMode',

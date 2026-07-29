@@ -1,8 +1,8 @@
 import {
-  countPromptNewlines,
   parseClaudePastedTextMarkerLineCount,
   pastedTextLineCountMatchesPrompt,
 } from './pastedTextMarker.js';
+import { parseClaudeScreenState } from './screenState.js';
 
 const COMPOSER_LINE_PROMPT = /(?:^|[│|]\s*)[>›❯](?!\s*(?:\d+\.|[◯◉○●◐◑]))/u;
 
@@ -14,7 +14,7 @@ function isLikelyTerminalFooterLine(line: string): boolean {
   const trimmed = line.trim();
   if (!trimmed) return true;
   if (/^[─━═┄┈\-\s]+$/.test(trimmed)) return true;
-  if (/^(?:▶+|▸+|>>)\s/.test(trimmed)) return true;
+  if (/^(?:▶+|▸+|⏵+|>>)\s/.test(trimmed)) return true;
   return false;
 }
 
@@ -55,13 +55,23 @@ export function createClaudePromptSubmitVerificationPolicy() {
       return true;
     },
     shouldVerifyAfterSubmit(promptText: string) {
-      return countPromptNewlines(normalizeNewlines(promptText)) > 0;
+      return normalizeNewlines(promptText).trim().length > 0;
     },
     verifyAfterSubmit(params: Readonly<{ promptText: string; screenText: string }>) {
       const promptText = normalizeNewlines(params.promptText);
       const pastedLineCount = readPostSubmitPastedTextLineCount(params.screenText);
-      if (pastedLineCount === null) return false;
-      return pastedTextLineCountMatchesPrompt({ promptText, pastedLineCount });
+      if (
+        pastedLineCount !== null
+        && pastedTextLineCountMatchesPrompt({ promptText, pastedLineCount })
+      ) {
+        return true;
+      }
+
+      const exactPrompt = promptText.trim();
+      if (!exactPrompt) return false;
+      const composerContent = parseClaudeScreenState(params.screenText).composerContent;
+      return composerContent !== null
+        && normalizeNewlines(composerContent).trim() === exactPrompt;
     },
   };
 }

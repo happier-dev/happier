@@ -47,6 +47,37 @@ describe('sessionMessages meta', () => {
     expect(parsed.happierMedia).toMatchObject({ kind: 'session_media.v1' });
   });
 
+  it('validates canonical conversation-turn provenance while preserving the additive envelope', () => {
+    const parsed = protocol.SessionMessageMetaSchema.parse({
+      happier: {
+        kind: 'conversation_turn.v1',
+        payload: { v: 1 },
+        conversationTurnOriginV1: {
+          v: 1,
+          channel: 'realtime_conversation',
+          modality: 'voice',
+        },
+      },
+    });
+
+    expect(parsed.happier?.conversationTurnOriginV1).toEqual({
+      v: 1,
+      channel: 'realtime_conversation',
+      modality: 'voice',
+    });
+    expect(protocol.SessionMessageMetaSchema.safeParse({
+      happier: {
+        kind: 'conversation_turn.v1',
+        payload: { v: 1 },
+        conversationTurnOriginV1: {
+          v: 1,
+          channel: 'agent_thread',
+          modality: 'voice',
+        },
+      },
+    }).success).toBe(false);
+  });
+
   it('rejects invalid session_media.v1 payloads in the primary Happier metadata slot', () => {
     expect(protocol.SessionMessageMetaSchema.safeParse({
       happier: {

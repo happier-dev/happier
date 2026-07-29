@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import type { ConversationTurnOriginV1 } from '../messages/structured/conversationTurnOriginV1.js';
 import { ACTION_ID_FAMILIES_V1, ActionIdSchema, type ActionId } from './actionIds.js';
 import { ActionUiPlacementSchema, type ActionUiPlacement } from './actionUiPlacements.js';
 import { ReviewStartInputSchema } from '../reviews/reviewStart.js';
@@ -51,6 +52,7 @@ import {
   findSpawnConfigOptionAliasConflicts,
 } from './sessionSpawnConfigOptions.js';
 import { SessionWorkStateStatusV1Schema } from '../sessions/work/state/sessionWorkStateV1.js';
+import { StructuredQuestionAnswersV1Schema } from '../tools/structuredQuestionAnswersV1.js';
 import {
   SessionUsageLimitCheckNowRequestV1Schema,
   SessionUsageLimitConsumeResetCreditRequestV1Schema,
@@ -75,6 +77,10 @@ import {
   ExternalSessionTranscriptReadAfterRequestSchema,
   ExternalSessionTranscriptReadAfterResponseSchema,
 } from '../sessions/external/daemonRpcV1.js';
+import {
+  ExternalSessionTranscriptRefreshReadAfterRequestV1Schema,
+  ExternalSessionTranscriptRefreshReadAfterResponseV1Schema,
+} from '../sessions/external/secureRefreshV1.js';
 import {
   ScmPullRequestCheckoutRequestSchema,
   ScmPullRequestCheckoutResponseSchema,
@@ -122,6 +128,25 @@ import {
   ExternalSessionTakeoverResultV1Schema,
 } from '../sessions/external/takeoverV1.js';
 import {
+  ExternalSessionMaterializeStartInputV1Schema,
+  ExternalSessionOperationActionResponseV1Schema,
+  ExternalSessionOperationCancelInputV1Schema,
+  ExternalSessionOperationDiscardInputV1Schema,
+  ExternalSessionOperationResumeInputV1Schema,
+  ExternalSessionOperationRetryInputV1Schema,
+  ExternalSessionOperationStatusInputV1Schema,
+  ExternalSessionTakeoverStartInputV1Schema,
+} from '../sessions/external/operationActionsV1.js';
+import {
+  PluginSessionHookInstallInputV1Schema,
+  PluginSessionHookInstallResponseV1Schema,
+  PluginSessionHookInstallationMutationInputV1Schema,
+  PluginSessionHookStatusInputV1Schema,
+  PluginSessionHookStatusResponseV1Schema,
+  PluginSessionHookToggleResponseV1Schema,
+  PluginSessionHookUninstallResponseV1Schema,
+} from '../sessions/external/hookManagementV1.js';
+import {
   SubagentLifecycleDetailV1Schema,
   SubagentRefInputV1Schema,
   SubagentRefV1Schema,
@@ -144,10 +169,17 @@ import {
   SessionTerminalComposerClearResultV1Schema,
 } from '../sessions/control/terminalComposerClearV1.js';
 import {
+  SessionPendingInputInterruptAndRunRequestV1Schema,
+  SessionPendingInputInterruptAndRunResultV1Schema,
+} from '../sessions/control/pendingInputInterruptAndRunV1.js';
+import {
   SessionHandoffAbortRequestSchema,
   SessionHandoffCommitRequestSchema,
   SessionHandoffPrepareTargetResultGetRequestSchema,
+  SessionHandoffPrepareTargetResultGetResponseSchema,
   SessionHandoffPrepareTargetRequestSchema,
+  SessionHandoffPrepareTargetResumeRequestSchema,
+  SessionHandoffPrepareTargetResumeResponseSchema,
   SessionHandoffStatusGetRequestSchema,
   SessionHandoffWorkspaceTransferSchema,
 } from '../sessions/control/handoff/handoffSchemas.js';
@@ -548,6 +580,7 @@ export type SessionTranscriptGetItem = Readonly<{
   createdAt: number;
   role: 'user' | 'assistant' | 'tool' | 'event' | 'reasoning' | 'unknown';
   kind: string;
+  origin?: ConversationTurnOriginV1;
   text?: string;
   summary?: string;
   toolName?: string;
@@ -600,6 +633,7 @@ export type SessionEventsGetItem = Readonly<{
   storedMessageRole?: 'user' | 'agent' | 'event' | 'unknown';
   semanticRole: 'user' | 'assistant' | 'tool' | 'event' | 'reasoning' | 'unknown';
   kind: string;
+  origin?: ConversationTurnOriginV1;
   provider?: string;
   text?: string;
   summary?: string;
@@ -922,7 +956,12 @@ const SessionSpawnPickerInputSchema = z.object({
 });
 
 function validateAgentIdAndBackendTargetKeySelection(
-  value: Readonly<{ agentId?: string; backendTargetKey?: string }>,
+  value: Readonly<{
+    agentId?: string;
+    backendTargetKey?: string;
+    backendTarget?: z.infer<typeof BackendTargetRefV2Schema>;
+    runtimeDescriptorV1?: z.infer<typeof RuntimeDescriptorV1Schema>;
+  }>,
   ctx: z.RefinementCtx,
 ): void {
   const resolved = resolveActionBackendTargetSelection(value);
@@ -1109,9 +1148,21 @@ const SessionPermissionRespondInputSchema = z.object({
 }).passthrough();
 
 const SessionUserActionAnswerItemSchema = z.object({
-  question: z.string().trim().min(1),
-  answer: z.string().trim().min(1),
-}).strict();
+  question: z.string().min(1).refine((value) => value.trim().length > 0, {
+    message: 'question must not be blank',
+  }),
+  values: z.array(z.string()).min(1).optional(),
+  // Compatibility for clients through the released 0.2.2 preview. Remove `answer`
+  // after that preview leaves the supported mixed-version window.
+  answer: z.string().min(1).optional(),
+}).strict().superRefine((value, ctx) => {
+  if (value.answer !== undefined && value.values !== undefined) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'answer and values cannot both be provided' });
+  }
+  if (value.answer === undefined && value.values === undefined) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'answer or values is required' });
+  }
+});
 
 const SessionUserActionAnswerInputSchema = z.object({
   sessionId: z.string().min(1).optional(),
@@ -1122,6 +1173,25 @@ const SessionUserActionAnswerInputSchema = z.object({
   updatedPermissions: z.unknown().optional(),
 }).passthrough().superRefine((value, ctx) => {
   const hasAnswers = Array.isArray(value.answers) && value.answers.length > 0;
+  const structuredAnswers = Object.create(null) as Record<string, readonly string[]>;
+  for (const [index, entry] of (value.answers ?? []).entries()) {
+    if (Object.prototype.hasOwnProperty.call(structuredAnswers, entry.question)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'duplicate question',
+        path: ['answers', index, 'question'],
+      });
+      continue;
+    }
+    structuredAnswers[entry.question] = entry.values ?? [entry.answer!];
+  }
+  if (hasAnswers && !StructuredQuestionAnswersV1Schema.safeParse(structuredAnswers).success) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'invalid structured answers',
+      path: ['answers'],
+    });
+  }
   const decision = typeof value.decision === 'string' ? value.decision : null;
   if (!hasAnswers && !decision) {
     ctx.addIssue({
@@ -1396,11 +1466,7 @@ const PromptRegistryInstallInputSchema = z.object({
   }).optional(),
 }).passthrough();
 
-const ExternalSessionTakeoverActionInputSchema = ExternalSessionTakeoverInputV1Schema.extend({
-  // Current direct-session wire callers still provide machineId; keep it as adapter context
-  // until A.15.4 retires the direct-session aliases.
-  machineId: z.string().min(1).optional(),
-}).passthrough();
+const ExternalSessionTakeoverActionInputSchema = ExternalSessionTakeoverInputV1Schema;
 
 const APPROVAL_RESULT_REQUIRED: ActionApproval = Object.freeze({ result: 'required' });
 const APPROVAL_RESULT_NONE: ActionApproval = Object.freeze({ result: 'none' });
@@ -1442,6 +1508,7 @@ const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
   'session.usageLimit.checkNow',
   'session.usageLimit.consumeResetCredit',
   'session.terminalComposer.clear',
+  'session.pendingInput.interruptAndRun',
   'session.vendor_plugin_catalog.list',
   'session.skill_catalog.list',
   'session.history.get',
@@ -1466,6 +1533,7 @@ const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
   'approval.request.list',
   'approval.request.get',
   'plugins.list',
+  'plugins.sessionHooks.status.get',
   'plugins.permissions.grants.list',
   'session.log.tail',
   'transcript.page',
@@ -1474,6 +1542,7 @@ const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
   'transcript.search',
   'sessions.external.candidates.list',
   'sessions.external.status.get',
+  'sessions.external.operation.status.get',
   'sessions.external.transcript.page',
   'sessions.external.transcript.readAfter',
   'scm.pullRequest.list',
@@ -1636,6 +1705,7 @@ const RESULT_OPTIONAL_DEFERRED_APPROVAL_ACTION_IDS = [
   'session.restore',
   'session.handoff',
   'session.handoff.prepare_target',
+  'session.handoff.prepare_target.resume',
   'session.handoff.commit',
   'session.handoff.abort',
   'session.spawn_new',
@@ -1655,8 +1725,14 @@ const RESULT_OPTIONAL_DEFERRED_APPROVAL_ACTION_IDS = [
   'sessions.external.link.ensure',
   'sessions.external.follow',
   'sessions.external.unfollow',
-  'sessions.external.followPolicy.set',
+  'sessions.external.backgroundFollow.set',
   'sessions.external.takeover',
+  'sessions.external.materialize.start',
+  'sessions.external.takeover.start',
+  'sessions.external.operation.cancel',
+  'sessions.external.operation.resume',
+  'sessions.external.operation.retry',
+  'sessions.external.operation.discard',
   'scm.pullRequest.openOrReuse',
   'scm.pullRequest.checkout',
   'scm.pullRequest.prepareWorktree',
@@ -1669,6 +1745,10 @@ const RESULT_OPTIONAL_DEFERRED_APPROVAL_ACTION_IDS = [
   'plugins.install',
   'plugins.uninstall',
   'plugins.reload',
+  'plugins.sessionHooks.install',
+  'plugins.sessionHooks.disable',
+  'plugins.sessionHooks.enable',
+  'plugins.sessionHooks.uninstall',
 ] as const satisfies readonly ActionId[];
 
 const RESULT_REQUIRED_APPROVAL_ACTION_ID_SET = new Set<ActionId>(RESULT_REQUIRED_APPROVAL_ACTION_IDS);
@@ -1770,7 +1850,7 @@ const PluginUninstallActionInputSchema = z.object({
 }).strict();
 
 const PluginReloadActionInputSchema = z.object({
-  pluginId: z.string().trim().min(1).optional(),
+  pluginId: z.string().trim().min(1),
 }).strict();
 
 const PluginListActionInputSchema = z.object({}).strict();
@@ -1790,8 +1870,8 @@ const PLUGIN_DEV_LOOP_ACTION_TITLES: Readonly<Record<PluginDevLoopActionId, stri
 const PLUGIN_DEV_LOOP_ACTION_DESCRIPTIONS: Readonly<Record<PluginDevLoopActionId, string>> = Object.freeze({
   'plugins.scaffold': 'Create a local plugin scaffold from the first-party template.',
   'plugins.install': 'Install a local plugin source and optionally enable the dev reload loop.',
-  'plugins.uninstall': 'Remove a local installed plugin and reload plugin runtime contributions.',
-  'plugins.reload': 'Reload plugin runtime contributions and return diagnostics.',
+  'plugins.uninstall': 'Remove a local installed plugin through the daemon-owned plugin lifecycle.',
+  'plugins.reload': 'Reload one local development plugin through the daemon-owned plugin lifecycle.',
   'plugins.list': 'List installed plugins with source and load diagnostics.',
 });
 
@@ -1889,6 +1969,292 @@ function createReviewCommentActionSpec(actionId: ReviewCommentActionIdV1): Actio
   };
 }
 
+const PLUGIN_SESSION_HOOK_MANAGEMENT_ACTION_SPECS_V1 = [
+  {
+    id: 'plugins.sessionHooks.status.get',
+    title: 'Get Agent session-hook status inventory',
+    description:
+      'Read a bounded, paginated inventory of portable External Session hook installation status rows.',
+    safety: 'safe',
+    placements: [],
+    bindings: { rpcMethod: RPC_METHODS.DAEMON_PLUGIN_SESSION_HOOKS_STATUS_GET },
+    surfaces: {
+      ui: false,
+      voice: false,
+      agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+    },
+    sideEffectClass: 'read',
+    outputSchema: PluginSessionHookStatusResponseV1Schema,
+    inputSchema: PluginSessionHookStatusInputV1Schema,
+    inputHints: { fields: [] },
+  },
+  {
+    id: 'plugins.sessionHooks.install',
+    title: 'Install Agent session hooks',
+    description: 'Explicitly install External Session hooks for one qualified Agent integration.',
+    safety: 'danger',
+    placements: [],
+    bindings: { rpcMethod: RPC_METHODS.DAEMON_PLUGIN_SESSION_HOOKS_INSTALL },
+    surfaces: {
+      ui: false,
+      voice: false,
+      agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+    },
+    sideEffectClass: 'write',
+    outputSchema: PluginSessionHookInstallResponseV1Schema,
+    inputSchema: PluginSessionHookInstallInputV1Schema,
+    inputHints: { fields: [] },
+  },
+  {
+    id: 'plugins.sessionHooks.disable',
+    title: 'Disable Agent session hooks',
+    description: 'Explicitly disable ingestion for one exact Agent hook installation without deleting its owned config.',
+    safety: 'danger',
+    placements: [],
+    bindings: { rpcMethod: RPC_METHODS.DAEMON_PLUGIN_SESSION_HOOKS_DISABLE },
+    surfaces: {
+      ui: false,
+      voice: false,
+      agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+    },
+    sideEffectClass: 'write',
+    outputSchema: PluginSessionHookToggleResponseV1Schema,
+    inputSchema: PluginSessionHookInstallationMutationInputV1Schema,
+    inputHints: { fields: [] },
+  },
+  {
+    id: 'plugins.sessionHooks.enable',
+    title: 'Enable Agent session hooks',
+    description: 'Explicitly enable ingestion for one exact Agent hook installation.',
+    safety: 'danger',
+    placements: [],
+    bindings: { rpcMethod: RPC_METHODS.DAEMON_PLUGIN_SESSION_HOOKS_ENABLE },
+    surfaces: {
+      ui: false,
+      voice: false,
+      agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+    },
+    sideEffectClass: 'write',
+    outputSchema: PluginSessionHookToggleResponseV1Schema,
+    inputSchema: PluginSessionHookInstallationMutationInputV1Schema,
+    inputHints: { fields: [] },
+  },
+  {
+    id: 'plugins.sessionHooks.uninstall',
+    title: 'Uninstall Agent session hooks',
+    description: 'Explicitly remove only the owned entries for one exact External Session hook installation.',
+    safety: 'danger',
+    placements: [],
+    bindings: { rpcMethod: RPC_METHODS.DAEMON_PLUGIN_SESSION_HOOKS_UNINSTALL },
+    surfaces: {
+      ui: false,
+      voice: false,
+      agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+    },
+    sideEffectClass: 'danger',
+    outputSchema: PluginSessionHookUninstallResponseV1Schema,
+    inputSchema: PluginSessionHookInstallationMutationInputV1Schema,
+    inputHints: { fields: [] },
+  },
+] as const satisfies readonly ActionSpecWithoutApproval[];
+
+const EXTERNAL_SESSION_OPERATION_REFERENCE_INPUT_HINT_FIELDS: ActionInputHints['fields'] = [
+  { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
+  { path: 'operationId', title: 'Operation id', widget: 'text', required: true },
+  { path: 'revision', title: 'Revision', widget: 'text', required: true },
+];
+
+const EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1 = [
+  {
+    id: 'sessions.external.materialize.start',
+    title: 'Materialize external session',
+    description: 'Start or converge on the canonical external-session materialization operation.',
+    safety: 'danger',
+    placements: [],
+    bindings: { rpcMethod: RPC_METHODS.DAEMON_EXTERNAL_SESSION_MATERIALIZE_START },
+    surfaces: {
+      ui: false,
+      voice: false,
+      agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+    },
+    sideEffectClass: 'write',
+    outputSchema: ExternalSessionOperationActionResponseV1Schema,
+    inputSchema: ExternalSessionMaterializeStartInputV1Schema,
+    inputHints: {
+      title: 'Materialize external session',
+      fields: [{ path: 'request', title: 'Operation request', widget: 'textarea', required: true }],
+    },
+  },
+  {
+    id: 'sessions.external.takeover.start',
+    title: 'Start external session takeover',
+    description: 'Start or converge on the canonical external-session takeover operation.',
+    safety: 'danger',
+    placements: [],
+    bindings: { rpcMethod: RPC_METHODS.DAEMON_EXTERNAL_SESSION_TAKEOVER_START },
+    surfaces: {
+      ui: false,
+      voice: false,
+      agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+    },
+    sideEffectClass: 'danger',
+    outputSchema: ExternalSessionOperationActionResponseV1Schema,
+    inputSchema: ExternalSessionTakeoverStartInputV1Schema,
+    inputHints: {
+      title: 'Start external session takeover',
+      fields: [{ path: 'request', title: 'Operation request', widget: 'textarea', required: true }],
+    },
+  },
+  {
+    id: 'sessions.external.operation.status.get',
+    title: 'Get external session operation status',
+    description: 'Passively read the current canonical external-session operation projection.',
+    safety: 'safe',
+    placements: [],
+    bindings: { rpcMethod: RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_STATUS_GET },
+    surfaces: {
+      ui: false,
+      voice: false,
+      agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+    },
+    sideEffectClass: 'read',
+    outputSchema: ExternalSessionOperationActionResponseV1Schema,
+    inputSchema: ExternalSessionOperationStatusInputV1Schema,
+    inputHints: {
+      title: 'Get external session operation status',
+      fields: EXTERNAL_SESSION_OPERATION_REFERENCE_INPUT_HINT_FIELDS,
+    },
+  },
+  {
+    id: 'sessions.external.operation.cancel',
+    title: 'Cancel external session operation',
+    description: 'Record an explicit cancellation intent for the current operation revision.',
+    safety: 'danger',
+    placements: [],
+    bindings: { rpcMethod: RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_CANCEL },
+    surfaces: {
+      ui: false,
+      voice: false,
+      agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+    },
+    sideEffectClass: 'write',
+    outputSchema: ExternalSessionOperationActionResponseV1Schema,
+    inputSchema: ExternalSessionOperationCancelInputV1Schema,
+    inputHints: {
+      title: 'Cancel external session operation',
+      fields: EXTERNAL_SESSION_OPERATION_REFERENCE_INPUT_HINT_FIELDS,
+    },
+  },
+  {
+    id: 'sessions.external.operation.resume',
+    title: 'Resume external session operation',
+    description: 'Explicitly resume a passively hydrated operation from its durable checkpoint.',
+    safety: 'danger',
+    placements: [],
+    bindings: { rpcMethod: RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_RESUME },
+    surfaces: {
+      ui: false,
+      voice: false,
+      agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+    },
+    sideEffectClass: 'write',
+    outputSchema: ExternalSessionOperationActionResponseV1Schema,
+    inputSchema: ExternalSessionOperationResumeInputV1Schema,
+    inputHints: {
+      title: 'Resume external session operation',
+      fields: EXTERNAL_SESSION_OPERATION_REFERENCE_INPUT_HINT_FIELDS,
+    },
+  },
+  {
+    id: 'sessions.external.operation.retry',
+    title: 'Retry external session operation',
+    description: 'Explicitly retry the canonical recovery phase at the current revision.',
+    safety: 'danger',
+    placements: [],
+    bindings: { rpcMethod: RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_RETRY },
+    surfaces: {
+      ui: false,
+      voice: false,
+      agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+    },
+    sideEffectClass: 'write',
+    outputSchema: ExternalSessionOperationActionResponseV1Schema,
+    inputSchema: ExternalSessionOperationRetryInputV1Schema,
+    inputHints: {
+      title: 'Retry external session operation',
+      fields: EXTERNAL_SESSION_OPERATION_REFERENCE_INPUT_HINT_FIELDS,
+    },
+  },
+  {
+    id: 'sessions.external.operation.discard',
+    title: 'Discard external session operation',
+    description: 'Destructively discard an eligible initial partial operation and its private staging.',
+    safety: 'danger',
+    placements: [],
+    bindings: { rpcMethod: RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_DISCARD },
+    surfaces: {
+      ui: false,
+      voice: false,
+      agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+    },
+    sideEffectClass: 'danger',
+    outputSchema: ExternalSessionOperationActionResponseV1Schema,
+    inputSchema: ExternalSessionOperationDiscardInputV1Schema,
+    inputHints: {
+      title: 'Discard external session operation',
+      fields: EXTERNAL_SESSION_OPERATION_REFERENCE_INPUT_HINT_FIELDS,
+    },
+  },
+] as const satisfies readonly ActionSpecWithoutApproval[];
+
 function resolveApprovalMetadataForActionId(actionId: ActionId): ActionApproval {
   if (RESULT_REQUIRED_APPROVAL_ACTION_ID_SET.has(actionId)) return APPROVAL_RESULT_REQUIRED;
   if (RESULT_NONE_DEFERRED_APPROVAL_ACTION_ID_SET.has(actionId)) return APPROVAL_RESULT_NONE_DEFERRED;
@@ -1902,9 +2268,12 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
   ...PLUGIN_PERMISSION_GRANT_ACTION_IDS_V1.map(createPluginPermissionGrantActionSpec),
   ...REVIEW_COMMENT_ACTION_IDS_V1.map(createReviewCommentActionSpec),
   ...RUNTIME_ACTION_SPECS,
+  ...PLUGIN_SESSION_HOOK_MANAGEMENT_ACTION_SPECS_V1,
+  ...EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1,
   {
     id: 'action.spec.search',
     title: 'Search action specs',
+    sideEffectClass: 'read',
     description: 'Search available Happier action specs by name, description, bindings, and field hints.',
     safety: 'safe',
     placements: ['voice_panel'],
@@ -1936,6 +2305,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
   {
     id: 'action.spec.get',
     title: 'Get action spec',
+    sideEffectClass: 'read',
     description: 'Get one Happier action spec with input hints and examples.',
     safety: 'safe',
     placements: ['voice_panel'],
@@ -1965,6 +2335,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
   {
     id: 'action.options.resolve',
     title: 'Resolve action options',
+    sideEffectClass: 'read',
     description: 'Resolve valid options for an action field, including dynamic options sources.',
     safety: 'safe',
     placements: ['voice_panel'],
@@ -2000,6 +2371,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
   {
     id: 'review.start',
     title: 'Start review',
+    sideEffectClass: 'external',
     safety: 'safe',
     placements: ['agent_input_chips', 'session_action_menu', 'command_palette', 'slash_command', 'voice_panel'],
     prompting: { voiceHotPath: true },
@@ -2085,6 +2457,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
   {
     id: 'subagents.plan.start',
     title: 'Start plan run',
+    sideEffectClass: 'external',
     safety: 'safe',
     placements: ['agent_input_chips', 'session_action_menu', 'command_palette', 'slash_command', 'voice_panel'],
     prompting: { voiceHotPath: true },
@@ -2151,6 +2524,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
   {
     id: 'subagents.delegate.start',
     title: 'Start delegate run',
+    sideEffectClass: 'external',
     safety: 'safe',
     placements: ['agent_input_chips', 'session_action_menu', 'command_palette', 'slash_command', 'voice_panel'],
     prompting: { voiceHotPath: true },
@@ -2217,6 +2591,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
   {
     id: 'voice_agent.start',
     title: 'Start voice agent run',
+    sideEffectClass: 'external',
     safety: 'safe',
     placements: ['voice_panel'],
     slash: { tokens: ['/h.voice'] },
@@ -2831,6 +3206,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
   {
     id: 'session.open',
     title: 'Open session',
+    sideEffectClass: 'external',
     safety: 'safe',
     placements: ['command_palette', 'session_info', 'voice_panel'],
     bindings: { voiceClientToolName: 'openSession' },
@@ -2859,11 +3235,16 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
   {
     id: 'session.fork',
     title: 'Fork session',
+    sideEffectClass: 'write',
     description: 'Create a new session from the latest state of the selected session.',
     safety: 'safe',
     placements: ['session_action_menu', 'session_info', 'command_palette', 'slash_command', 'voice_panel', 'agent_input_chips'],
     slash: { tokens: ['fork'] },
-    bindings: { voiceClientToolName: 'forkSession', rpcMethod: 'session.fork' },
+    bindings: {
+      voiceClientToolName: 'forkSession',
+      rpcMethod: 'session.fork',
+      rpcMethodAliases: [RPC_METHODS.SESSION_FORK_PROVIDER_SAFE],
+    },
     examples: {
       voice: { argsExample: '{"sessionId":"{{sessionId}}"}' },
     },
@@ -3095,8 +3476,36 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       title: 'Get handoff prepare-target result',
       fields: [{ path: 'handoffId', title: 'Handoff id', widget: 'text', required: true }],
     },
-    outputSchema: z.unknown(),
+    outputSchema: SessionHandoffPrepareTargetResultGetResponseSchema,
     inputSchema: SessionHandoffPrepareTargetResultGetRequestSchema,
+  },
+  {
+    id: 'session.handoff.prepare_target.resume',
+    title: 'Resume interrupted session handoff target preparation',
+    description: 'Explicitly continue one interrupted prepare-target job at its current durable revision.',
+    safety: 'safe',
+    placements: [],
+    bindings: { rpcMethod: 'daemon.sessionHandoff.prepareTarget.resume' },
+    surfaces: {
+      ui: false,
+      voice: false,
+      agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+    },
+    inputHints: {
+      title: 'Resume interrupted handoff preparation',
+      fields: [
+        { path: 'handoffId', title: 'Handoff id', widget: 'text', required: true },
+        { path: 'jobId', title: 'Job id', widget: 'text', required: true },
+        { path: 'expectedRevision', title: 'Expected revision', widget: 'text', required: true },
+        { path: 'attemptId', title: 'Attempt id', widget: 'text', required: true },
+      ],
+    },
+    outputSchema: SessionHandoffPrepareTargetResumeResponseSchema,
+    inputSchema: SessionHandoffPrepareTargetResumeRequestSchema,
   },
   {
     id: 'session.handoff.commit',
@@ -3173,10 +3582,16 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
   {
     id: 'session.spawn_new',
     title: 'Create session',
+    sideEffectClass: 'write',
     safety: 'safe',
     placements: ['command_palette', 'session_info', 'voice_panel'],
     prompting: { voiceHotPath: true },
-    bindings: { voiceClientToolName: 'spawnSession', mcpToolName: 'session_spawn_new', rpcMethod: 'spawn-happy-session' },
+    bindings: {
+      voiceClientToolName: 'spawnSession',
+      mcpToolName: 'session_spawn_new',
+      rpcMethod: 'spawn-happy-session',
+      rpcMethodAliases: [RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE],
+    },
     examples: {
       voice: { argsExample: '{"tag":"voice-qa","agentId":"claude","modelId":"default","initialMessage":"Help me inspect this workspace."}' },
     },
@@ -3220,6 +3635,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
   {
     id: 'session.spawn_picker',
     title: 'Create session (picker)',
+    sideEffectClass: 'write',
     description: 'Open the in-app machine + directory picker and create a new session from the user selection.',
     safety: 'safe',
     placements: ['voice_panel'],
@@ -3254,6 +3670,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
   {
     id: 'paths.list_recent',
     title: 'List recent paths',
+    sideEffectClass: 'read',
     description: 'List recent workspace directory handles (optionally filtered to a machine).',
     safety: 'safe',
     placements: ['voice_panel'],
@@ -3283,6 +3700,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
   {
     id: 'machines.list',
     title: 'List machines',
+    sideEffectClass: 'read',
     description: 'List machines available on the active server scope.',
     safety: 'safe',
     placements: ['voice_panel'],
@@ -3309,6 +3727,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
   {
     id: 'servers.list',
     title: 'List servers',
+    sideEffectClass: 'read',
     description: 'List servers configured in the client.',
     safety: 'safe',
     placements: ['voice_panel'],
@@ -3335,6 +3754,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
   {
     id: 'review.engines.list',
     title: 'List review engines',
+    sideEffectClass: 'read',
     description: 'List review engines currently available for the active session.',
     safety: 'safe',
     placements: ['voice_panel'],
@@ -3364,6 +3784,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
   {
     id: 'agents.backends.list',
     title: 'List agent backends',
+    sideEffectClass: 'read',
     description: 'List available agent backends (providers) for spawning sessions.',
     safety: 'safe',
     placements: ['voice_panel'],
@@ -3395,6 +3816,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
   {
     id: 'agents.models.list',
     title: 'List agent models',
+    sideEffectClass: 'read',
     description: 'List available models for an agent backend.',
     safety: 'safe',
     placements: ['voice_panel'],
@@ -3427,6 +3849,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
   {
     id: 'agents.config_options.list',
     title: 'List agent config options',
+    sideEffectClass: 'read',
     description: 'List configurable option definitions for an agent backend without exposing current values.',
     safety: 'safe',
     placements: ['voice_panel'],
@@ -3460,6 +3883,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
   {
     id: 'agents.session_modes.list',
     title: 'List agent session modes',
+    sideEffectClass: 'read',
     description: 'List session modes available for an agent backend.',
     safety: 'safe',
     placements: ['voice_panel'],
@@ -3492,6 +3916,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
   {
     id: 'sessions.spawn.profiles.list',
     title: 'List spawn profiles',
+    sideEffectClass: 'read',
     description: 'List backend profile references available for new sessions without exposing secret bindings.',
     safety: 'safe',
     placements: ['voice_panel'],
@@ -3523,6 +3948,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
   {
     id: 'sessions.spawn.connected_services.list',
     title: 'List spawn connected services',
+    sideEffectClass: 'read',
     description: 'List connected-service references available for new sessions without exposing credentials.',
     safety: 'safe',
     placements: ['voice_panel'],
@@ -3554,6 +3980,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
   {
     id: 'sessions.spawn.mcp_servers.preview',
     title: 'Preview spawn MCP servers',
+    sideEffectClass: 'read',
     description: 'Preview MCP servers that would be available to a new session.',
     safety: 'safe',
     placements: ['voice_panel'],
@@ -3589,6 +4016,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
   {
     id: 'session.message.send',
     title: 'Send a message to a session',
+    sideEffectClass: 'external',
     description: 'Send a user message to the AI coding assistant inside the specified session.',
     safety: 'safe',
     placements: ['voice_panel'],
@@ -3679,6 +4107,36 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     },
     outputSchema: SessionTerminalComposerClearResultV1Schema,
     inputSchema: SessionTerminalComposerClearRequestV1Schema,
+  },
+  {
+    id: 'session.pendingInput.interruptAndRun',
+    title: 'Interrupt and run now',
+    description: 'Interrupt the live provider turn so its exact native queued prompt can run now.',
+    safety: 'danger',
+    sideEffectClass: 'danger',
+    placements: ['pending_messages'],
+    bindings: {
+      rpcMethod: SESSION_RPC_METHODS.SESSION_PENDING_INPUT_INTERRUPT_AND_RUN,
+    },
+    surfaces: {
+      ui: true,
+      voice: false,
+      agent: false,
+      mcp: false,
+      cli: true,
+      rpc: true,
+      sdk: false,
+    },
+    inputHints: {
+      title: 'Interrupt and run now',
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
+        { path: 'localId', title: 'Pending message local id', widget: 'text', required: true },
+        { path: 'expectedStateAtMs', title: 'Expected state timestamp', widget: 'text' },
+      ],
+    },
+    outputSchema: SessionPendingInputInterruptAndRunResultV1Schema,
+    inputSchema: SessionPendingInputInterruptAndRunRequestV1Schema,
   },
   {
     id: 'session.title.set',
@@ -4225,6 +4683,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
   {
     id: 'session.transcript.get',
     title: 'Get session transcript',
+    sideEffectClass: 'read',
     description: 'Read the semantic transcript for a session as clean user/assistant messages with optional tool/reasoning/event flags.',
     safety: 'safe',
     placements: ['voice_panel'],
@@ -4321,17 +4780,14 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
   {
     id: 'session.permission.respond',
     title: 'Respond to permission request',
+    sideEffectClass: 'write',
     description: 'Approve or deny an active permission request in a session.',
     safety: 'safe',
-    placements: ['voice_panel'],
-    prompting: { voiceHotPath: true },
-    bindings: { voiceClientToolName: 'processPermissionRequest', mcpToolName: 'session_permission_respond', rpcMethod: 'session.permission.respond' },
-    examples: {
-      voice: { argsExample: '{"sessionId":"{{sessionId}}","decision":"allow"}' },
-    },
+    placements: [],
+    bindings: { mcpToolName: 'session_permission_respond', rpcMethod: 'session.permission.respond' },
     surfaces: {
       ui: true,
-      voice: true,
+      voice: false,
       agent: true,
       mcp: true,
       cli: true,
@@ -4361,6 +4817,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
   {
     id: 'session.user_action.answer',
     title: 'Respond to user-action request',
+    sideEffectClass: 'write',
     description: 'Approve, reject, request changes, or provide structured answers for an active user-action request.',
     safety: 'safe',
     placements: ['voice_panel'],
@@ -4369,7 +4826,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     examples: {
       voice: {
         argsExample:
-          '{"sessionId":"{{sessionId}}","answers":[{"question":"Continue?","answer":"Yes"}]}',
+          '{"sessionId":"{{sessionId}}","answers":[{"question":"Continue?","values":["Yes"]}]}',
       },
     },
     surfaces: {
@@ -4412,7 +4869,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
         {
           path: 'answers.[]',
           title: 'Answer entry',
-          description: 'One question/answer pair for the pending request.',
+          description: 'One question and its ordered answer values for the pending request.',
           widget: 'textarea',
         },
         {
@@ -4423,9 +4880,9 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
           required: true,
         },
         {
-          path: 'answers.[].answer',
-          title: 'Answer',
-          description: 'The answer text to send back for that question.',
+          path: 'answers.[].values',
+          title: 'Answer values',
+          description: 'The exact ordered answer values to send back for that question.',
           widget: 'text',
           required: true,
         },
@@ -4437,6 +4894,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
   {
     id: 'session.mode.set',
     title: 'Set session mode',
+    sideEffectClass: 'write',
     description: 'Request a new ACP session mode for the current session when the active provider supports session modes.',
     safety: 'safe',
     placements: ['voice_panel'],
@@ -4474,6 +4932,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
   {
     id: 'session.target.primary.set',
     title: 'Set primary action session',
+    sideEffectClass: 'write',
     description: 'Set which session the voice assistant should target by default.',
     safety: 'safe',
     placements: ['voice_panel'],
@@ -4504,6 +4963,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
   {
     id: 'session.target.tracked.set',
     title: 'Set tracked sessions',
+    sideEffectClass: 'write',
     description: 'Set which sessions should be treated as tracked for updates/snippets.',
     safety: 'safe',
     placements: ['voice_panel'],
@@ -4530,6 +4990,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
   {
     id: 'session.list',
     title: 'List sessions',
+    sideEffectClass: 'read',
     description: 'List recent sessions the user can target.',
     safety: 'safe',
     placements: ['voice_panel'],
@@ -4561,6 +5022,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
   {
     id: 'session.activity.get',
     title: 'Get session activity',
+    sideEffectClass: 'read',
     description: 'Get a short activity digest for a session without transcript content.',
     safety: 'safe',
     placements: ['voice_panel'],
@@ -4622,6 +5084,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
   {
     id: 'ui.voice_global.reset',
     title: 'Reset voice agent',
+    sideEffectClass: 'write',
     safety: 'safe',
     placements: ['voice_panel', 'command_palette', 'slash_command'],
     slash: { tokens: ['/h.voice.reset'] },
@@ -4673,6 +5136,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
   {
     id: 'ui.voice_agent.teleport',
     title: 'Teleport voice agent to session root',
+    sideEffectClass: 'write',
     description: 'Move the daemon-backed voice agent into the current or specified session root.',
     safety: 'safe',
     placements: ['voice_panel'],
@@ -4700,6 +5164,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
   {
     id: 'memory.search',
     title: 'Search memory',
+    sideEffectClass: 'read',
     description: 'Search the local daemon memory index (opt-in).',
     safety: 'safe',
     placements: ['voice_panel', 'command_palette'],
@@ -4756,6 +5221,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
   {
     id: 'memory.get_window',
     title: 'Get memory window',
+    sideEffectClass: 'read',
     description: 'Fetch and decrypt a transcript window (used to verify/quote a memory hit).',
     safety: 'safe',
     placements: ['voice_panel'],
@@ -4789,6 +5255,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
   {
     id: 'memory.ensure_up_to_date',
     title: 'Ensure memory up to date',
+    sideEffectClass: 'write',
     description: 'Trigger the daemon to sync memory hints for a session (or all active sessions).',
     safety: 'safe',
     placements: ['voice_panel'],
@@ -5583,14 +6050,13 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     },
   },
   {
-    id: 'sessions.external.followPolicy.set',
+    id: 'sessions.external.backgroundFollow.set',
     title: 'Set external session follow policy',
     description: 'Enable or disable background following for an external session.',
     safety: 'danger',
     placements: [],
     bindings: {
-      rpcMethod: RPC_METHODS.DAEMON_EXTERNAL_SESSION_FOLLOW_POLICY_SET,
-      rpcMethodAliases: [RPC_METHODS.DAEMON_DIRECT_SESSION_FOLLOW_POLICY_SET_LEGACY],
+      rpcMethod: RPC_METHODS.DAEMON_EXTERNAL_SESSION_BACKGROUND_FOLLOW_SET,
     },
     surfaces: {
       ui: false,
@@ -5710,8 +6176,14 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       sdk: true,
     },
     sideEffectClass: 'read',
-    outputSchema: ExternalSessionTranscriptReadAfterResponseSchema,
-    inputSchema: ExternalSessionTranscriptReadAfterRequestSchema,
+    outputSchema: z.union([
+      ExternalSessionTranscriptReadAfterResponseSchema,
+      ExternalSessionTranscriptRefreshReadAfterResponseV1Schema,
+    ]),
+    inputSchema: z.union([
+      ExternalSessionTranscriptReadAfterRequestSchema,
+      ExternalSessionTranscriptRefreshReadAfterRequestV1Schema,
+    ]),
     inputHints: {
       title: 'Read external session transcript after cursor',
       fields: [
@@ -5763,7 +6235,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
           { value: 'external-linked', label: 'External linked' },
           { value: 'persisted', label: 'Persisted' },
         ] },
-        { path: 'forceStop', title: 'Force stop conflicting owner', widget: 'toggle' },
       ],
     },
   },
@@ -6374,6 +6845,19 @@ export function listActionSpecsForSurface(surface: keyof ActionSurfaces): readon
 
 export function listVoiceToolActionSpecs(): readonly ActionSpec[] {
   return listActionSpecsForSurface('voice').filter((spec) => Boolean(spec.bindings?.voiceClientToolName));
+}
+
+/**
+ * Canonical tool projection for provider SDK callbacks that cannot retain a
+ * stable host call/result identity across reconnects. Such callbacks may
+ * expose only none/read actions and must never advertise mutations.
+ */
+export function isVoiceSdkSafeActionSpec(spec: ActionSpec): boolean {
+  return spec.sideEffectClass === 'none' || spec.sideEffectClass === 'read';
+}
+
+export function listVoiceSdkSafeToolActionSpecs(): readonly ActionSpec[] {
+  return listVoiceToolActionSpecs().filter(isVoiceSdkSafeActionSpec);
 }
 
 export function isVoicePromptHotPathSpec(spec: ActionSpec): boolean {

@@ -1,13 +1,119 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
+import { parseAntigravityTranscriptJsonl } from './jsonl.js';
 import {
   mapAntigravityTranscriptRecordToStep,
   mapAntigravityTranscriptRecordsToSteps,
   mapAntigravityTranscriptRecordToSteps,
   mapAntigravityTranscriptStepsToRuntimeEvents,
+  projectAntigravityTranscriptRecordsToExternalItems,
 } from './mapper.js';
 
 describe('Antigravity cliPrint transcript mapper', () => {
+  it('classifies the sanitized source fixture once for cliPrint, external, and terminal consumers', () => {
+    const records = parseAntigravityTranscriptJsonl(readFileSync(
+      new URL('./__fixtures__/transcript_full.semantic.sanitized.jsonl', import.meta.url),
+      'utf8',
+    ));
+    const classify = () => mapAntigravityTranscriptRecordsToSteps(records, {
+      generatedIdNamespace: 'fixture-conversation',
+    });
+    const expected = [
+      {
+        id: 'antigravity-turn-fixture-conversation-step-1',
+        kind: 'user_message',
+        text: 'Inspect the demo workspace.',
+      },
+      {
+        id: 'antigravity-turn-fixture-conversation-step-2',
+        kind: 'assistant_message',
+        text: 'I will inspect the demo files.',
+      },
+      {
+        id: 'antigravity-turn-fixture-conversation-step-2-tool-1',
+        kind: 'tool_call',
+        toolName: 'list_dir',
+        input: { path: '.' },
+      },
+      {
+        id: 'antigravity-turn-fixture-conversation-step-2-tool-2',
+        kind: 'tool_call',
+        toolName: 'view_file',
+        input: { path: 'README.md' },
+      },
+      {
+        id: 'antigravity-turn-fixture-conversation-step-3',
+        kind: 'tool_result',
+        toolCallId: 'antigravity-turn-fixture-conversation-step-2-tool-1',
+        output: ['README.md', 'src'],
+      },
+      {
+        id: 'antigravity-turn-fixture-conversation-step-5',
+        kind: 'tool_result',
+        toolCallId: 'antigravity-turn-fixture-conversation-step-2-tool-2',
+        output: '# Demo workspace',
+      },
+      {
+        id: 'antigravity-turn-fixture-conversation-step-6',
+        kind: 'checkpoint',
+        checkpointId: 'checkpoint-redacted',
+      },
+      {
+        id: 'antigravity-turn-fixture-conversation-step-7',
+        kind: 'system_message',
+        text: 'Compacted sanitized context.',
+      },
+    ];
+
+    const cliPrintClassification = classify();
+    const externalClassification = classify();
+    const terminalClassification = classify();
+
+    expect(cliPrintClassification).toEqual(expected);
+    expect(externalClassification).toEqual(cliPrintClassification);
+    expect(terminalClassification).toEqual(cliPrintClassification);
+  });
+
+  it('projects external transcript items from the same semantic classifier with byte-stable fallback ids', () => {
+    expect(projectAntigravityTranscriptRecordsToExternalItems({
+      conversationId: 'conversation-1',
+      records: [
+        {
+          record: {
+            type: 'PLANNER_RESPONSE',
+            text: 'I will inspect it.',
+            tool_calls: [{ name: 'list_dir', args: { path: '.' } }],
+            created_at: '2026-07-23T08:00:00Z',
+          },
+          startOffsetBytes: 41,
+          endOffsetBytes: 200,
+        },
+      ],
+    })).toEqual([
+      {
+        id: 'antigravity-conversation-1-byte-41-item-1',
+        createdAtMs: Date.parse('2026-07-23T08:00:00Z'),
+        messageRole: 'agent',
+        raw: { type: 'text', text: 'I will inspect it.' },
+      },
+      {
+        id: 'antigravity-turn-conversation-1-byte-41-tool-1',
+        createdAtMs: Date.parse('2026-07-23T08:00:00Z'),
+        localId: 'antigravity-turn-conversation-1-byte-41-tool-1',
+        messageRole: 'event',
+        raw: {
+          type: 'tool-call',
+          callId: 'antigravity-turn-conversation-1-byte-41-tool-1',
+          name: 'list_dir',
+          input: { path: '.' },
+          id: 'antigravity-turn-conversation-1-byte-41-tool-1',
+        },
+      },
+    ]);
+  });
+
   it('maps observed user, assistant, tool, checkpoint, and system records to Antigravity steps', () => {
     expect([
       mapAntigravityTranscriptRecordToStep({ type: 'user_input', text: 'hello' }),

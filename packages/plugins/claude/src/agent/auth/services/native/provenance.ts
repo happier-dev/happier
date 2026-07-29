@@ -18,6 +18,9 @@ export type ClaudeCodeNativeAuthProvenanceV1 = Readonly<{
     credentialProfileId: string;
     credentialCreatedAt: number;
     credentialFingerprint?: string | undefined;
+    groupId?: string | undefined;
+    generation?: number | undefined;
+    credentialRevision?: string | undefined;
 }>;
 
 function readObject(value: unknown): Record<string, unknown> | null {
@@ -46,6 +49,9 @@ export function resolveClaudeCodeNativeAuthProvenancePath(claudeConfigDir: strin
 export function buildClaudeCodeNativeAuthProvenance(params: Readonly<{
     record: ConnectedServiceCredentialRecordV1;
     payload: ClaudeCodeNativeCredentialPayload;
+    groupId?: string;
+    generation?: number;
+    credentialRevision?: string;
 }>): ClaudeCodeNativeAuthProvenanceV1 {
     return {
         v: 1,
@@ -53,6 +59,9 @@ export function buildClaudeCodeNativeAuthProvenance(params: Readonly<{
         credentialProfileId: params.record.profileId,
         credentialCreatedAt: params.record.createdAt,
         credentialFingerprint: computeClaudeCodeCredentialFingerprint(params.payload),
+        ...(params.groupId ? { groupId: params.groupId } : {}),
+        ...(params.generation !== undefined ? { generation: params.generation } : {}),
+        ...(params.credentialRevision ? { credentialRevision: params.credentialRevision } : {}),
     };
 }
 
@@ -63,12 +72,18 @@ export function parseClaudeCodeNativeAuthProvenance(value: unknown): ClaudeCodeN
     const credentialCreatedAt = readFiniteNumber(root.credentialCreatedAt);
     if (!credentialProfileId || credentialCreatedAt === null) return null;
     const credentialFingerprint = readCredentialFingerprint(root.credentialFingerprint);
+    const groupId = readNonEmptyString(root.groupId);
+    const generation = readFiniteNumber(root.generation);
+    const credentialRevision = readNonEmptyString(root.credentialRevision);
     return {
         v: 1,
         serviceId: 'claude-subscription',
         credentialProfileId,
         credentialCreatedAt,
         ...(credentialFingerprint ? { credentialFingerprint } : {}),
+        ...(groupId ? { groupId } : {}),
+        ...(generation !== null && Number.isInteger(generation) && generation >= 0 ? { generation } : {}),
+        ...(credentialRevision ? { credentialRevision } : {}),
     };
 }
 

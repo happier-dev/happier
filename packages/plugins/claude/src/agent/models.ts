@@ -49,6 +49,12 @@ function withClaudeModelFacts(model: AgentModelDescriptor): AgentModelDescriptor
 
 const CLAUDE_STATIC_MODEL_BASE = [
     {
+        id: 'claude-opus-5',
+        name: 'Opus 5',
+        description: 'Latest highest-capability Claude model for the hardest coding and reasoning tasks.',
+        contextWindowTokens: 1_000_000,
+    },
+    {
         id: 'claude-fable-5',
         name: 'Fable 5',
         description: 'Newest highest-capability generally available Claude model for the hardest coding and reasoning tasks.',

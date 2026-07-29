@@ -9,5 +9,4 @@ export type WorkflowActivityObservationLike = Readonly<{
   startedRunIds: readonly string[];
   terminalRunIds: readonly string[];
   statusChangedRunIds: readonly string[];
-  runtimeActivityRunIds?: readonly string[];
 }>;

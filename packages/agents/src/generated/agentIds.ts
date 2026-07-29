@@ -13,6 +13,7 @@ export const AGENT_IDS = Object.freeze([
   'opencode',
   'antigravity',
   'gemini',
+  'grok',
   'auggie',
   'qwen',
   'kimi',

@@ -11,7 +11,7 @@ import {
   type ScmRemoteManagementResponse,
   type ScmRemotePublishResponse,
   type ScmWorkingSnapshot,
-} from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ScmBackendContext } from '../types.js';

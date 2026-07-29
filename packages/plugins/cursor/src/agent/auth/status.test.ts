@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
-import type { EnvRuntimeServiceV1, ExecRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
-
 import * as cursorAuthModule from './status.js';
 import { resolveCursorAuthStatus } from './status.js';
 
+type CursorAuthProbeParams = Parameters<typeof cursorAuthModule.checkCursorAuthStatus>[0];
+
 type CursorAuthModuleWithProbe = typeof cursorAuthModule & Readonly<{
   checkCursorAuthStatus?: (params: Readonly<{
-    env: Pick<EnvRuntimeServiceV1, 'get'>;
-    exec: Pick<ExecRuntimeServiceV1, 'run'>;
+    env: CursorAuthProbeParams['env'];
+    exec: CursorAuthProbeParams['exec'];
     executablePath: string;
   }>) => Promise<ReturnType<typeof resolveCursorAuthStatus>>;
 }>;
@@ -49,10 +49,10 @@ describe('resolveCursorAuthStatus', () => {
 
   it('runs cursor about through exec with materialized api-key env', async () => {
     const launches: unknown[] = [];
-    const env: Pick<EnvRuntimeServiceV1, 'get'> = {
+    const env: CursorAuthProbeParams['env'] = {
       get: (name) => (name === 'CURSOR_API_KEY' ? ' cursor-key ' : null),
     };
-    const exec: Pick<ExecRuntimeServiceV1, 'run'> = {
+    const exec: CursorAuthProbeParams['exec'] = {
       run: async (launch) => {
         launches.push(launch);
         return {

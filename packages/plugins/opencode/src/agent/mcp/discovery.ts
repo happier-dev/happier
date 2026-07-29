@@ -6,7 +6,7 @@ import {
     normalizeDetectedMcpServerV1,
     type DaemonMcpServersDetectWarningV1,
     type DetectedMcpServerV1,
-} from '@happier-dev/plugin-sdk/mcp';
+} from '@happier-dev/plugin-sdk/experimental/mcp';
 
 export type ReadOpenCodeMcpConfigServersResult = Readonly<{
     servers: ReadonlyArray<DetectedMcpServerV1>;

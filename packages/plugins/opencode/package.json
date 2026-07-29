@@ -10,6 +10,10 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./manifest": {
+      "types": "./dist/manifest.d.ts",
+      "default": "./dist/manifest.js"
+    },
     "./agent/contributions/runtime": {
       "types": "./dist/agent/contributions/runtime.d.ts",
       "default": "./dist/agent/contributions/runtime.js"
@@ -21,14 +25,6 @@
     "./agent/auth/services/materialize": {
       "types": "./dist/agent/auth/services/materialize.d.ts",
       "default": "./dist/agent/auth/services/materialize.js"
-    },
-    "./agent/auth/services/broker/capabilityToken": {
-      "types": "./dist/agent/auth/services/broker/capabilityToken.d.ts",
-      "default": "./dist/agent/auth/services/broker/capabilityToken.js"
-    },
-    "./agent/auth/services/broker/loadHandshake": {
-      "types": "./dist/agent/auth/services/broker/loadHandshake.d.ts",
-      "default": "./dist/agent/auth/services/broker/loadHandshake.js"
     },
     "./agent/auth/services/resumeReachability": {
       "types": "./dist/agent/auth/services/resumeReachability.d.ts",
@@ -93,10 +89,6 @@
     "./protocol/runtimeDescriptorV1": {
       "types": "./dist/protocol/runtimeDescriptorV1.d.ts",
       "default": "./dist/protocol/runtimeDescriptorV1.js"
-    },
-    "./ui": {
-      "types": "./dist/ui/index.d.ts",
-      "default": "./dist/ui/index.js"
     }
   },
   "files": [
@@ -105,12 +97,14 @@
   ],
   "scripts": {
     "tsc": "node ../../../scripts/workspaces/runTypeScriptCli.mjs",
-    "build": "node ../../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.json",
+    "build": "node ../../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
     "test": "vitest run",
     "typecheck": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@happier-dev/agents": "0.0.0",
     "@happier-dev/plugin-sdk": "0.0.0",
+    "@happier-dev/protocol": "0.0.0",
     "zod": "4.3.6"
   },
   "devDependencies": {

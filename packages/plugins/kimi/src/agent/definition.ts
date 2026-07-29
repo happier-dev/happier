@@ -30,50 +30,6 @@ export const AGENT_DEFINITION = Object.freeze({
     defaultMode: 'default',
     allowedModes: ['default'],
   },
-  authProbeConfig: {
-    agentId: KIMI_AGENT_ID,
-    binaryNames: ['kimi'],
-    statusCommand: null,
-    parser: 'unknown',
-    backgroundChecks: 'safe',
-  },
-  localCli: {
-    agentId: KIMI_AGENT_ID,
-    detectKey: 'kimi',
-    machineLoginKey: 'kimi',
-    supportKind: 'login_terminal',
-    loginLaunch: {
-      command: 'kimi',
-      args: ['login'],
-    },
-  },
-  agentCliRuntime: {
-    id: KIMI_AGENT_ID,
-    title: 'Kimi CLI',
-    binaryName: 'kimi',
-    knownUserBinDirSuffixes: ['.local/bin'],
-    sourcePreferenceDefault: 'system-first',
-    managedInstall: null,
-    manualInstallKind: 'vendor_recipe',
-    manualInstallRecipes: {
-      darwin: [{ cmd: 'bash', args: ['-lc', 'curl -fsSL https://code.kimi.com/install.sh | bash'] }],
-      linux: [{ cmd: 'bash', args: ['-lc', 'curl -fsSL https://code.kimi.com/install.sh | bash'] }],
-      win32: [{
-        cmd: 'powershell',
-        args: [
-          '-NoProfile',
-          '-ExecutionPolicy',
-          'Bypass',
-          '-Command',
-          'Invoke-RestMethod https://code.kimi.com/install.ps1 | Invoke-Expression',
-        ],
-      }],
-    },
-    acceptsJavaScriptFileOverride: false,
-    installGuideUrl: 'https://kimi.moonshot.cn/docs/cli',
-    docsUrl: 'https://code.kimi.com',
-  },
-  agentSettings: null,
   runtimeContributions: {
     agentCatalogEntry: {
       importName: 'KIMI_AGENT_RUNTIME_CONTRIBUTION',

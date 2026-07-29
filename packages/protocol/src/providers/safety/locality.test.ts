@@ -27,6 +27,7 @@ describe('provider IP locality', () => {
     '::',
     'ff02::1',
     'fd00:ec2::254',
+    'fd20:ce::254',
     '::ffff:169.254.169.254',
     '::ffff:100.100.100.200',
     '::127.0.0.1',
@@ -77,7 +78,7 @@ describe('provider IP locality', () => {
 
     // IPv6 special-purpose rows and longest-prefix exceptions.
     ['::', 'unsafe'], ['::1', 'loopback'],
-    ['64:ff9b:1::', 'private'], ['64:ff9b:1:ffff:ffff:ffff:ffff:ffff', 'private'], ['64:ff9b:2::', 'unsafe'],
+    ['64:ff9b:1::', 'unsafe'], ['64:ff9b:1:ffff:ffff:ffff:ffff:ffff', 'unsafe'], ['64:ff9b:2::', 'unsafe'],
     ['100::', 'unsafe'], ['100::ffff:ffff:ffff:ffff', 'unsafe'], ['100:0:0:2::', 'unsafe'],
     ['100:0:0:1::', 'unsafe'], ['100:0:0:1:ffff:ffff:ffff:ffff', 'unsafe'],
     ['2001:5::', 'unsafe'], ['2001:1ff:ffff:ffff:ffff:ffff:ffff:ffff', 'unsafe'], ['2001:200::', 'public'],
@@ -98,12 +99,13 @@ describe('provider IP locality', () => {
     ['fec0::', 'private'], ['feff:ffff:ffff:ffff:ffff:ffff:ffff:ffff', 'private'],
     ['ff00::', 'unsafe'], ['ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff', 'unsafe'],
     ['fd00:ec2::254', 'unsafe'],
+    ['fd20:ce::254', 'unsafe'],
   ] as const)('applies the registry-derived locality policy to %s as %s', (address, locality) => {
     expect(parseProviderIpAddress(address)?.locality).toBe(locality);
   });
 
   it.each([
-    // IPv4-mapped, well-known NAT64, and 6to4 embed a source-real IPv4 address.
+    // IPv4-mapped, RFC 6052 NAT64, and 6to4 embed a source-real IPv4 address.
     ['::ffff:0.0.0.0', 'unsafe'],
     ['::ffff:192.0.0.9', 'public'],
     ['::ffff:10.0.0.1', 'private'],
@@ -116,6 +118,16 @@ describe('provider IP locality', () => {
     ['64:ff9b::127.0.0.1', 'loopback'],
     ['64:ff9b::169.254.169.254', 'unsafe'],
     ['64:ff9b::255.255.255.255', 'unsafe'],
+    // RFC 8215 local-use /48 keeps machine-local scope for otherwise-safe
+    // destinations, but every RFC 6052 layout that can be nested beneath the
+    // reservation must still deny an embedded metadata destination.
+    ['64:ff9b:1:a9fe:a9:fe00::', 'unsafe'],
+    ['64:ff9b:1:42a9:fe:a9fe::', 'unsafe'],
+    ['64:ff9b:1:4242:a9:fea9:fe00:0', 'unsafe'],
+    ['64:ff9b:1:4242:42:4242:a9fe:a9fe', 'unsafe'],
+    ['64:ff9b:1:c0a8:1:101:5db8:d822', 'private'],
+    ['64:ff9b:1:5db8:d8:2201:5db8:d822', 'private'],
+    ['64:ff9b:1:a00:100:100::', 'unsafe'],
     ['2002:0000:0000::', 'unsafe'],
     ['2002:c000:0009::', 'public'],
     ['2002:0a00:0001::', 'private'],

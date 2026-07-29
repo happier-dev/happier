@@ -28,6 +28,13 @@ export function isCodexAppServerNoActiveTurnToSteerError(error: unknown): boolea
     return /\bno\s+active\s+turn\s+to\s+steer\b/i.test(error.message);
 }
 
+export function isCodexAppServerNoActiveTurnToInterruptError(error: unknown): boolean {
+    if (!(error instanceof Error)) return false;
+    const method = (error as Partial<CodexAppServerRpcError>).method;
+    if (typeof method === 'string' && method !== 'turn/interrupt') return false;
+    return /\bno\s+active\s+turn\s+to\s+interrupt\b/i.test(error.message);
+}
+
 function readCode(error: unknown): number | string | null {
     if (!error || typeof error !== 'object') return null;
     const code = (error as { code?: unknown }).code;
@@ -81,6 +88,14 @@ export function isCodexAppServerInvalidRequestForMethodError(error: unknown, met
     const errorMethod = (error as { method?: unknown }).method;
     if (errorMethod === method) return true;
     return readMessage(error).includes(method);
+}
+
+export function isCodexAppServerApplicationRejectionForMethod(
+    error: unknown,
+    method: string,
+): boolean {
+    if (!(error instanceof Error) || error.name !== 'JsonRpcApplicationError') return false;
+    return (error as Partial<CodexAppServerRpcError>).method === method;
 }
 
 export function isCodexAppServerExperimentalApiUnavailableError(error: unknown): boolean {

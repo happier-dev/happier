@@ -1,8 +1,132 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import * as protocol from './index.js';
+import type { PluginConnectedAccountConfigurationFieldV2 } from './index.js';
+import type { PluginConfigurationSettingFieldV2 } from './index.js';
+
+// @ts-expect-error — retired author identity has no stable type export.
+type RetiredExtensionId = import('./index.js').ExtensionId;
+// @ts-expect-error — retired manifest author contract has no stable type export.
+type RetiredExtensionManifest = import('./index.js').ExtensionManifestV2;
+// @ts-expect-error — retired contribution union has no stable type export.
+type RetiredExtensionContribution = import('./index.js').ExtensionContributionV2;
+// @ts-expect-error — retired reload vocabulary has no stable type export.
+type RetiredExtensionReload = import('./index.js').ExtensionReloadRequestV1;
+// @ts-expect-error — static hook/export-name binding is retired from the public protocol ABI.
+type RetiredHookRegistration = import('./index.js').HookRegistrationV1;
+void (null as unknown as RetiredExtensionId);
+void (null as unknown as RetiredExtensionManifest);
+void (null as unknown as RetiredExtensionContribution);
+void (null as unknown as RetiredExtensionReload);
+void (null as unknown as RetiredHookRegistration);
 
 describe('protocol package root exports', () => {
+    it('does not expose the retired Extension author/runtime vocabulary', () => {
+        const retired = Object.keys(protocol).filter((name) => (
+            name.startsWith('Extension')
+            || name.startsWith('getExtension')
+            || name === 'encodeExtensionIdForFilesystem'
+        ));
+
+        expect(retired).toEqual([]);
+    });
+
+    it('exports the canonical Pending requested-action contract', () => {
+        expectTypeOf<protocol.PendingRequestedActionV1>().not.toBeNever();
+        expect(protocol.PendingRequestedActionV1Schema.parse({ v: 1, kind: 'send_now' }))
+            .toEqual({ v: 1, kind: 'send_now' });
+    });
+
+    it('exports the strict Session metadata privacy contracts', () => {
+        expect(typeof protocol.SessionMetadataEnvelopeTupleV1Schema.safeParse)
+            .toBe('function');
+        expect(typeof protocol.SessionMetadataTuplePatchV1Schema.safeParse)
+            .toBe('function');
+        expect(typeof protocol.SessionMetadataTuplePatchSuccessV1Schema.safeParse)
+            .toBe('function');
+        expect(typeof protocol.SessionMetadataRecipientProjectionV1Schema.safeParse)
+            .toBe('function');
+        expect(typeof protocol.SessionMetadataVersionConflictV1Schema.safeParse)
+            .toBe('function');
+        expect(typeof protocol.SessionMetadataActiveConflictV1Schema.safeParse)
+            .toBe('function');
+        expect(
+            typeof protocol.SessionMetadataInactiveModelIntentExpectationV1Schema
+                .safeParse,
+        ).toBe('function');
+        expect(
+            typeof protocol.SessionMetadataInactiveModelIntentPatchV1Schema
+                .safeParse,
+        ).toBe('function');
+        expect(
+            typeof protocol
+                .SessionMetadataInactiveModelIntentOwnerPatchV1Schema.safeParse,
+        ).toBe('function');
+        expect(
+            typeof protocol
+                .SessionMetadataInactiveModelIntentPatchSuccessV1Schema
+                .safeParse,
+        ).toBe('function');
+        expect(
+            typeof protocol
+                .SessionMetadataInactiveModelIntentVersionConflictV1Schema
+                .safeParse,
+        ).toBe('function');
+        expect(typeof protocol.SessionOwnerCompatibilityViewV1Schema.safeParse)
+            .toBe('function');
+        expect(typeof protocol.projectSessionOwnerCompatibilityViewV1)
+            .toBe('function');
+        expect(protocol).not.toHaveProperty(
+            'AccountEncryptionMigratePrepareBatchRequestSchema',
+        );
+        expect(protocol).not.toHaveProperty(
+            'AccountEncryptionMigrateRotationStateV1Schema',
+        );
+    });
+
+    it('exports the canonical Connected Account configuration field contract', () => {
+        expectTypeOf<PluginConfigurationSettingFieldV2>().toMatchTypeOf<{
+            id: string;
+            secret?: boolean;
+            required?: boolean;
+        }>();
+        expectTypeOf<PluginConnectedAccountConfigurationFieldV2['semantic']>()
+            .toEqualTypeOf<'connectedAccountOrigin' | undefined>();
+        expect(protocol.PluginConfigurationSettingFieldV2Schema.parse({
+            id: 'baseUrl',
+            title: 'Base URL',
+            schema: { type: 'string' },
+            required: true,
+        })).toMatchObject({
+            id: 'baseUrl',
+            required: true,
+        });
+        expect(protocol.PluginConnectedAccountConfigurationFieldV2Schema.parse({
+            id: 'api-origin',
+            title: 'API origin',
+            semantic: 'connectedAccountOrigin',
+            required: true,
+            schema: { type: 'string', minLength: 1 },
+        })).toMatchObject({
+            id: 'api-origin',
+            semantic: 'connectedAccountOrigin',
+            secret: false,
+            required: true,
+        });
+    });
+
+    it('exports the canonical own-record reader for provider consumers', () => {
+        expect(typeof (protocol as any).readOwnRecordValue).toBe('function');
+        const inherited = Object.create({ inherited: 'must-not-read' }) as Record<string, string>;
+        inherited.own = 'value';
+        expect((protocol as any).readOwnRecordValue(inherited, 'own')).toBe('value');
+        expect((protocol as any).readOwnRecordValue(inherited, 'inherited')).toBeUndefined();
+    });
+
+    it('exports the historical built-in launch-profile projector used by CLI account settings', () => {
+        expect(typeof (protocol as any).projectHistoricalBuiltInAiLaunchProfileV1).toBe('function');
+    });
+
     it('exports scm commit limits and operation codes for CLI consumers', () => {
         expect(protocol.SCM_COMMIT_MESSAGE_MAX_LENGTH).toBe(4096);
         expect(protocol.SCM_OPERATION_ERROR_CODES.NOT_REPOSITORY).toBe('NOT_REPOSITORY');
@@ -93,6 +217,16 @@ describe('protocol package root exports', () => {
         expect(url).toContain('https://github.com/happier-dev/happier/issues/new?');
     });
 
+    it('exports browser automation and recording capability contracts', () => {
+        expect(typeof (protocol as any).BrowserAutomationCapabilitiesSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).BrowserAutomationEvalCapabilitiesSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).BrowserAutomationInjectedPageCapabilitiesSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).BrowserAutomationTimelineCapabilitiesSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).BrowserRecordingCapabilitiesSchema?.safeParse).toBe('function');
+        expect((protocol as any).DEFAULT_BROWSER_AUTOMATION_CAPABILITIES.enabled).toBe(false);
+        expect((protocol as any).DEFAULT_BROWSER_RECORDING_CAPABILITIES.enabled).toBe(false);
+    });
+
     it('exports daemon execution run schemas for machine-wide run listing', () => {
         expect(typeof (protocol as any).DaemonExecutionRunMarkerSchema?.safeParse).toBe('function');
         expect(typeof (protocol as any).DaemonExecutionRunListResponseSchema?.safeParse).toBe('function');
@@ -102,6 +236,10 @@ describe('protocol package root exports', () => {
         expect(typeof (protocol as any).DaemonTerminalEnsureRequestSchema?.safeParse).toBe('function');
         expect(typeof (protocol as any).DaemonTerminalStreamReadResponseSchema?.safeParse).toBe('function');
         expect(typeof (protocol as any).DaemonTerminalStreamEventSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).TerminalStreamBytesFrameSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).TerminalStreamReadRequestSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).TerminalInputEventSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).terminalInputEventToPtyAction).toBe('function');
     });
 
     it('exports daemon MCP servers schemas', () => {
@@ -120,6 +258,10 @@ describe('protocol package root exports', () => {
         expect(typeof (protocol as any).DaemonVoiceInferenceSttUploadInitRequestSchema?.safeParse).toBe('function');
         expect(typeof (protocol as any).DaemonVoiceInferenceSttUploadFinalizeResponseSchema?.safeParse).toBe('function');
         expect(typeof (protocol as any).DaemonVoiceInferenceSttTranscribeRequestSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).DaemonVoiceInferenceSttStreamStartRequestSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).DaemonVoiceInferenceSttStreamChunkRequestSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).DaemonVoiceInferenceSttStreamFinishRequestSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).DaemonVoiceInferenceSttStreamCancelRequestSchema?.safeParse).toBe('function');
         expect(typeof (protocol as any).ModelPackManifestSchema?.safeParse).toBe('function');
     });
 
@@ -127,6 +269,26 @@ describe('protocol package root exports', () => {
         expect(typeof (protocol as any).SessionFoldersV1Schema?.safeParse).toBe('function');
         expect(typeof (protocol as any).SessionFolderWorkspaceRefV1Schema?.safeParse).toBe('function');
         expect(typeof (protocol as any).SetSessionFolderAssignmentRequestSchema?.safeParse).toBe('function');
+    });
+
+    it('exports session organization schemas', () => {
+        expect(typeof (protocol as any).SessionOrganizationSnapshotRequestSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).SessionOrganizationSnapshotResponseSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).SessionOrganizationPinSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).SessionOrganizationFolderSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).SessionOrganizationTagSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).SessionOrganizationOrderEntrySchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).SessionOrganizationLabelSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).SetSessionPinRequestSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).ReorderSessionOrganizationRequestSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).CreateOrUpdateSessionOrganizationFolderRequestSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).DeleteSessionOrganizationFolderRequestSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).CreateOrUpdateSessionOrganizationTagRequestSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).DeleteSessionOrganizationTagRequestSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).SetSessionTagAssignmentsRequestSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).UpsertSessionOrganizationLabelRequestSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).DeleteSessionOrganizationLabelRequestSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).ImportLegacySessionOrganizationRequestSchema?.safeParse).toBe('function');
     });
 
     it('exports pet package and daemon RPC schemas', () => {
@@ -138,12 +300,12 @@ describe('protocol package root exports', () => {
     });
 
     it('exports external-session daemon RPC schemas', () => {
-        expect(typeof (protocol as any).ExternalSessionsProviderIdSchema?.safeParse).toBe('function');
-        expect((protocol as any).ExternalSessionsProviderIdSchema.parse('codex')).toBe('codex');
-        expect((protocol as any).ExternalSessionsProviderIdSchema.parse('claude')).toBe('claude');
-        expect((protocol as any).ExternalSessionsProviderIdSchema.parse('opencode')).toBe('opencode');
-        expect((protocol as any).ExternalSessionsProviderIdSchema.parse('ohMyPi')).toBe('ohMyPi');
-        expect((protocol as any).EXTERNAL_SESSIONS_PROVIDER_IDS_BY_SOURCE_KIND_V1.claudeConfig).toEqual(['claude']);
+        expect(typeof (protocol as any).ExternalSessionsAgentIdSchema?.safeParse).toBe('function');
+        expect((protocol as any).ExternalSessionsAgentIdSchema.parse('codex')).toBe('codex');
+        expect((protocol as any).ExternalSessionsAgentIdSchema.parse('claude')).toBe('claude');
+        expect((protocol as any).ExternalSessionsAgentIdSchema.parse('opencode')).toBe('opencode');
+        expect((protocol as any).ExternalSessionsAgentIdSchema.parse('ohMyPi')).toBe('ohMyPi');
+        expect((protocol as any).EXTERNAL_SESSIONS_AGENT_IDS_BY_SOURCE_KIND_V1.claudeConfig).toEqual(['claude']);
         expect(typeof (protocol as any).ExternalSessionsCandidatesListRequestSchema?.safeParse).toBe('function');
         expect(typeof (protocol as any).ExternalSessionTranscriptPageRequestSchema?.safeParse).toBe('function');
         expect(typeof (protocol as any).ExternalSessionTranscriptReadAfterRequestSchema?.safeParse).toBe('function');
@@ -153,6 +315,12 @@ describe('protocol package root exports', () => {
         expect(typeof (protocol as any).ExternalSessionFollowPolicySetRequestSchema?.safeParse).toBe('function');
         expect(typeof (protocol as any).ExternalSessionTakeoverRequestSchema?.safeParse).toBe('function');
         expect(typeof (protocol as any).ExternalSessionTakeoverPersistRequestSchema?.safeParse).toBe('function');
+    });
+
+    it('does not export Codex app-server goal provider helpers from the root protocol ABI', () => {
+        expect((protocol as any).CodexAppServerGoalSchema).toBeUndefined();
+        expect((protocol as any).CodexAppServerGoalStatusSchema).toBeUndefined();
+        expect((protocol as any).normalizeCodexAppServerGoalToSessionWorkStateItem).toBeUndefined();
     });
 
     it('exports the canonical action id family catalog', () => {
@@ -180,6 +348,11 @@ describe('protocol package root exports', () => {
         expect(typeof (protocol as any).TransferChunkEnvelopeSchema?.safeParse).toBe('function');
         expect(Array.isArray((protocol as any).transferChunkEncryptionVectors)).toBe(true);
         expect(typeof (protocol as any).createDeterministicRandomBytesFromBase64).toBe('function');
+    });
+
+    it('does not export the legacy continue-with-replay compat ingress parser from the root ABI', () => {
+        expect((protocol as any).parseSessionContinueWithReplayRpcParamsCompatIngress).toBeUndefined();
+        expect(typeof (protocol as any).SessionContinueWithReplayRpcParamsSchema?.safeParse).toBe('function');
     });
 
     it('does not export the removed sync-only workspace replication RPC surface', () => {
@@ -227,6 +400,11 @@ describe('protocol package root exports', () => {
     it('exports ACP catalog settings schemas', () => {
         expect(typeof (protocol as any).AcpCatalogSettingsV1Schema?.safeParse).toBe('function');
         expect(typeof (protocol as any).AcpBackendDefinitionV1Schema?.safeParse).toBe('function');
+    });
+
+    it('exports plugin UI executable artifact integrity helpers', () => {
+        expect(typeof (protocol as any).PluginUiExecutableArtifactManifestV1Schema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).hasPluginUiExecutableArtifactIntegrityV1).toBe('function');
     });
 
     it('exports Live Activity remote update schemas', () => {
@@ -279,10 +457,12 @@ describe('protocol package root exports', () => {
         expect((protocol as any).buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'review' })).toBe('acpBackend:review');
     });
 
-    it('exports the supported v1 hook handler target contract', () => {
-        expect(Array.isArray(protocol.HookHandlerTargetsV1)).toBe(true);
-        expect(protocol.HookHandlerTargetsV1).toEqual(['plugin']);
-        expect(typeof (protocol as any).HookHandlerTargetV1Schema?.safeParse).toBe('function');
-        expect(typeof protocol.isHookHandlerTargetV1).toBe('function');
+    it('keeps the retired static hook binding contract out of the root export surface', () => {
+        expect((protocol as any).HookHandlerTargetsV1).toBeUndefined();
+        expect((protocol as any).HookHandlerTargetV1Schema).toBeUndefined();
+        expect((protocol as any).HookHandlerRefV1Schema).toBeUndefined();
+        expect((protocol as any).HookRegistrationV1Schema).toBeUndefined();
+        expect((protocol as any).isHookHandlerTargetV1).toBeUndefined();
+        expect((protocol as any).readHookRegistrationV1).toBeUndefined();
     });
 });

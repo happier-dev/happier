@@ -1,13 +1,31 @@
+import type { PluginApi } from '@happier-dev/plugin-sdk';
 import type {
-  PluginApi,
-  PluginContextV1,
-} from '@happier-dev/plugin-sdk';
+  AgentRuntimeFactory } from '@happier-dev/plugin-sdk/agent-runtime';
 
-import { AUGGIE_ACP_BACKEND_SPEC } from './agent/acp/definition.js';
+import { buildAuggieAcpArgvFromSessionConfiguration } from './agent/acp/callbacks.js';
+import { AUGGIE_ACP_RUNTIME_DEFINITION } from './agent/acp/definition.js';
+
+export const createAuggieAgentRuntime: AgentRuntimeFactory = () => ({
+  sessions: {
+    open(request, context) {
+      if (!request.configuration) {
+        throw new Error('Auggie requires the host-projected Agent session configuration');
+      }
+      return context.protocols.acp.open(request, {
+        transport: {
+          kind: 'stdio',
+          executable: { kind: 'systemTool', id: 'auggie-cli' },
+          args: buildAuggieAcpArgvFromSessionConfiguration({
+            baseArgs: ['--acp'],
+            configuration: request.configuration,
+          }),
+        },
+        definition: AUGGIE_ACP_RUNTIME_DEFINITION,
+      });
+    },
+  },
+});
 
 export function activate(api: PluginApi): void {
-  api.registerAgentRuntime({
-    agentId: 'auggie',
-    create: (ctx: PluginContextV1) => ctx.agentRuntime.acp.defineAcpBackend(AUGGIE_ACP_BACKEND_SPEC),
-  });
+  api.agents.register('auggie', createAuggieAgentRuntime);
 }

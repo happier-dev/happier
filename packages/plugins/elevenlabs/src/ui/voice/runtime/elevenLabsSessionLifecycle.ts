@@ -1,87 +1,75 @@
 import type { ElevenLabsPreparedSession } from './elevenLabsSessionTypes.js';
+import type { PluginVoiceHostedConversationService } from '@happier-dev/plugin-sdk/runtime';
 
 type ActiveSession = Readonly<{
   controlSessionId: string;
   conversationId: string;
+  attemptId: number;
   prepared: ElevenLabsPreparedSession;
 }>;
 
-function formatDuration(ms: number): string {
-  const bounded = Math.max(0, Math.floor(ms));
-  return bounded < 90_000
-    ? `${Math.max(1, Math.ceil(bounded / 1000))}s`
-    : `${Math.max(1, Math.ceil(bounded / 60_000))}m`;
-}
-
 export function createElevenLabsSessionLifecycle(input: Readonly<{
-  now?: () => number;
-  getCredentials: () => Promise<unknown | null>;
-  completeSession: (credentials: unknown, input: Readonly<{
-    leaseId: string;
-    providerConversationId: string;
-  }>) => Promise<unknown>;
-  appendNote: (controlSessionId: string, text: string) => void;
-  translate: (key: string, params?: Readonly<Record<string, unknown>>) => string;
+  takeHostedConversation: (
+    leaseId: string,
+  ) => Pick<PluginVoiceHostedConversationService, 'complete' | 'abort'> | null;
 }>) {
-  const now = input.now ?? (() => Date.now());
-  const getCredentials = input.getCredentials;
-  const completeSession = input.completeSession;
-  const appendNote = input.appendNote;
   let active: ActiveSession | null = null;
-  let warningTimer: ReturnType<typeof setTimeout> | null = null;
-  let expiryTimer: ReturnType<typeof setTimeout> | null = null;
+  const preparedHostedConversations = new Map<
+    number,
+    Pick<PluginVoiceHostedConversationService, 'complete' | 'abort'>
+  >();
 
-  const clearTimers = (): void => {
-    if (warningTimer) clearTimeout(warningTimer);
-    if (expiryTimer) clearTimeout(expiryTimer);
-    warningTimer = null;
-    expiryTimer = null;
+  const prepared = (attemptId: number, session: ElevenLabsPreparedSession): void => {
+    const state = session.sessionState;
+    if (state.billingMode !== 'happier' || !state.leaseId) return;
+    const hostedConversation = input.takeHostedConversation(state.leaseId);
+    if (hostedConversation) preparedHostedConversations.set(attemptId, hostedConversation);
+  };
+
+  const releasePrepared = async (
+    attemptId: number,
+    session: ElevenLabsPreparedSession,
+  ): Promise<void> => {
+    const state = session.sessionState;
+    if (state.billingMode !== 'happier' || !state.leaseId) return;
+    const hostedConversation = preparedHostedConversations.get(attemptId)
+      ?? input.takeHostedConversation(state.leaseId);
+    preparedHostedConversations.delete(attemptId);
+    await hostedConversation?.abort();
   };
 
   const started = (next: ActiveSession): void => {
-    clearTimers();
     active = next;
-    const state = next.prepared.sessionState;
-    if (state.billingMode !== 'happier' || typeof state.expiresAtMs !== 'number') return;
-    const remainingMs = state.expiresAtMs - now();
-    if (!Number.isFinite(remainingMs) || remainingMs <= 0) return;
-    appendNote(next.controlSessionId, input.translate('errors.voiceSessionLimitStarted', { duration: formatDuration(remainingMs) }));
-    const warningDelayMs = remainingMs - 60_000;
-    if (warningDelayMs <= 0) {
-      appendNote(next.controlSessionId, input.translate('errors.voiceSessionLimitExpiring', { duration: formatDuration(remainingMs) }));
-    } else {
-      warningTimer = setTimeout(() => {
-        appendNote(next.controlSessionId, input.translate('errors.voiceSessionLimitExpiring', {
-          duration: formatDuration(Math.max(0, state.expiresAtMs! - now())),
-        }));
-      }, warningDelayMs);
-    }
-    expiryTimer = setTimeout(() => {
-      appendNote(next.controlSessionId, input.translate('errors.voiceSessionLimitExpired'));
-    }, remainingMs);
   };
 
   const ended = async (): Promise<void> => {
     const endedSession = active;
     active = null;
-    clearTimers();
-    if (!endedSession) return;
+    if (!endedSession) {
+      const unstarted = [...preparedHostedConversations.values()];
+      preparedHostedConversations.clear();
+      await Promise.all(unstarted.map(async (conversation) => {
+        await conversation.abort();
+      }));
+      return;
+    }
     const state = endedSession.prepared.sessionState;
     if (state.billingMode !== 'happier' || !state.leaseId) return;
-    const credentials = await getCredentials();
-    if (!credentials) return;
+    const hostedConversation = preparedHostedConversations.get(endedSession.attemptId)
+      ?? input.takeHostedConversation(state.leaseId);
+    preparedHostedConversations.delete(endedSession.attemptId);
     try {
-      await completeSession(credentials, {
-        leaseId: state.leaseId,
+      await hostedConversation?.complete({
         providerConversationId: endedSession.conversationId,
       });
     } catch {
-      // Provider usage completion is best-effort during teardown. The server
-      // lease remains bounded and retries are owned by the server route.
+      // Provider usage completion is best-effort during teardown. A failed
+      // verification write leaves the canonical server lease bounded and
+      // conservatively quota-counted.
     }
   };
 
-  return Object.freeze({ started, ended });
+  return Object.freeze({ prepared, releasePrepared, started, ended });
 }
 
 export type ElevenLabsSessionLifecycle = ReturnType<typeof createElevenLabsSessionLifecycle>;

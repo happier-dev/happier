@@ -14,7 +14,7 @@ function candidate(connectionId: string) {
     connection: {
       v: 1,
       id: connectionId,
-      source: { kind: 'contribution', contributionKey: 'happier.deepseek:providers:deepseek' },
+      source: { kind: 'contribution', contributionKey: 'happier.deepseek/deepseek' },
       role: 'default',
       displayName: 'DeepSeek',
       displayNameMode: 'automatic',
@@ -68,6 +68,8 @@ describe('provider account-settings migration', () => {
     expect(result.outcomes).toEqual([
       { sourceProfileId: 'deepseek', kind: 'connection', connectionId: 'pc_allocated_once' },
     ]);
+    expect((result.settings.providerSettingsV1 as { connections: Array<{ source: { contributionKey: string } }> })
+      .connections[0]?.source.contributionKey).toBe('happier.deepseek/deepseek');
 
     const repeated = migrateProviderAccountSettingsV1(result.settings, {
       migratedAt: 999,
@@ -94,6 +96,46 @@ describe('provider account-settings migration', () => {
       { sourceProfileId: 'deepseek', kind: 'connection', connectionId: 'pc_client_a' },
     ]);
     expect(retry.changed).toBe(false);
+  });
+
+  it('repairs an already-completed current-Dev model target without replacing connection or secret identity', () => {
+    const legacy = migrateProviderAccountSettingsV1({ schemaVersion: 7 }, {
+      migratedAt: 20,
+      candidates: [{
+        ...candidate('pc_existing'),
+        selectedModel: { agentTargetKey: 'agent:claude', modelId: 'deepseek-chat' },
+      }],
+      pendingCustomProfileIds: [],
+    });
+    expect(legacy.ok).toBe(true);
+    if (!legacy.ok) throw new Error('expected legacy Provider migration');
+
+    const repaired = migrateProviderAccountSettingsV1(legacy.settings, {
+      migratedAt: 30,
+      candidates: [{
+        ...candidate('pc_must_not_replace'),
+        selectedModel: { agentTargetKey: 'backend:claude', modelId: 'deepseek-chat' },
+      }],
+      pendingCustomProfileIds: [],
+    });
+    expect(repaired.ok).toBe(true);
+    if (!repaired.ok) throw new Error('expected Provider migration repair');
+    expect(repaired.changed).toBe(true);
+    expect((repaired.settings.providerSettingsV1 as any).connections.map((entry: any) => entry.id))
+      .toEqual(['pc_existing']);
+    expect((repaired.settings.providerSettingsV1 as any).secretBindingsByConnectionId).toEqual({
+      pc_existing: { account: { apiKey: 'saved-secret-id-unchanged' } },
+    });
+    expect(repaired.outcomes).toContainEqual({
+      sourceProfileId: 'deepseek',
+      kind: 'connection',
+      connectionId: 'pc_existing',
+      modelSelection: {
+        agentTargetKey: 'backend:claude',
+        providerConnectionId: 'pc_existing',
+        modelId: 'deepseek-chat',
+      },
+    });
   });
 
   it('never retargets a losing candidate grant onto a concurrently-created winner', () => {
@@ -310,7 +352,7 @@ describe('provider account-settings migration', () => {
         connection: {
           v: 1 as const,
           id: connectionId,
-          source: { kind: 'contribution' as const, contributionKey: `happier.large:providers:p-${connectionIndex}` },
+          source: { kind: 'contribution' as const, contributionKey: `happier.large/p-${connectionIndex}` },
           role: 'named' as const,
           displayName: `Large ${connectionIndex}`,
           displayNameMode: 'custom' as const,

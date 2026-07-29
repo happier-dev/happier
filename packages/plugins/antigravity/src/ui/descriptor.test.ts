@@ -14,7 +14,7 @@ describe('Antigravity UI descriptor', () => {
         connectedService: { serviceId: 'gemini' },
         localControl: true,
       },
-      settings: { descriptorId: 'antigravity.agentSettings.v1' },
     });
+    expect(ANTIGRAVITY_UI_DESCRIPTOR).not.toHaveProperty('settings');
   });
 });

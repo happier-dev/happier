@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   SPAWN_SESSION_ERROR_CODES,
   SPAWN_SESSION_ERROR_DETAIL_KINDS,
+  SpawnSessionExecutionAuthorizationSchema,
   isConnectedServiceUxDiagnosticSpawnErrorDetail,
   isConnectedServiceResumeUnreachableSpawnErrorDetail,
   normalizeSpawnSessionErrorDetail,
@@ -10,7 +11,61 @@ import {
   type SpawnSessionResult,
 } from './spawnSession.js';
 
+describe('spawn-session execution authorization', () => {
+  it('preserves opaque request-id bytes and rejects blank ids without collapsing identities', () => {
+    const first = SpawnSessionExecutionAuthorizationSchema.parse({
+      provenance: 'user_request',
+      requestId: ' request-1',
+    });
+    const second = SpawnSessionExecutionAuthorizationSchema.parse({
+      provenance: 'user_request',
+      requestId: 'request-1 ',
+    });
+
+    expect(first.requestId).toBe(' request-1');
+    expect(second.requestId).toBe('request-1 ');
+    expect(first.requestId).not.toBe(second.requestId);
+    expect(() => SpawnSessionExecutionAuthorizationSchema.parse({
+      provenance: 'user_request',
+      requestId: '   ',
+    })).toThrow();
+  });
+
+  it('keeps execution authorization identity-only and rejects delivery authority fields', () => {
+    expect(SpawnSessionExecutionAuthorizationSchema.parse({
+      provenance: 'user_request',
+      requestId: 'local-inactive',
+    })).toEqual({ provenance: 'user_request', requestId: 'local-inactive' });
+    expect(SpawnSessionExecutionAuthorizationSchema.safeParse({
+      provenance: 'user_request',
+      requestId: 'local-inactive',
+      requestedAction: { v: 1, kind: 'send_now' },
+    }).success).toBe(false);
+  });
+});
+
 describe('spawn-session error detail contract (D2 structured continuity)', () => {
+  it('round-trips a strict structured provider refusal without accepting extra diagnostics', () => {
+    const detail = {
+      kind: 'provider_error',
+      providerError: {
+        v: 1,
+        code: 'provider_machine_grant_stale',
+        connectionId: 'pc_work',
+        machineId: 'machine-a',
+        retryable: false,
+        action: 'review_machine_grant',
+      },
+    };
+
+    expect(normalizeSpawnSessionErrorDetail(detail)).toEqual(detail);
+    expect(normalizeSpawnSessionErrorDetail({ ...detail, rawDiagnostic: 'secret/path' })).toBeUndefined();
+    expect(normalizeSpawnSessionErrorDetail({
+      ...detail,
+      providerError: { ...detail.providerError, rawDiagnostic: 'secret/path' },
+    })).toBeUndefined();
+  });
+
   it('keeps the existing error result shape valid without an errorDetail (backward compatibility)', () => {
     // A pre-existing SPAWN_VALIDATION_FAILED consumer must still type-check and be usable with no
     // errorDetail field present. errorDetail is purely additive/optional.

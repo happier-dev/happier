@@ -13,6 +13,7 @@ export const CONNECTED_SERVICE_ERROR_CODES = {
     oauthMissingRefreshToken: 'connect_oauth_missing_refresh_token',
     reconnectRequired: 'connect_reconnect_required',
     reconnectProviderIdentityMismatch: 'connect_reconnect_provider_identity_mismatch',
+    credentialMutationSuperseded: 'connect_credential_mutation_superseded',
     authGroupNotFound: 'connect_group_not_found',
     authGroupGenerationConflict: 'connect_group_generation_conflict',
 } as const;
@@ -30,6 +31,7 @@ export const ConnectedServiceErrorCodeSchema = z.enum([
     CONNECTED_SERVICE_ERROR_CODES.oauthMissingRefreshToken,
     CONNECTED_SERVICE_ERROR_CODES.reconnectRequired,
     CONNECTED_SERVICE_ERROR_CODES.reconnectProviderIdentityMismatch,
+    CONNECTED_SERVICE_ERROR_CODES.credentialMutationSuperseded,
     CONNECTED_SERVICE_ERROR_CODES.authGroupNotFound,
     CONNECTED_SERVICE_ERROR_CODES.authGroupGenerationConflict,
 ]);

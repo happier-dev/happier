@@ -1,7 +1,9 @@
-import type { ExecRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
+import type { PluginExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/runtime';
+import { CURRENT_FLAGSHIP_CLAUDE_MODEL_ID } from '@happier-dev/protocol';
 
 import { buildOpenCodeThinkingModelOptionsFromVariants } from '../config/thinking.js';
 import { asRecord, normalizeString } from '../runtime/server/openCodeParsing.js';
+import { OPEN_CODE_SYSTEM_TOOL_ID } from '../systemTool.js';
 
 export type OpenCodePreflightModel = Readonly<{
   id: string;
@@ -29,13 +31,13 @@ function buildOpenCodePreflightEnv(env: NodeJS.ProcessEnv | undefined): Readonly
 }
 
 const ANTHROPIC_KNOWN_UNAVAILABLE_MODELS: Readonly<Record<string, KnownUnavailableOpenCodeModel>> = Object.freeze({
-  'claude-2.0': { retiredAtMs: Date.UTC(2025, 6, 21), replacementModelId: 'claude-opus-4-7' },
-  'claude-2.1': { retiredAtMs: Date.UTC(2025, 6, 21), replacementModelId: 'claude-opus-4-7' },
+  'claude-2.0': { retiredAtMs: Date.UTC(2025, 6, 21), replacementModelId: CURRENT_FLAGSHIP_CLAUDE_MODEL_ID },
+  'claude-2.1': { retiredAtMs: Date.UTC(2025, 6, 21), replacementModelId: CURRENT_FLAGSHIP_CLAUDE_MODEL_ID },
   'claude-instant-1.0': { retiredAtMs: Date.UTC(2024, 10, 6), replacementModelId: 'claude-haiku-4-5-20251001' },
   'claude-instant-1.1': { retiredAtMs: Date.UTC(2024, 10, 6), replacementModelId: 'claude-haiku-4-5-20251001' },
   'claude-instant-1.2': { retiredAtMs: Date.UTC(2024, 10, 6), replacementModelId: 'claude-haiku-4-5-20251001' },
-  'claude-3-opus-20240229': { retiredAtMs: Date.UTC(2026, 0, 5), replacementModelId: 'claude-opus-4-7' },
-  'claude-3-opus-latest': { retiredAtMs: Date.UTC(2026, 0, 5), replacementModelId: 'claude-opus-4-7' },
+  'claude-3-opus-20240229': { retiredAtMs: Date.UTC(2026, 0, 5), replacementModelId: CURRENT_FLAGSHIP_CLAUDE_MODEL_ID },
+  'claude-3-opus-latest': { retiredAtMs: Date.UTC(2026, 0, 5), replacementModelId: CURRENT_FLAGSHIP_CLAUDE_MODEL_ID },
   'claude-3-sonnet-20240229': { retiredAtMs: Date.UTC(2025, 6, 21), replacementModelId: 'claude-sonnet-4-6' },
   'claude-3-sonnet-latest': { retiredAtMs: Date.UTC(2025, 6, 21), replacementModelId: 'claude-sonnet-4-6' },
   'claude-3-haiku-20240307': { retiredAtMs: Date.UTC(2026, 3, 20), replacementModelId: 'claude-haiku-4-5-20251001' },
@@ -48,7 +50,7 @@ const ANTHROPIC_KNOWN_UNAVAILABLE_MODELS: Readonly<Record<string, KnownUnavailab
   'claude-3-7-sonnet-20250219': { retiredAtMs: Date.UTC(2026, 1, 19), replacementModelId: 'claude-sonnet-4-6' },
   'claude-3-7-sonnet-latest': { retiredAtMs: Date.UTC(2026, 1, 19), replacementModelId: 'claude-sonnet-4-6' },
   'claude-sonnet-4-20250514': { retiredAtMs: Date.UTC(2026, 5, 15), replacementModelId: 'claude-sonnet-4-6' },
-  'claude-opus-4-20250514': { retiredAtMs: Date.UTC(2026, 5, 15), replacementModelId: 'claude-opus-4-7' },
+  'claude-opus-4-20250514': { retiredAtMs: Date.UTC(2026, 5, 15), replacementModelId: CURRENT_FLAGSHIP_CLAUDE_MODEL_ID },
 });
 
 const KNOWN_UNAVAILABLE_MODELS_BY_PROVIDER = Object.freeze({
@@ -189,12 +191,21 @@ export function buildOpenCodePreflightModelsFromVerboseOutput(
 }
 
 function buildOpenCodePreflightModelsFromPlainOutput(outputRaw: string): readonly OpenCodePreflightModel[] | null {
+  const nowMs = Date.now();
   const seen = new Set<string>();
   const models: OpenCodePreflightModel[] = [];
 
   for (const rawLine of outputRaw.split('\n')) {
     const id = rawLine.trim();
     if (!isVerboseModelIdLine(id) || seen.has(id)) continue;
+    const separatorIndex = id.indexOf('/');
+    if (isKnownUnavailableOpenCodeModel({
+      providerId: id.slice(0, separatorIndex),
+      modelId: id.slice(separatorIndex + 1),
+      nowMs,
+    })) {
+      continue;
+    }
     seen.add(id);
     models.push({ id, name: id });
   }
@@ -203,36 +214,46 @@ function buildOpenCodePreflightModelsFromPlainOutput(outputRaw: string): readonl
 }
 
 export async function probeOpenCodePreflightModelsRaw(params: Readonly<{
-  exec: ExecRuntimeServiceV1;
+  exec: PluginExecService;
   cwd: string;
   timeoutMs: number;
   env?: NodeJS.ProcessEnv;
 }>): Promise<readonly OpenCodePreflightModel[] | null> {
   const env = buildOpenCodePreflightEnv(params.env);
   const timeoutMs = Math.max(MIN_PREFLIGHT_MODELS_TIMEOUT_MS, params.timeoutMs);
-  const verboseResult = await params.exec.run({
-    kind: 'agent-cli',
-    agentId: 'opencode',
-    args: OPENCODE_VERBOSE_MODELS_COMMAND_ARGS,
+  const resolved = await params.exec.systemTools.resolve({
+    toolId: OPEN_CODE_SYSTEM_TOOL_ID,
+    purpose: 'Probe OpenCode models',
     cwd: params.cwd,
+  });
+  const decodeStdout = (result: PluginProcessResult): string => new TextDecoder().decode(result.stdout);
+  const succeeded = (result: PluginProcessResult): boolean => (
+    result.termination.observed.kind === 'exit'
+    && result.termination.observed.exitCode === 0
+  );
+  const verboseResult = await params.exec.run({
+    executable: resolved.executable,
+    args: OPENCODE_VERBOSE_MODELS_COMMAND_ARGS,
+    cwd: { root: 'workspace', relativePath: '' },
     env,
-  }, { timeoutMs });
+    timeoutMs,
+  });
 
-  if (verboseResult.exitCode === 0) {
-    const verboseModels = buildOpenCodePreflightModelsFromVerboseOutput(verboseResult.stdout);
+  if (succeeded(verboseResult)) {
+    const verboseModels = buildOpenCodePreflightModelsFromVerboseOutput(decodeStdout(verboseResult));
     if (verboseModels) return verboseModels;
   }
 
   const plainResult = await params.exec.run({
-    kind: 'agent-cli',
-    agentId: 'opencode',
+    executable: resolved.executable,
     args: OPENCODE_CLI_MODELS_COMMAND_ARGS,
-    cwd: params.cwd,
+    cwd: { root: 'workspace', relativePath: '' },
     env,
-  }, { timeoutMs });
+    timeoutMs,
+  });
 
-  if (plainResult.exitCode !== 0) return null;
-  return buildOpenCodePreflightModelsFromPlainOutput(plainResult.stdout);
+  if (!succeeded(plainResult)) return null;
+  return buildOpenCodePreflightModelsFromPlainOutput(decodeStdout(plainResult));
 }
 
 export const OPENCODE_PREFLIGHT_SESSION_CONTROLS = Object.freeze({

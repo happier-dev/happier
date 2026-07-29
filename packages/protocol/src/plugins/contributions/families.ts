@@ -34,7 +34,7 @@ export function buildPluginContributionFamilySchemaV2<
   for (const descriptor of descriptors) {
     shape[descriptor.family] = z.array(descriptor.schema).default([]);
   }
-  return z.object(shape).passthrough() as unknown as z.ZodObject<
+  return z.object(shape).strict() as unknown as z.ZodObject<
     PluginContributionFamilyShapeV2<TDescriptors>
   >;
 }

@@ -10,6 +10,32 @@ import {
 } from './usageAnalyticsContracts.js';
 
 describe('usageAnalyticsContracts', () => {
+  it('accepts latest context fields on session breakdown rows', () => {
+    const response = UsageAnalyticsQueryResponseSchema.parse({
+      v: 1,
+      totals: {
+        eventCount: 1,
+        tokens: { input: 1, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 1 },
+        cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' },
+      },
+      breakdowns: {
+        session: [{
+          key: 'session-1',
+          eventCount: 1,
+          tokens: { input: 1, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 1 },
+          cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' },
+          latestContextUsedTokens: 42_000,
+          latestContextWindowTokens: 400_000,
+        }],
+      },
+    });
+
+    expect(response.breakdowns?.session?.[0]).toMatchObject({
+      latestContextUsedTokens: 42_000,
+      latestContextWindowTokens: 400_000,
+    });
+  });
+
   it('exports usage analytics contracts from the protocol root for additive mixed-version adoption', () => {
     expect(typeof (protocol as any).UsageEventIngestRequestSchema).toBe('object');
     expect(typeof (protocol as any).UsageAnalyticsQueryRequestSchema).toBe('object');
@@ -21,7 +47,7 @@ describe('usageAnalyticsContracts', () => {
     const parsed = UsageEventIngestRequestSchema.parse({
       sessionId: 'session-1',
       observedAt: 1_714_000_000_000,
-      providerId: 'claude',
+      agentId: 'claude',
       backendMode: 'remote',
       modelId: 'claude-sonnet-4-6',
       projectKey: 'project:abc',
@@ -54,7 +80,7 @@ describe('usageAnalyticsContracts', () => {
       },
     });
 
-    expect(parsed.providerId).toBe('claude');
+    expect(parsed.agentId).toBe('claude');
     expect(parsed.tokens.total).toBe(15);
     expect(parsed.cost.reportedUsd).toBe(0.12);
     expect(parsed.cost.invoiceUsd).toBe(0.09);
@@ -68,10 +94,10 @@ describe('usageAnalyticsContracts', () => {
       },
       granularity: 'day',
       costMode: 'reported',
-      breakdowns: ['provider', 'model'],
+      breakdowns: ['agent', 'model'],
       filters: {
         sessionIds: ['session-1'],
-        providerIds: ['claude'],
+        agentIds: ['claude'],
       },
       includeSeries: true,
       includeInsights: true,
@@ -84,7 +110,7 @@ describe('usageAnalyticsContracts', () => {
     });
 
     expect(request.breakdowns).toEqual([
-      UsageAnalyticsBreakdownDimensionSchema.enum.provider,
+      UsageAnalyticsBreakdownDimensionSchema.enum.agent,
       UsageAnalyticsBreakdownDimensionSchema.enum.model,
     ]);
 
@@ -129,7 +155,7 @@ describe('usageAnalyticsContracts', () => {
         },
       ],
       breakdowns: {
-        provider: [
+        agent: [
           {
             key: 'claude',
             label: 'Claude',
@@ -191,7 +217,7 @@ describe('usageAnalyticsContracts', () => {
         ],
       },
       leaders: {
-        providers: [
+        agents: [
           {
             key: 'claude',
             label: 'Claude',
@@ -318,9 +344,17 @@ describe('usageAnalyticsContracts', () => {
     });
 
     expect(response.v).toBe(1);
-    expect(response.breakdowns?.provider?.[0]?.key).toBe('claude');
+    expect(response.breakdowns?.agent?.[0]?.key).toBe('claude');
     expect(response.insights?.favoriteModel?.label).toBe('Claude Sonnet 4.6');
     expect(response.costPresentation?.mode).toBe('reported');
+  });
+
+  it('defaults usage analytics bucketing to UTC and bounds minutes-east offsets', () => {
+    expect(UsageAnalyticsQueryRequestSchema.parse({}).timeZoneOffsetMinutes).toBe(0);
+    expect(UsageAnalyticsQueryRequestSchema.parse({ timeZoneOffsetMinutes: 840 }).timeZoneOffsetMinutes).toBe(840);
+    expect(UsageAnalyticsQueryRequestSchema.parse({ timeZoneOffsetMinutes: -840 }).timeZoneOffsetMinutes).toBe(-840);
+    expect(() => UsageAnalyticsQueryRequestSchema.parse({ timeZoneOffsetMinutes: 841 })).toThrow();
+    expect(() => UsageAnalyticsQueryRequestSchema.parse({ timeZoneOffsetMinutes: -841 })).toThrow();
   });
 
   it('keeps analytics query response fields optional so new clients can accept partial server payloads', () => {

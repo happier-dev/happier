@@ -32,36 +32,6 @@ export const AGENT_DEFINITION = Object.freeze({
     defaultMode: 'default',
     allowedModes: ['default'],
   },
-  authProbeConfig: {
-    agentId: KIRO_AGENT_ID,
-    binaryNames: ['kiro-cli'],
-    statusCommand: ['whoami', '--format', 'json'],
-    parser: 'kiroWhoamiJson',
-    backgroundChecks: 'manual_only',
-  },
-  localCli: {
-    agentId: KIRO_AGENT_ID,
-    detectKey: 'kiro-cli',
-    machineLoginKey: 'kiro-cli',
-    supportKind: 'login_terminal',
-    loginLaunch: {
-      command: 'kiro-cli',
-      args: ['login'],
-    },
-  },
-  agentCliRuntime: {
-    id: KIRO_AGENT_ID,
-    title: 'Kiro CLI',
-    binaryName: 'kiro-cli',
-    knownUserBinDirSuffixes: null,
-    sourcePreferenceDefault: 'system-first',
-    managedInstall: null,
-    manualInstallKind: 'command',
-    manualInstallRecipes: null,
-    acceptsJavaScriptFileOverride: false,
-    docsUrl: 'https://kiro.dev/docs/cli/acp/',
-  },
-  agentSettings: null,
   runtimeContributions: {
     agentCatalogEntry: {
       importName: 'KIRO_AGENT_RUNTIME_CONTRIBUTION',

@@ -82,13 +82,11 @@ const PRICING: Record<string, ClaudeModelPricing> = {
     },
 };
 
-const DEFAULT_MODEL = 'claude-3-5-sonnet-20241022';
-
 function normalizeModelId(modelId: string | null | undefined): string {
     return typeof modelId === 'string' ? modelId.trim().toLowerCase() : '';
 }
 
-function resolvePricing(modelId?: string): ClaudeModelPricing {
+function resolvePricing(modelId?: string): ClaudeModelPricing | null {
     const normalized = normalizeModelId(modelId);
     const direct = PRICING[normalized];
     if (direct) return direct;
@@ -112,14 +110,15 @@ function resolvePricing(modelId?: string): ClaudeModelPricing {
         return PRICING['claude-3-haiku-20240307'];
     }
 
-    return PRICING[DEFAULT_MODEL];
+    return null;
 }
 
 export function estimateClaudeUsageCost(
     usage: ClaudeTokenUsage,
     modelId?: string,
-): { total: number; input: number; output: number } {
+): { total: number; input: number; output: number; breakdown?: Readonly<Record<string, number>> } | null {
     const pricing = resolvePricing(modelId);
+    if (!pricing) return null;
     const inputTokens = Math.max(0, usage.input_tokens ?? 0);
     const outputTokens = Math.max(0, usage.output_tokens ?? 0);
     const cacheWriteTokens = Math.max(0, usage.cache_creation_input_tokens ?? 0);
@@ -129,11 +128,13 @@ export function estimateClaudeUsageCost(
     const outputCost = (outputTokens / 1_000_000) * pricing.output;
     const cacheWriteCost = (cacheWriteTokens / 1_000_000) * pricing.cache_write;
     const cacheReadCost = (cacheReadTokens / 1_000_000) * pricing.cache_read;
+    const cacheSavingsUsd = (cacheReadTokens / 1_000_000) * (pricing.input - pricing.cache_read);
     const totalInputCost = inputCost + cacheWriteCost + cacheReadCost;
 
     return {
         total: totalInputCost + outputCost,
         input: totalInputCost,
         output: outputCost,
+        ...(cacheSavingsUsd > 0 ? { breakdown: { cacheSavingsUsd } } : {}),
     };
 }

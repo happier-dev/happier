@@ -6,8 +6,8 @@ import type {
   ScmBranchListEntry,
   ScmBranchListRequest,
   ScmBranchListResponse,
-} from '@happier-dev/plugin-sdk/scm';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/experimental/scm';
 
 import type { ScmBackendContext } from '../types.js';
 import { runScmCommand } from '../runtime.js';

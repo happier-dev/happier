@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { ingestPluginManifestV2 } from '@happier-dev/protocol';
 
 import { createGitlabScmHostingProviderAdapter, gitlabHostingProviderAdapter } from './adapter.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
@@ -23,60 +24,46 @@ type Adapter = Readonly<{
 }>;
 
 describe('bundled GitLab SCM hosting provider plugin', () => {
-  it('declares a first-party SCM hosting-provider manifest contribution with URL safety metadata', async () => {
+  it('declares a strict target SCM hosting-provider contribution with configured-origin access', async () => {
     expect(PLUGIN_MANIFEST).toMatchObject({
       id: 'happier.scm.hosting.gitlab',
-      source: {
-        kind: 'package',
-        locator: '@happier-dev/plugins-scm-gitlab',
-        trustPolicy: 'local_trusted',
-        installPolicy: 'link',
-      },
-      uses: ['scmHostingProviders'],
+      entrypoints: { daemon: './dist/index.js' },
+      hostAccess: { required: expect.arrayContaining([
+        expect.objectContaining({ id: 'gitlab-api', capability: 'network', scope: expect.objectContaining({ targets: [{ kind: 'scmProviderOrigin', provider: 'gitlab' }] }) }),
+        expect.objectContaining({ id: 'gitlab-cli-process', capability: 'process', scope: { executables: [{ kind: 'systemTool', id: 'gitlab-cli' }] } }),
+      ]), optional: [] },
       contributes: {
         scmHostingProviders: [
           {
-            id: 'scm.gitlab',
+            id: 'gitlab',
             kind: 'gitlab',
-            displayName: 'GitLab',
-            baseUrl: 'https://gitlab.com',
-            remoteHostMatchers: {
-              exactHosts: ['gitlab.com'],
-            },
-            urlSafety: {
-              allowedSchemes: ['https:'],
-              allowedBaseUrls: ['https://gitlab.com'],
-              allowedOrigins: ['https://gitlab.com'],
-            },
-            capabilities: expect.objectContaining({
-              compareUrl: true,
-              openUrl: true,
-              pullRequests: {
-                list: true,
-                get: true,
-                create: true,
-                checkout: false,
-                prepareWorktree: false,
-                runStacked: false,
-              },
-            }),
+            title: 'GitLab',
+            capabilities: expect.arrayContaining(['detect', 'pullRequest']),
           },
         ],
+        systemTools: [{ id: 'gitlab-cli', executableNames: ['glab'] }],
       },
     });
-    const [provider] = PLUGIN_MANIFEST.contributes.scmHostingProviders;
-    const shippedValues = [
-      ...(provider.remoteHostMatchers?.exactHosts ?? []),
-      ...(provider.urlSafety?.allowedBaseUrls ?? []),
-      ...(provider.urlSafety?.allowedOrigins ?? []),
-    ];
-    expect(shippedValues).not.toContain('gitlab.company.com');
-    expect(shippedValues).not.toContain('code.internal.test');
-    expect(shippedValues).not.toContain('https://gitlab.company.com');
-    expect(shippedValues).not.toContain('https://code.internal.test');
-    for (const value of shippedValues) {
-      expect(value).not.toMatch(/(?:^|[.:/])(?:[^/]*\.test|[^/]*\.company\.com)(?:$|[/:])/);
-    }
+    expect(PLUGIN_MANIFEST).not.toHaveProperty('source');
+    expect(PLUGIN_MANIFEST).not.toHaveProperty('uses');
+    expect(PLUGIN_MANIFEST).not.toHaveProperty('permissions');
+    expect(PLUGIN_MANIFEST).not.toHaveProperty('activationEvents');
+    expect(ingestPluginManifestV2(PLUGIN_MANIFEST)).toMatchObject({ ok: true });
+  });
+
+  it('registers exactly the manifest-declared local provider id', async () => {
+    const { activate } = await import('./activate.js');
+    const registrations: Array<Readonly<{ id: string }>> = [];
+    // Boundary fixture intentionally supplies only the activation surface exercised here.
+    activate({
+      scm: {
+        registerHostingProvider(id: string) {
+          registrations.push({ id });
+          return { dispose() {} };
+        },
+      },
+    } as Parameters<typeof activate>[0]);
+    expect(registrations.map(({ id }) => id)).toEqual(PLUGIN_MANIFEST.contributes.scmHostingProviders.map(({ id }) => id));
   });
 
   it('detects bundled GitLab remotes and supports enterprise hosts through test-local options', async () => {
@@ -89,7 +76,7 @@ describe('bundled GitLab SCM hosting provider plugin', () => {
       remoteName: 'origin',
       remoteUrl: 'git@gitlab.com:happier-dev/mobile/app.git',
     })).toMatchObject({
-      id: 'scm.gitlab',
+      id: 'happier.scm.hosting.gitlab/gitlab',
       kind: 'gitlab',
       baseUrl: 'https://gitlab.com',
       nameWithOwner: 'happier-dev/mobile/app',
@@ -99,7 +86,7 @@ describe('bundled GitLab SCM hosting provider plugin', () => {
       remoteName: 'origin',
       remoteUrl: 'https://gitlab.company.com/platform/happier/app.git',
     })).toMatchObject({
-      id: 'scm.gitlab',
+      id: 'happier.scm.hosting.gitlab/gitlab',
       baseUrl: 'https://gitlab.company.com',
       nameWithOwner: 'platform/happier/app',
     });
@@ -107,7 +94,7 @@ describe('bundled GitLab SCM hosting provider plugin', () => {
       remoteName: 'origin',
       remoteUrl: 'ssh://git@code.internal.test/platform/happier/app.git',
     })).toMatchObject({
-      id: 'scm.gitlab',
+      id: 'happier.scm.hosting.gitlab/gitlab',
       baseUrl: 'https://code.internal.test',
       nameWithOwner: 'platform/happier/app',
       urlSafety: {

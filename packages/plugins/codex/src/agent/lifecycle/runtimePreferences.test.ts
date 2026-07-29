@@ -3,14 +3,13 @@ import { describe, expect, it } from 'vitest';
 import { resolveCodexSessionRuntimePreferences } from './runtimePreferences.js';
 
 describe('resolveCodexSessionRuntimePreferences', () => {
-  it('uses commit-at-materialize pending delivery for Codex app-server provider acceptance', () => {
+  it('keeps Codex app-server Pending rows claimed until exact provider acceptance', () => {
     expect(resolveCodexSessionRuntimePreferences({
       settings: { codexBackendMode: 'appServer' },
       processEnv: {},
       startedBy: 'terminal',
     })).toEqual({
       codexBackendMode: 'appServer',
-      providerAcceptancePendingMaterialization: 'commitAtMaterialize',
     });
   });
 

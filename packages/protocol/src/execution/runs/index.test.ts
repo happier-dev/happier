@@ -9,6 +9,7 @@ import {
   ExecutionRunSendRequestSchema,
   ExecutionRunStartRequestSchema,
   ExecutionRunTransportErrorCodeSchema,
+  ExecutionRunUserTranscriptCommitRequestSchema,
 } from './index.js';
 import { ReviewFindingSchema } from '../../reviews/ReviewFinding.js';
 import { ReviewFollowUpInputSchema } from '../../reviews/reviewFollowUp.js';
@@ -23,6 +24,49 @@ import { ParticipantMessageV1Schema } from '../../messages/structured/participan
 import { KNOWN_CANONICAL_TOOL_NAMES_V2 } from '../../tools/v2/names.js';
 
 describe('executionRuns protocol', () => {
+  it('accepts the remote-dev predecessor user-transcript commit wire vector', () => {
+    // Prospective predecessor provenance:
+    // ../remote-dev@0649e4de85aacf08476063fef1990f418ce8e80b
+    // packages/protocol/src/executionRuns.ts
+    expect(ExecutionRunUserTranscriptCommitRequestSchema.parse({
+      runId: 'run_predecessor',
+      message: 'Provider-facing text',
+      displayMessage: 'User-visible text',
+      localId: 'predecessor-local-id',
+    })).toMatchObject({
+      runId: 'run_predecessor',
+      message: 'Provider-facing text',
+      displayMessage: 'User-visible text',
+      localId: 'predecessor-local-id',
+    });
+  });
+
+  it('accepts the bounded undeployed dev user-transcript commit alias without admitting mixed vocabulary', () => {
+    // Temporary alias provenance:
+    // dev@877ee97a0df346a1daaa541632dc42643d533120 dirty/current
+    // packages/protocol/src/execution/runs/index.ts
+    expect(ExecutionRunUserTranscriptCommitRequestSchema.parse({
+      runId: 'run_current_dev',
+      text: 'Provider-facing text',
+      displayText: 'User-visible text',
+      localId: 'current-dev-local-id',
+    })).toMatchObject({
+      runId: 'run_current_dev',
+      text: 'Provider-facing text',
+      displayText: 'User-visible text',
+      localId: 'current-dev-local-id',
+    });
+
+    expect(ExecutionRunUserTranscriptCommitRequestSchema.safeParse({
+      runId: 'run_mixed',
+      message: 'Predecessor text',
+      displayMessage: 'Predecessor display',
+      text: 'Current-dev text',
+      displayText: 'Current-dev display',
+      localId: 'mixed-local-id',
+    }).success).toBe(false);
+  });
+
   it('parses supported intents', () => {
     expect(ExecutionRunIntentSchema.parse('review')).toBe('review');
     expect(ExecutionRunIntentSchema.parse('voice_agent')).toBe('voice_agent');
@@ -134,6 +178,24 @@ describe('executionRuns protocol', () => {
     });
     expect(parsed.intent).toBe('review');
     expect((parsed as any).futureRunFlag).toBe('run-extra');
+  });
+
+  it('rejects Agent-session startup instructions on execution runs', () => {
+    expect(ExecutionRunStartRequestSchema.safeParse({
+      intent: 'review',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      instructions: 'Review.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      agentSessionStartupInstructionsV1: {
+        v: 1,
+        id: 'happier.global_voice_agent',
+        revision: 1,
+        instructions: 'Hidden system-session startup text.',
+      },
+    }).success).toBe(false);
   });
 
   it('accepts a typed optional connectedServices selection on start requests and rejects malformed selections', () => {
@@ -936,6 +998,35 @@ describe('executionRuns protocol', () => {
       instructions: 'Review the routing changes',
       runInBackground: true,
     })).not.toThrow();
+  });
+
+  it('preserves the selected execution-run profile generation', () => {
+    const parsed = ExecutionRunStartRequestSchema.parse({
+      intent: 'review',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      instructions: 'Review.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'resumable',
+      runClass: 'bounded',
+      ioMode: 'streaming',
+      profileId: 'acme.review/profile',
+      profileGenerationId: 'generation-2',
+    });
+
+    expect(parsed.profileId).toBe('acme.review/profile');
+    expect(parsed.profileGenerationId).toBe('generation-2');
+  });
+
+  it('rejects a selected execution-run profile without its committed generation', () => {
+    expect(ExecutionRunStartRequestSchema.safeParse({
+      intent: 'review',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      permissionMode: 'read_only',
+      retentionPolicy: 'resumable',
+      runClass: 'bounded',
+      ioMode: 'streaming',
+      profileId: 'acme.review/profile',
+    }).success).toBe(false);
   });
 
   it('exports and validates subagent_command.v1 meta payload', () => {

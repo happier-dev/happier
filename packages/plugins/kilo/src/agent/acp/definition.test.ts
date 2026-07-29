@@ -1,22 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
-import { KILO_ACP_BACKEND_SPEC } from './definition.js';
+import { KILO_ACP_RUNTIME_DEFINITION } from './definition.js';
 
-describe('Kilo ACP backend definition', () => {
-  it('uses the final agent-cli ACP seam and plugin-owned callbacks', () => {
-    expect(KILO_ACP_BACKEND_SPEC).toMatchObject({
-      backendId: 'kilo',
-      transport: {
-        kind: 'stdio',
-        launch: { kind: 'agent-cli', agentId: 'kilo', args: ['acp'] },
-      },
-      capabilities: {
-        supportsPermissionRequests: true,
-        supportsLoadSession: true,
-      },
-      sessionIdHeaderName: 'kiloSessionId',
+describe('Kilo ACP runtime definition', () => {
+  it('preserves Kilo-owned model, timeout, inference, stderr, and MCP policy', () => {
+    expect(KILO_ACP_RUNTIME_DEFINITION).toMatchObject({
+      modelConfigOptionId: 'model',
+      timeouts: expect.any(Object),
       toolNameInference: {
-        hintInputFields: ['tool_name', 'toolName', 'name'],
+        hintInputFields: ['tool_name', 'toolName', 'name', 'title', 'description'],
         investigationToolIdPatterns: ['task'],
         investigationToolKinds: ['task'],
       },
@@ -30,7 +22,6 @@ describe('Kilo ACP backend definition', () => {
       },
       mcp: { policy: 'pass_through' },
     });
-    expect(KILO_ACP_BACKEND_SPEC.callbacks).toHaveProperty('envBuilder');
-    expect(KILO_ACP_BACKEND_SPEC.callbacks).not.toHaveProperty('permissionDecision');
+    expect(KILO_ACP_RUNTIME_DEFINITION).not.toHaveProperty('permissionOptionSelection');
   });
 });

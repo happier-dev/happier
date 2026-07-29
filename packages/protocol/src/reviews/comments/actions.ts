@@ -45,9 +45,34 @@ export const ReviewCommentPrincipalProofV1Schema = z.object({
 }).strict();
 export type ReviewCommentPrincipalProofV1 = z.infer<typeof ReviewCommentPrincipalProofV1Schema>;
 
+const ReviewCommentCurrentIntentIdV1Schema = z.string().trim().min(1).max(512);
+const ReviewCommentCurrentIntentDigestV1Schema = z.string().regex(
+  /^(?:sha256:[a-f0-9]{64}|sha384:[a-f0-9]{96}|sha512:[a-f0-9]{128})$/,
+);
+
+export const ReviewCommentCurrentIntentV1Schema = z.object({
+  v: z.literal(1),
+  kind: z.literal('execution_run_host_action'),
+  actionId: z.literal('reviews.comments.create'),
+  subjectFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  effectBodySha256Base64Url: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+  sessionId: ReviewCommentCurrentIntentIdV1Schema,
+  runId: ReviewCommentCurrentIntentIdV1Schema,
+  callId: ReviewCommentCurrentIntentIdV1Schema,
+  profileId: ReviewCommentCurrentIntentIdV1Schema,
+  pluginId: ReviewCommentCurrentIntentIdV1Schema,
+  agentId: ReviewCommentCurrentIntentIdV1Schema,
+  projectId: ReviewCommentCurrentIntentIdV1Schema,
+  workspaceId: ReviewCommentCurrentIntentIdV1Schema,
+  immutableGenerationId: ReviewCommentCurrentIntentIdV1Schema,
+  packageDigest: ReviewCommentCurrentIntentDigestV1Schema,
+  manifestDigest: ReviewCommentCurrentIntentDigestV1Schema,
+}).strict();
+export type ReviewCommentCurrentIntentV1 = z.infer<typeof ReviewCommentCurrentIntentV1Schema>;
+
 export const ReviewCommentPrincipalHeaderV1Schema = z.object({
   actor: ReviewCommentActorRefV1Schema,
-  grants: z.array(z.string().min(1)).default([]),
+  currentIntent: ReviewCommentCurrentIntentV1Schema.optional(),
   proof: ReviewCommentPrincipalProofV1Schema.optional(),
 }).strict();
 export type ReviewCommentPrincipalHeaderV1 = z.infer<typeof ReviewCommentPrincipalHeaderV1Schema>;
@@ -79,10 +104,12 @@ export function stringifyReviewCommentPrincipalCanonicalJsonV1(value: unknown): 
 
 export function createReviewCommentPrincipalSigningInputV1(params: Readonly<{
   actor: z.infer<typeof ReviewCommentActorRefV1Schema>;
+  currentIntent?: ReviewCommentCurrentIntentV1;
   proof: Omit<ReviewCommentPrincipalProofV1, 'signatureBase64Url'>;
 }>): Uint8Array {
   return new TextEncoder().encode(`happier.reviewCommentPrincipal.v1\u0000${stringifyReviewCommentPrincipalCanonicalJsonV1({
     actor: params.actor,
+    ...(params.currentIntent ? { currentIntent: params.currentIntent } : {}),
     proof: params.proof,
   })}`);
 }
@@ -105,6 +132,7 @@ export const ReviewCommentOperationErrorCodeV1Schema = z.enum([
   'review_comment_invalid_filter',
   'review_comment_snapshot_invalid',
   'review_comment_conflict',
+  'review_comment_idempotency_conflict',
   'review_comment_thread_closed',
   'review_comment_already_redacted',
 ]);
@@ -148,6 +176,7 @@ export type ReviewCommentGetResponseV1 = z.infer<typeof ReviewCommentGetResponse
 
 export const ReviewCommentCreateResponseV1Schema = z.object({
   comment: ReviewCommentV1Schema,
+  replayed: z.boolean().optional(),
 }).strict();
 export type ReviewCommentCreateResponseV1 = z.infer<typeof ReviewCommentCreateResponseV1Schema>;
 

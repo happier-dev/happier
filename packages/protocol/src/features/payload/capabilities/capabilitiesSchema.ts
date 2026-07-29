@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ClientCompatibilityCapabilitiesV1Schema } from '../../../clientCompatibility/serverRequirementsV1.js';
 
 import { OAuthProviderStatusSchema } from '../oauthProviderStatus.js';
 import {
@@ -70,8 +71,13 @@ import {
   DEFAULT_LIVE_ACTIVITY_REMOTE_UPDATE_CAPABILITY_DIAGNOSTICS,
   LiveActivityRemoteUpdateCapabilityDiagnosticsSchema,
 } from '../../../activity/live/remoteUpdateCapabilities.js';
+import {
+  ConnectedServicesCapabilitiesSchema,
+  DEFAULT_CONNECTED_SERVICES_CAPABILITIES,
+} from './connectedServicesCapabilities.js';
 
 export const CapabilitiesSchema = z.object({
+  compatibility: ClientCompatibilityCapabilitiesV1Schema.optional(),
   bugReports: BugReportsCapabilitiesSchema.optional().default(DEFAULT_BUG_REPORTS_CAPABILITIES),
   voice: VoiceCapabilitiesSchema.optional().default(DEFAULT_VOICE_CAPABILITIES),
   pets: PetsCapabilitiesSchema.optional().default(DEFAULT_PETS_CAPABILITIES),
@@ -110,6 +116,7 @@ export const CapabilitiesSchema = z.object({
   auth: AuthCapabilitiesSchema.optional().default(DEFAULT_AUTH_CAPABILITIES),
   session: SessionCapabilitiesSchema.optional().default(DEFAULT_SESSION_CAPABILITIES),
   sharing: SharingCapabilitiesSchema.optional().default(DEFAULT_SHARING_CAPABILITIES),
+  connectedServices: ConnectedServicesCapabilitiesSchema.optional().default(DEFAULT_CONNECTED_SERVICES_CAPABILITIES),
   liveActivities: z
     .object({
       remoteUpdates: LiveActivityRemoteUpdateCapabilityDiagnosticsSchema.optional().default(

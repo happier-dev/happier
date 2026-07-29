@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
+import {
+  PI_REQUEST_AUTH_CAPABILITY_PATH_ENV,
+  resolvePiRequestAuthExtensionPath,
+} from '../../auth/services/requestAuth/index.js';
 import { buildPiRpcArgs } from './args.js';
 import { buildPiToolsForPermissionMode } from './permissions.js';
 
@@ -93,5 +97,27 @@ describe('buildPiRpcArgs', () => {
       '--tools',
       'read,bash,edit,write,grep,find,ls',
     ]);
+  });
+
+  it('loads the explicit request-auth extension only when the child capability and agent dir are present', () => {
+    const agentDir = '/tmp/pi-request-auth-agent';
+    expect(buildPiRpcArgs({
+      env: {
+        PI_CODING_AGENT_DIR: agentDir,
+        [PI_REQUEST_AUTH_CAPABILITY_PATH_ENV]: '/tmp/request-auth-capability.json',
+      },
+    })).toEqual([
+      '--extension',
+      resolvePiRequestAuthExtensionPath(agentDir),
+      '--mode',
+      'rpc',
+      '--tools',
+      'read,bash,edit,write,grep,find,ls',
+    ]);
+    expect(buildPiRpcArgs({
+      env: {
+        PI_CODING_AGENT_DIR: agentDir,
+      },
+    })).not.toContain('--extension');
   });
 });

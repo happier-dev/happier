@@ -1,12 +1,23 @@
-import type { PluginContextV1 } from '@happier-dev/plugin-sdk';
-import type { TerminalControlPort } from '@happier-dev/plugin-sdk/experimental/runtime/session';
+import { createHash, randomUUID } from 'node:crypto';
+
+import type { TerminalControlPort } from '@happier-dev/agents';
+import type {
+  ClaudePermissionContext,
+  ClaudePermissionDecision,
+} from '../../../../permissions/createClaudePermissionEngine.js';
+import {
+  DEFAULT_CLAUDE_UNIFIED_TERMINAL_WORKSPACE_TRUST_POLICY,
+  CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE,
+  normalizeClaudeUnifiedTerminalWorkspaceTrustPolicy,
+  type ClaudeUnifiedTerminalWorkspaceTrustPolicy,
+} from '@happier-dev/agents';
 
 import { CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID } from '../constants.js';
 import type { ClaudeScreenState } from '../screenState.js';
 import { answerClaudeUnifiedRegisteredDialog } from '../tuiControls/dialogAnswer.js';
 import {
   buildClaudeUnifiedDialogQuestionInput,
-  CLAUDE_UNIFIED_UNRECOGNIZED_DIALOG_NOTICE,
+  getClaudeUnifiedDialogIdentity,
   getClaudeUnifiedRecognizedDialogRegistryEntry,
   resolveClaudeUnifiedDialogSelectedOption,
   resolveClaudeUnifiedRegisteredDialogOption,
@@ -33,7 +44,7 @@ export type ClaudeUnifiedStartupRuntimeConfig = Readonly<{
   ultracode: boolean;
 }>;
 
-type PermissionDecisionResult = Awaited<ReturnType<PluginContextV1['sessions']['current']['permissions']['requestDecision']>>;
+type PermissionDecisionResult = ClaudePermissionDecision;
 
 const MAX_ORPHAN_STARTUP_DIALOG_ANSWER_ATTEMPTS = 2;
 
@@ -72,9 +83,10 @@ function readDecisionAnswers(
  * double-publishes or re-matches terminal text.
  */
 export function createClaudeUnifiedResumeChoiceStartupHandler(params: Readonly<{
-  ctx: PluginContextV1;
+  ctx: ClaudePermissionContext;
   sessionId: string;
   policy?: ClaudeUnifiedResumeChoicePolicy | null | undefined;
+  workspaceTrustPolicy?: ClaudeUnifiedTerminalWorkspaceTrustPolicy | null | undefined;
   port: TerminalControlPort;
   settleMs: number;
   wait: (ms: number) => Promise<void>;
@@ -86,41 +98,58 @@ export function createClaudeUnifiedResumeChoiceStartupHandler(params: Readonly<{
    * dialog surfacing after startup is never silently deferred. Absent → defaults to startup-active.
    */
   isStartupActive?: (() => boolean) | undefined;
+  /** Event edge used by startup readiness to suspend every timeout/relaunch timer while a human owns the prompt. */
+  onPendingUserActionChange?: ((pending: boolean) => void) | undefined;
+  /** Arms runtime-local ownership only when resume-from-summary Enter reaches the terminal. */
+  onResumeSummaryCompactResidue?: (() => void) | undefined;
 }>): Readonly<{
   handle(screen: ClaudeScreenState): Promise<ClaudeUnifiedResumeChoiceStartupResult>;
   hasPendingUserAction(): boolean;
-  dispose(): void;
+  dispose(): Promise<void>;
 }> {
   const policy = normalizeClaudeUnifiedResumeChoice(params.policy) ?? DEFAULT_CLAUDE_UNIFIED_RESUME_CHOICE;
+  const workspaceTrustPolicy = normalizeClaudeUnifiedTerminalWorkspaceTrustPolicy(params.workspaceTrustPolicy)
+    ?? DEFAULT_CLAUDE_UNIFIED_TERMINAL_WORKSPACE_TRUST_POLICY;
   let disposed = false;
   let pendingAbort: AbortController | null = null;
   let pendingRequest: Promise<void> | null = null;
-  let pendingGeneration = 0;
-  let pendingDialogId: ClaudeUnifiedRecognizedDialogId | 'unrecognized_confirmation' | null = null;
-  let closedDialogId: ClaudeUnifiedRecognizedDialogId | 'unrecognized_confirmation' | null = null;
-  let autoAttemptedDialogId: ClaudeUnifiedRecognizedDialogId | null = null;
+  let pendingIdentity: string | null = null;
+  let closedIdentity: string | null = null;
+  let autoAttemptedIdentity: string | null = null;
+  let pendingUserActionNotified = false;
+  const runtimeInstanceId = randomUUID();
   const orphanDialogAnswerAttempts = new Map<ClaudeUnifiedRecognizedDialogId, number>();
 
-  const cancelPending = (): void => {
-    pendingGeneration += 1;
+  const cancelPending = async (): Promise<void> => {
+    const task = pendingRequest;
     pendingAbort?.abort();
     pendingAbort = null;
     pendingRequest = null;
-    pendingDialogId = null;
+    pendingIdentity = null;
+    if (task) await task.catch(() => undefined);
+    if (pendingUserActionNotified) {
+      pendingUserActionNotified = false;
+      params.onPendingUserActionChange?.(false);
+    }
   };
 
   const isStartupActive = (): boolean => params.isStartupActive?.() ?? true;
 
   const answerVia = async (
     dialogId: ClaudeUnifiedRecognizedDialogId,
+    expectedIdentity: string,
     dialogOption: ClaudeUnifiedDialogOption,
   ): Promise<boolean> => {
     const result = await answerClaudeUnifiedRegisteredDialog({
       port: params.port,
       dialogId,
+      expectedIdentity,
       option: dialogOption,
       settleMs: params.settleMs,
       wait: params.wait,
+      onSubmitted: dialogId === 'resume_choice' && dialogOption.choice === 'resume_from_summary'
+        ? params.onResumeSummaryCompactResidue
+        : undefined,
     });
     return result.status === 'answered' || result.status === 'not_visible';
   };
@@ -154,9 +183,11 @@ export function createClaudeUnifiedResumeChoiceStartupHandler(params: Readonly<{
     const dialogOption = resolveOrphanOption(dialog, screen, config);
     if (!dialogOption) return 'unhandled';
 
+    const identity = getClaudeUnifiedDialogIdentity(dialog);
     const result = await answerClaudeUnifiedRegisteredDialog({
       port: params.port,
       dialogId: dialog.dialogId,
+      expectedIdentity: identity,
       option: dialogOption,
       settleMs: params.settleMs,
       wait: params.wait,
@@ -174,45 +205,67 @@ export function createClaudeUnifiedResumeChoiceStartupHandler(params: Readonly<{
 
   const startAsk = (dialog: ClaudeUnifiedVisibleDialog): void => {
     if (pendingRequest) return;
-    const generation = pendingGeneration + 1;
-    pendingGeneration = generation;
+    const identity = getClaudeUnifiedDialogIdentity(dialog);
     const abort = new AbortController();
     pendingAbort = abort;
-    pendingDialogId = dialog.dialogId;
-    const reason = dialog.kind === 'unrecognized'
-      ? CLAUDE_UNIFIED_UNRECOGNIZED_DIALOG_NOTICE.requestReason
-      : dialog.requestReason;
-    const requestId = `${params.sessionId}:${dialog.dialogId}`;
-    pendingRequest = params.ctx.sessions.current.permissions.requestDecision({
+    pendingIdentity = identity;
+    const digest = createHash('sha256')
+      .update(`${runtimeInstanceId}\0${identity}`, 'utf8')
+      .digest('hex')
+      .slice(0, 24);
+    const requestId = `${params.sessionId}:claude-dialog:${digest}`;
+    const task = params.ctx.sessions.current.permissions.requestDecision({
       provider: CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID,
+      source: CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE,
       requestId,
       toolCallId: requestId,
       toolName: 'AskUserQuestion',
       input: buildClaudeUnifiedDialogQuestionInput(dialog),
-      reason,
+      reason: dialog.requestReason,
     }, { signal: abort.signal }).then(async (result) => {
-      if (generation !== pendingGeneration || abort.signal.aborted) return;
-      // An unrecognized dialog is a fail-closed NOTICE: nothing is ever typed. Latch it closed so
-      // the same unknown dialog is not republished on every subsequent screen tick.
-      if (dialog.kind === 'unrecognized') {
-        closedDialogId = dialog.dialogId;
+      if (pendingRequest !== task || pendingIdentity !== identity || abort.signal.aborted) return;
+      // An incomplete/ambiguous prompt is navigation-only. A returned UI value can never become
+      // terminal input; the exact episode remains closed until the visible identity changes.
+      if (dialog.kind === 'unrecognized' && dialog.mode === 'notice') {
+        closedIdentity = identity;
         return;
       }
       const dialogOption = resolveClaudeUnifiedDialogSelectedOption(readDecisionAnswers(result), dialog.options);
-      const answered = dialogOption ? await answerVia(dialog.dialogId, dialogOption) : false;
-      if (!answered) closedDialogId = dialog.dialogId;
+      const answered = dialogOption && dialog.kind === 'recognized'
+        ? await answerVia(dialog.dialogId, identity, dialogOption)
+        : dialogOption && dialog.kind === 'unrecognized'
+          ? await answerClaudeUnifiedRegisteredDialog({
+            port: params.port,
+            dialogId: 'unrecognized_confirmation',
+            expectedIdentity: identity,
+            option: dialogOption,
+            settleMs: params.settleMs,
+            wait: params.wait,
+          }).then((answerResult) => answerResult.status === 'answered' || answerResult.status === 'not_visible')
+          : false;
+      if (!answered) closedIdentity = identity;
     }).catch(() => {
-      if (generation === pendingGeneration) closedDialogId = dialog.dialogId;
+      if (pendingRequest === task) closedIdentity = identity;
     }).finally(() => {
-      if (generation !== pendingGeneration) return;
+      if (pendingRequest !== task) return;
       pendingAbort = null;
       pendingRequest = null;
-      pendingDialogId = null;
+      pendingIdentity = null;
+      if (pendingUserActionNotified) {
+        pendingUserActionNotified = false;
+        params.onPendingUserActionChange?.(false);
+      }
     });
+    pendingRequest = task;
+    if (!pendingUserActionNotified) {
+      pendingUserActionNotified = true;
+      params.onPendingUserActionChange?.(true);
+    }
   };
 
   const publish = (dialog: ClaudeUnifiedVisibleDialog): ClaudeUnifiedResumeChoiceStartupResult => {
-    if (closedDialogId === dialog.dialogId) return 'unhandled';
+    const identity = getClaudeUnifiedDialogIdentity(dialog);
+    if (closedIdentity === identity) return 'unhandled';
     startAsk(dialog);
     return pendingRequest ? 'waiting_for_user' : 'unhandled';
   };
@@ -221,20 +274,42 @@ export function createClaudeUnifiedResumeChoiceStartupHandler(params: Readonly<{
     dialog: ClaudeUnifiedVisibleRecognizedDialog,
     screen: ClaudeScreenState,
   ): Promise<ClaudeUnifiedResumeChoiceStartupResult> => {
-    if (closedDialogId === dialog.dialogId) return 'unhandled';
+    const identity = getClaudeUnifiedDialogIdentity(dialog);
+    if (closedIdentity === identity) return 'unhandled';
     if (policy !== 'ask_every_time') {
-      if (autoAttemptedDialogId === dialog.dialogId) return 'unhandled';
-      autoAttemptedDialogId = dialog.dialogId;
+      if (autoAttemptedIdentity === identity) return 'unhandled';
+      autoAttemptedIdentity = identity;
       const entry = getClaudeUnifiedRecognizedDialogRegistryEntry(dialog.dialogId);
       const dialogOption = resolveClaudeUnifiedRegisteredDialogOption(screen, entry, policy);
-      const answered = dialogOption ? await answerVia(dialog.dialogId, dialogOption) : false;
+      const answered = dialogOption ? await answerVia(dialog.dialogId, identity, dialogOption) : false;
       if (!answered) {
-        closedDialogId = dialog.dialogId;
+        closedIdentity = identity;
         return 'unhandled';
       }
       return 'handled';
     }
     return publish(dialog);
+  };
+
+  const handleTrustFolderDialog = async (
+    dialog: ClaudeUnifiedVisibleRecognizedDialog,
+    screen: ClaudeScreenState,
+  ): Promise<ClaudeUnifiedResumeChoiceStartupResult> => {
+    if (workspaceTrustPolicy === 'ask_every_time') return publish(dialog);
+    const identity = getClaudeUnifiedDialogIdentity(dialog);
+    if (autoAttemptedIdentity === identity) return 'unhandled';
+    autoAttemptedIdentity = identity;
+    const entry = getClaudeUnifiedRecognizedDialogRegistryEntry('trust_folder');
+    const optionChoice = workspaceTrustPolicy === 'always_trust_happier_workspaces'
+      ? 'always_trust_happier_workspaces'
+      : 'always_reject_happier_workspaces';
+    const dialogOption = resolveClaudeUnifiedRegisteredDialogOption(screen, entry, optionChoice);
+    const answered = dialogOption ? await answerVia('trust_folder', identity, dialogOption) : false;
+    if (!answered) {
+      closedIdentity = identity;
+      return 'unhandled';
+    }
+    return 'handled';
   };
 
   return Object.freeze({
@@ -243,14 +318,15 @@ export function createClaudeUnifiedResumeChoiceStartupHandler(params: Readonly<{
 
       const dialog = resolveClaudeUnifiedVisibleDialog(screen);
       if (!dialog) {
-        if (pendingRequest) cancelPending();
-        closedDialogId = null;
+        if (pendingRequest) await cancelPending();
+        closedIdentity = null;
         return 'unhandled';
       }
 
-      if (closedDialogId !== null && closedDialogId !== dialog.dialogId) closedDialogId = null;
-      // A→B dialog replacement: cancel the stale publish so the new dialog can republish.
-      if (pendingDialogId !== null && pendingDialogId !== dialog.dialogId) cancelPending();
+      const identity = getClaudeUnifiedDialogIdentity(dialog);
+      if (closedIdentity !== null && closedIdentity !== identity) closedIdentity = null;
+      // Any identity mutation replaces the episode, including same-id context/option changes.
+      if (pendingIdentity !== null && pendingIdentity !== identity) await cancelPending();
 
       if (dialog.kind === 'unrecognized') {
         return publish(dialog);
@@ -268,15 +344,16 @@ export function createClaudeUnifiedResumeChoiceStartupHandler(params: Readonly<{
         if (isStartupActive()) return handleResumeChoiceDialog(dialog, screen);
         return publish(dialog);
       }
+      if (dialog.dialogId === 'trust_folder') return handleTrustFolderDialog(dialog, screen);
       // null owner (usage_limit, safeguard_pause): always publish for a user decision.
       return publish(dialog);
     },
     hasPendingUserAction() {
       return pendingRequest !== null;
     },
-    dispose() {
+    async dispose() {
       disposed = true;
-      cancelPending();
+      await cancelPending();
     },
   });
 }

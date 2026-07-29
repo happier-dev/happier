@@ -24,7 +24,7 @@ export const OH_MY_PI_UI_DESCRIPTOR = Object.freeze({
     picker: {
       iconName: 'planet-outline',
       iconScale: 0.9,
-      cliGlyphTokenId: 'agentGlyph.ohMyPi',
+      cliGlyph: 'OMP',
       cliGlyphScale: 1.0,
       profileCompatibilityGlyphScale: 1.0,
     },
@@ -34,7 +34,6 @@ export const OH_MY_PI_UI_DESCRIPTOR = Object.freeze({
     },
     icon: { assetId: 'ohMyPi' },
   },
-  settings: {},
   behavior: {
     mcpServers: { supportsDetectedConfigScan: true },
     externalSessions: {

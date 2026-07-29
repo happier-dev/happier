@@ -63,7 +63,11 @@ describe('actionInputElevenLabsToolSchema', () => {
     expect(typeof answers.description).toBe('string');
     expect(typeof answers.items?.description).toBe('string');
     expect(typeof answers.items?.properties?.question?.description).toBe('string');
-    expect(typeof answers.items?.properties?.answer?.description).toBe('string');
+    expect(typeof answers.items?.properties?.values?.description).toBe('string');
+    expect(answers.items?.properties?.values).toMatchObject({
+      type: 'array',
+      items: { type: 'string' },
+    });
   });
 
   it('omits guidance for disabled discovery tools from parameter descriptions', () => {

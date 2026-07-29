@@ -1,7 +1,7 @@
 import type {
   RuntimeOutboundTranscriptDispatchInputV1,
   RuntimeOutboundTranscriptPostSendEffectV1,
-} from '@happier-dev/plugin-sdk/experimental/runtime/session';
+} from '@happier-dev/agents';
 import {
   boundSessionWorkStateItemsV1,
   mergeSessionWorkStateMetadataV1,

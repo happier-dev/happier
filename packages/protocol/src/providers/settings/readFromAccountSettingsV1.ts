@@ -20,7 +20,9 @@ export function readProviderSettingsFromAccountSettingsV1(raw: unknown): Provide
   }
   const classification = classifyProviderSettingsSubtreeV1(raw);
   if (classification.kind === 'absent') return { settings: DEFAULT_PROVIDER_SETTINGS_V1, diagnostics: [] };
-  if (classification.kind === 'current') return { settings: classification.settings, diagnostics: [] };
+  if (classification.kind === 'current') {
+    return parseProviderSettingsV1Narrow(classification.settings);
+  }
   if (classification.kind === 'future') {
     return {
       settings: DEFAULT_PROVIDER_SETTINGS_V1,

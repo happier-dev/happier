@@ -1,11 +1,14 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
+import { PluginError } from '@happier-dev/plugin-sdk';
+import { withExclusiveFileLock } from '@happier-dev/plugin-sdk/experimental/fs';
 import {
   ExternalSessionsSourceSchema,
   type ExternalSessionsSource,
-} from '@happier-dev/plugin-sdk/sessions';
+} from '@happier-dev/plugin-sdk/experimental/sessions';
 import { expandHomePath } from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
 
 import {
@@ -13,12 +16,16 @@ import {
   resolvePersistedCodexRuntimeIdentity,
   toCanonicalCodexRuntimeBackendMode,
 } from '../../../identity/runtimeDescriptor.js';
+import { collectCodexSessionRolloutFiles } from '../../../rollout/discovery/sessionsForHome.js';
 import { buildCodexAgentRuntimeDescriptor } from '../../../../protocol/runtimeDescriptorV1.js';
 import type {
   CodexSessionHandoffBundle,
   ImportedCodexSessionHandoffBundle,
 } from './bundle.js';
-import { CodexSessionHandoffBundleSchema } from './bundle.js';
+import {
+  CodexSessionHandoffBundleSchema,
+  normalizeCodexHandoffBundleRelativePath,
+} from './bundle.js';
 
 function parseExternalSessionsSource(source: unknown): ExternalSessionsSource | null {
   const parsedSource = ExternalSessionsSourceSchema.safeParse(source);
@@ -46,6 +53,7 @@ function resolveCodexRuntimeSourceAffinity(source: unknown): Readonly<{
   home?: 'user' | 'connectedService';
   connectedServiceId?: string;
   connectedServiceProfileId?: string;
+  connectedServiceGroupId?: string;
 }> {
   const parsedSource = parseExternalSessionsSource(source);
   if (!parsedSource || parsedSource.kind !== 'codexHome') {
@@ -57,6 +65,7 @@ function resolveCodexRuntimeSourceAffinity(source: unknown): Readonly<{
       home: 'connectedService',
       connectedServiceId: optionalString(parsedSource.connectedServiceId),
       connectedServiceProfileId: optionalString(parsedSource.connectedServiceProfileId),
+      connectedServiceGroupId: optionalString(parsedSource.connectedServiceGroupId),
     }
     : { home: 'user' };
 }
@@ -79,6 +88,167 @@ function resolveContainedCodexPath(codexHome: string, relativePath: string): str
     throw new Error(`Codex bundle path escapes CODEX_HOME: ${relativePath}`);
   }
   return candidate;
+}
+
+type PreparedCodexImportFile = Readonly<{
+  relativePath: string;
+  destinationPath: string;
+  content: Buffer;
+}>;
+
+const CODEX_NATIVE_SESSION_IMPORT_LOCK_TIMEOUT_MS = 15_000;
+
+function isNodeErrorWithCode(error: unknown, code: string): boolean {
+  return error instanceof Error && (error as NodeJS.ErrnoException).code === code;
+}
+
+function targetIdentityConflict(relativePath: string, reason: string, cause?: unknown): PluginError {
+  return new PluginError({
+    code: 'target_identity_conflict',
+    message: `Codex handoff target conflicts at ${relativePath}: ${reason}`,
+    retryable: false,
+  }, cause === undefined ? undefined : { cause });
+}
+
+function prepareCodexImportFiles(
+  codexHome: string,
+  files: CodexSessionHandoffBundle['files'],
+): readonly PreparedCodexImportFile[] {
+  const filesByDestination = new Map<string, PreparedCodexImportFile>();
+
+  for (const file of files) {
+    const relativePath = normalizeCodexHandoffBundleRelativePath(file.relativePath);
+    const prepared = {
+      relativePath,
+      destinationPath: resolveContainedCodexPath(codexHome, relativePath),
+      content: Buffer.from(file.contentBase64, 'base64'),
+    } satisfies PreparedCodexImportFile;
+    const previous = filesByDestination.get(prepared.destinationPath);
+    if (previous) {
+      if (!previous.content.equals(prepared.content)) {
+        throw targetIdentityConflict(relativePath, 'the bundle contains divergent content for one destination');
+      }
+      continue;
+    }
+    filesByDestination.set(prepared.destinationPath, prepared);
+  }
+
+  return [...filesByDestination.values()];
+}
+
+async function withCodexNativeSessionImportCriticalSection<TResult>(
+  codexHome: string,
+  remoteSessionId: string,
+  effect: (physicalCodexHome: string) => Promise<TResult>,
+): Promise<TResult> {
+  await mkdir(codexHome, { recursive: true });
+  const physicalCodexHome = await realpath(codexHome);
+  const sessionKey = createHash('sha256').update(remoteSessionId, 'utf8').digest('hex');
+  const lockPath = join(
+    physicalCodexHome,
+    '.happier',
+    'locks',
+    'native-session-import-v1',
+    `${sessionKey}.lock`,
+  );
+  return await withExclusiveFileLock({
+    lockPath,
+    timeoutMs: CODEX_NATIVE_SESSION_IMPORT_LOCK_TIMEOUT_MS,
+  }, async () => await effect(physicalCodexHome));
+}
+
+async function assertExistingCodexNativeSessionBelongsToBundle(
+  codexHome: string,
+  remoteSessionId: string,
+  preparedFiles: readonly PreparedCodexImportFile[],
+): Promise<void> {
+  const preparedDestinations = new Set(preparedFiles.map((file) => file.destinationPath));
+  const existingRollouts = await collectCodexSessionRolloutFiles({
+    codexHome,
+    remoteSessionId,
+  });
+  for (const rollout of existingRollouts) {
+    if (!preparedDestinations.has(resolve(rollout.filePath))) {
+      throw targetIdentityConflict(
+        rollout.fileRelPath,
+        'the native session already contains a rollout outside this bundle',
+      );
+    }
+  }
+}
+
+async function assertExistingParentDirectoriesAreSafe(
+  codexHome: string,
+  file: PreparedCodexImportFile,
+): Promise<void> {
+  const parentRelativePath = relative(resolve(codexHome), dirname(file.destinationPath));
+  if (!parentRelativePath) return;
+
+  let currentPath = resolve(codexHome);
+  for (const segment of parentRelativePath.split(sep)) {
+    if (!segment) continue;
+    currentPath = join(currentPath, segment);
+    try {
+      const entry = await lstat(currentPath);
+      if (!entry.isDirectory()) {
+        throw targetIdentityConflict(file.relativePath, 'an existing parent is not a directory');
+      }
+    } catch (error) {
+      if (isNodeErrorWithCode(error, 'ENOENT')) {
+        return;
+      }
+      if (error instanceof PluginError) throw error;
+      throw targetIdentityConflict(file.relativePath, 'an existing parent could not be verified safely', error);
+    }
+  }
+}
+
+async function inspectCodexImportDestination(
+  codexHome: string,
+  file: PreparedCodexImportFile,
+): Promise<'identical' | 'missing'> {
+  await assertExistingParentDirectoriesAreSafe(codexHome, file);
+
+  let entry;
+  try {
+    entry = await lstat(file.destinationPath);
+  } catch (error) {
+    if (isNodeErrorWithCode(error, 'ENOENT')) {
+      return 'missing';
+    }
+    throw targetIdentityConflict(file.relativePath, 'the destination identity could not be inspected safely', error);
+  }
+  if (!entry.isFile()) {
+    throw targetIdentityConflict(file.relativePath, 'the existing destination is not a regular file');
+  }
+
+  let existingContent: Buffer;
+  try {
+    existingContent = await readFile(file.destinationPath);
+  } catch (error) {
+    throw targetIdentityConflict(file.relativePath, 'the existing destination could not be compared safely', error);
+  }
+  if (!existingContent.equals(file.content)) {
+    throw targetIdentityConflict(file.relativePath, 'the existing file has divergent content');
+  }
+  return 'identical';
+}
+
+async function createMissingCodexImportFile(
+  codexHome: string,
+  file: PreparedCodexImportFile,
+): Promise<void> {
+  await mkdir(dirname(file.destinationPath), { recursive: true });
+  try {
+    await writeFile(file.destinationPath, file.content, { flag: 'wx' });
+  } catch (error) {
+    if (!isNodeErrorWithCode(error, 'EEXIST')) throw error;
+
+    const racedState = await inspectCodexImportDestination(codexHome, file);
+    if (racedState !== 'identical') {
+      throw targetIdentityConflict(file.relativePath, 'the destination changed during exclusive creation');
+    }
+  }
 }
 
 export async function importCodexSessionBundle(params: Readonly<{
@@ -111,24 +281,59 @@ export async function importCodexSessionBundle(params: Readonly<{
       ...sourceAffinity,
       homePath: codexHome,
     });
-  const externalSource = runtimeDescriptor.agent.home === 'connectedService'
-    ? {
+  let externalSource: ExternalSessionsSource;
+  if (runtimeDescriptor.agent.home === 'connectedService') {
+    externalSource = {
       kind: 'codexHome' as const,
       home: 'connectedService' as const,
       ...(runtimeDescriptor.agent.connectedServiceId ? { connectedServiceId: runtimeDescriptor.agent.connectedServiceId } : {}),
       ...(runtimeDescriptor.agent.connectedServiceProfileId ? { connectedServiceProfileId: runtimeDescriptor.agent.connectedServiceProfileId } : {}),
+      ...(runtimeDescriptor.agent.connectedServiceGroupId ? { connectedServiceGroupId: runtimeDescriptor.agent.connectedServiceGroupId } : {}),
       // Intentionally omit any homePath: connected-service homes are resolved/verified per-machine.
-    }
-    : {
+    };
+  } else {
+    externalSource = {
       kind: 'codexHome' as const,
       home: 'user' as const,
       homePath: codexHome,
     };
-  for (const file of bundle.files) {
-    const destPath = resolveContainedCodexPath(codexHome, file.relativePath);
-    await mkdir(dirname(destPath), { recursive: true });
-    await writeFile(destPath, Buffer.from(file.contentBase64, 'base64'));
   }
+  await withCodexNativeSessionImportCriticalSection(
+    codexHome,
+    bundle.remoteSessionId,
+    async (physicalCodexHome) => {
+      const preparedFiles = prepareCodexImportFiles(physicalCodexHome, bundle.files);
+      await assertExistingCodexNativeSessionBelongsToBundle(
+        physicalCodexHome,
+        bundle.remoteSessionId,
+        preparedFiles,
+      );
+      const destinationStates = await Promise.all(
+        preparedFiles.map(async (file) => ({
+          file,
+          state: await inspectCodexImportDestination(physicalCodexHome, file),
+        })),
+      );
+      for (const destination of destinationStates) {
+        if (destination.state === 'missing') {
+          await createMissingCodexImportFile(physicalCodexHome, destination.file);
+        }
+      }
+      await assertExistingCodexNativeSessionBelongsToBundle(
+        physicalCodexHome,
+        bundle.remoteSessionId,
+        preparedFiles,
+      );
+      for (const file of preparedFiles) {
+        if (await inspectCodexImportDestination(physicalCodexHome, file) !== 'identical') {
+          throw targetIdentityConflict(
+            file.relativePath,
+            'the destination disappeared during final verification',
+          );
+        }
+      }
+    }
+  );
 
   return {
     remoteSessionId: bundle.remoteSessionId,

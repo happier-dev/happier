@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import { OPENCODE_UI_DESCRIPTOR } from './descriptor.js';
-import * as openCodeUiEntrypoint from './index.js';
 
 const FORBIDDEN_NO_EXECUTE_KEYS = new Set([
   'projection',
@@ -49,42 +48,6 @@ describe('OPENCODE_UI_DESCRIPTOR', () => {
           labelKey: 'agentInput.agent.opencode',
         },
         icon: { assetId: 'opencode' },
-      },
-      settings: {
-        kind: 'agentSettings.v1',
-        descriptorId: 'opencode.agentSettings.v1',
-        agentId: 'opencode',
-        settings: {
-          opencodeBackendMode: {
-            schema: { kind: 'enum', values: ['server', 'acp'] },
-            default: 'server',
-            storageScope: 'account',
-          },
-          opencodeServerBaseUrl: {
-            schema: { kind: 'string' },
-            default: '',
-            storageScope: 'account',
-          },
-          opencodeServerBaseUrlByServerIdV1: {
-            schema: { kind: 'stringRecord' },
-            default: {},
-            storageScope: 'account',
-          },
-        },
-        uiSections: [
-          expect.objectContaining({
-            id: 'opencodeBackendMode',
-            fields: [
-              expect.objectContaining({ key: 'opencodeBackendMode', kind: 'enum' }),
-            ],
-          }),
-          expect.objectContaining({
-            id: 'opencodeServer',
-            fields: [
-              expect.objectContaining({ key: 'opencodeServerBaseUrl', kind: 'text' }),
-            ],
-          }),
-        ],
       },
         behavior: {
           descriptorId: 'opencode.uiBehavior.v1',
@@ -155,20 +118,11 @@ describe('OPENCODE_UI_DESCRIPTOR', () => {
         },
       },
     });
+    expect(OPENCODE_UI_DESCRIPTOR).not.toHaveProperty('settings');
   });
 
   it('is a data-only no-execute descriptor', () => {
     expect(collectNoExecuteViolations(OPENCODE_UI_DESCRIPTOR)).toEqual([]);
     expect(JSON.parse(JSON.stringify(OPENCODE_UI_DESCRIPTOR))).toEqual(OPENCODE_UI_DESCRIPTOR);
-  });
-
-  it('keeps the public UI entrypoint data-only', () => {
-    const functionExports = Object.entries(openCodeUiEntrypoint)
-      .filter(([, value]) => typeof value === 'function')
-      .map(([name]) => name);
-
-    expect(functionExports).toEqual([]);
-    expect(openCodeUiEntrypoint).not.toHaveProperty('OPENCODE_UI_BEHAVIOR_OVERRIDE');
-    expect(openCodeUiEntrypoint).not.toHaveProperty('OPENCODE_AGENT_LOGO_SVG_XML');
   });
 });

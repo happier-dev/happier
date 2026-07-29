@@ -9,6 +9,20 @@ import {
 } from '../../index.js';
 
 describe('session pending queue hold metadata', () => {
+  it('preserves the exact opaque pending-message local id', () => {
+    const metadata = writeSessionPendingQueueHoldV1ToMetadata({}, {
+      holdId: 'hold-opaque',
+      localId: ' pending-1 ',
+      updatedAtMs: 1_000,
+      expiresAtMs: 61_000,
+    });
+
+    expect(SessionMetadataSchema.safeParse(metadata).success).toBe(true);
+    expect((metadata.sessionPendingQueueHoldV1 as {
+      holdsById: Record<string, { localId: string }>;
+    }).holdsById['hold-opaque']?.localId).toBe(' pending-1 ');
+  });
+
   it('blocks pending drain while a pending-message edit hold is unexpired', () => {
     const metadata = writeSessionPendingQueueHoldV1ToMetadata({}, {
       holdId: 'hold-1',

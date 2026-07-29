@@ -44,23 +44,23 @@ import {
 } from './voiceInference.js';
 
 describe('daemonVoiceInference schemas', () => {
-    it('parses and preserves daemon TTS synthesize request and response payloads', () => {
+    it('parses and preserves the daemon WAV TTS synthesize contract', () => {
         const request = DaemonVoiceInferenceTtsSynthesizeRequestSchema.parse({
             requestId: 'tts-1',
             text: 'hello daemon',
             packId: 'kokoro-tts-en-v1',
             voiceId: 'af_heart',
             speed: 1,
-            output: { codec: 'mp3', mimeType: 'audio/mpeg' },
+            output: { codec: 'wav', mimeType: 'audio/wav' },
         });
         const response = DaemonVoiceInferenceTtsSynthesizeResponseSchema.parse({
             ok: true,
             requestId: 'tts-1',
-            output: { codec: 'mp3', mimeType: 'audio/mpeg' },
+            output: { codec: 'wav', mimeType: 'audio/wav' },
             downloadId: 'download-1',
             chunkSizeBytes: 1024,
             sizeBytes: 2048,
-            name: 'tts.mp3',
+            name: 'tts.wav',
         });
 
         expect(request).toEqual({
@@ -69,17 +69,82 @@ describe('daemonVoiceInference schemas', () => {
             packId: 'kokoro-tts-en-v1',
             voiceId: 'af_heart',
             speed: 1,
-            output: { codec: 'mp3', mimeType: 'audio/mpeg' },
+            output: { codec: 'wav', mimeType: 'audio/wav' },
         });
         expect(response).toEqual({
             ok: true,
             requestId: 'tts-1',
-            output: { codec: 'mp3', mimeType: 'audio/mpeg' },
+            output: { codec: 'wav', mimeType: 'audio/wav' },
             downloadId: 'download-1',
             chunkSizeBytes: 1024,
             sizeBytes: 2048,
-            name: 'tts.mp3',
+            name: 'tts.wav',
         });
+    });
+
+    it('threads diagnostics capture context only when a caller explicitly opts in', () => {
+        const request = DaemonVoiceInferenceTtsSynthesizeRequestSchema.parse({
+            requestId: 'tts-diag-1',
+            text: 'diagnose this',
+            diagnostics: {
+                sessionId: 'session-private',
+                captureAllowed: true,
+                durationMs: null,
+                authorizationId: '6a42516d-20ea-4c70-91d5-b0dbaf693637',
+            },
+        });
+        const transcribe = DaemonVoiceInferenceSttTranscribeRequestSchema.parse({
+            requestId: 'stt-diag-1',
+            uploadId: 'upload-diag-1',
+            normalization: {
+                inputTransport: 'upload_transfer',
+                strategy: 'daemon_decode',
+                systemFfmpegAllowed: false,
+            },
+            diagnostics: {
+                sessionId: 'session-private',
+                captureAllowed: false,
+                durationMs: 1_250,
+                authorizationId: '6a42516d-20ea-4c70-91d5-b0dbaf693637',
+            },
+        });
+        const streaming = DaemonVoiceInferenceSttStreamStartRequestSchema.parse({
+            requestId: 'stt-stream-diag-1',
+            streamingMode: 'runtime',
+            diagnostics: {
+                sessionId: 'session-private',
+                captureAllowed: true,
+                durationMs: null,
+                authorizationId: '6a42516d-20ea-4c70-91d5-b0dbaf693637',
+            },
+        });
+
+        expect(request.diagnostics).toMatchObject({ captureAllowed: true });
+        expect(transcribe.diagnostics).toMatchObject({ captureAllowed: false, durationMs: 1_250 });
+        expect(streaming.diagnostics).toMatchObject({ sessionId: 'session-private', captureAllowed: true });
+        expect(DaemonVoiceInferenceTtsSynthesizeRequestSchema.parse({ requestId: 'tts-no-diag', text: 'hello' })).not.toHaveProperty('diagnostics');
+        expect(DaemonVoiceInferenceSttStreamStartRequestSchema.parse({
+            requestId: 'stt-stream-no-diag',
+            streamingMode: 'runtime',
+        })).not.toHaveProperty('diagnostics');
+    });
+
+    it('rejects daemon TTS codecs that no packaged runtime can produce', () => {
+        for (const output of [
+            { codec: 'mp3', mimeType: 'audio/mpeg' },
+            { codec: 'opus', mimeType: 'audio/opus' },
+        ]) {
+            expect(DaemonVoiceInferenceTtsSynthesizeRequestSchema.safeParse({
+                requestId: 'tts-unsupported',
+                text: 'hello daemon',
+                output,
+            }).success).toBe(false);
+            expect(DaemonVoiceInferenceTtsStreamStartRequestSchema.safeParse({
+                requestId: 'tts-stream-unsupported',
+                text: 'hello daemon',
+                output,
+            }).success).toBe(false);
+        }
     });
 
     it('parses segmented daemon TTS control payloads with stable segment metadata and playback ack', () => {
@@ -91,6 +156,7 @@ describe('daemonVoiceInference schemas', () => {
             speed: 1,
             output: { codec: 'wav', mimeType: 'audio/wav' },
             prefetchDepth: 2,
+            diagnostics: { sessionId: 'session-1', captureAllowed: true, durationMs: null, authorizationId: '6a42516d-20ea-4c70-91d5-b0dbaf693637' },
         });
         const started = DaemonVoiceInferenceTtsStreamStartResponseSchema.parse({
             ok: true,
@@ -268,6 +334,37 @@ describe('daemonVoiceInference schemas', () => {
         expect(warm.success).toBe(false);
     });
 
+    it('carries structured plugin identity in model status while legacy built-in status defaults to null', () => {
+        const legacy = DaemonVoiceInferenceModelStatusSchema.parse({
+            packId: 'kokoro-tts-en-v1',
+            kind: 'tts_sherpa',
+            model: 'kokoro',
+            executionSupport: ['daemon'],
+            installState: 'installed',
+            progress: null,
+            lastError: null,
+            updatedAtMs: 1,
+        });
+        expect(legacy.pluginIdentity).toBeNull();
+
+        const plugin = DaemonVoiceInferenceModelStatusSchema.parse({
+            ...legacy,
+            packId: 'acme.speech/english-small',
+            pluginIdentity: { pluginId: 'acme.speech', packId: 'english-small' },
+        });
+        expect(plugin.pluginIdentity).toEqual({ pluginId: 'acme.speech', packId: 'english-small' });
+
+        expect(DaemonVoiceInferenceModelStatusSchema.safeParse({
+            ...legacy,
+            packId: 'acme.speech/english-small',
+            pluginIdentity: { pluginId: 'acme.speech', packId: 'another-pack' },
+        }).success).toBe(false);
+
+        expect(DaemonVoiceInferenceModelsInstallRequestSchema.safeParse({
+            pluginIdentity: { pluginId: 'acme.speech', packId: 'english-small' },
+        }).success).toBe(false);
+    });
+
     it('rejects overlong daemon voice inference request ids across request-bearing contracts', () => {
         const overlongRequestId = 'r'.repeat(257);
 
@@ -328,6 +425,7 @@ describe('daemonVoiceInference schemas', () => {
             },
             models: [{
                 packId: 'kokoro-tts-en-v1',
+                pluginIdentity: null,
                 kind: 'tts_sherpa',
                 model: 'kokoro',
                 version: '2026-02-15',
@@ -367,6 +465,7 @@ describe('daemonVoiceInference schemas', () => {
             },
             models: [{
                 packId: 'kokoro-tts-en-v1',
+                pluginIdentity: null,
                 kind: 'tts_sherpa',
                 model: 'kokoro',
                 version: '2026-02-15',
@@ -553,6 +652,39 @@ describe('daemonVoiceInference schemas', () => {
         }).success).toBe(false);
     });
 
+    it('binds relay-required peer application encryption into the strict START contract', () => {
+        const binding = {
+            v: 1 as const,
+            suite: 'aes-256-gcm' as const,
+            flowKind: 'voice_media' as const,
+            routeKind: 'server_relay' as const,
+            authorityDigest: 'sha256:acdb52b3d7de70428b1c54fbb340ab675b98d6900d2b86ababad20baa7aed6ca',
+            accountId: 'account-1',
+            machineId: 'machine-1',
+            tunnelId: 'tunnel-1',
+            applicationKind: 'speech_transcription' as const,
+            applicationAttemptId: 'stt-stream-encrypted-1',
+            applicationAuthorityDigest: `sha256:${'ab'.repeat(32)}`,
+        };
+        expect(DaemonVoiceInferenceSttStreamStartRequestSchema.parse({
+            requestId: 'stt-stream-encrypted-1',
+            peerApplicationEncryption: binding,
+        }).peerApplicationEncryption).toEqual(binding);
+        expect(DaemonVoiceInferenceSttStreamStartResponseSchema.parse({
+            ok: true,
+            requestId: 'stt-stream-encrypted-1',
+            streamId: 'stream-1',
+            generation: 0,
+            ackSeq: -1,
+            format: { sampleRateHz: 16_000, channelCount: 1, bitsPerSample: 16, ffmpegCodec: 'pcm_s16le' },
+            peerApplicationEncryption: {
+                v: 1,
+                suite: 'aes-256-gcm',
+                recipientPublicKeyBase64Url: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+            },
+        }).peerApplicationEncryption?.suite).toBe('aes-256-gcm');
+    });
+
     it('keeps daemon streaming STT errors retryable when callers need reconnect decisions', () => {
         const parsed = DaemonVoiceInferenceSttStreamChunkResponseSchema.parse({
             ok: false,
@@ -605,6 +737,7 @@ describe('daemonVoiceInference schemas', () => {
             ok: true,
             model: {
                 packId: 'kokoro-tts-en-v1',
+                pluginIdentity: null,
                 kind: 'tts_sherpa',
                 model: 'kokoro',
                 executionSupport: ['daemon'],
@@ -667,6 +800,7 @@ describe('daemonVoiceInference schemas', () => {
             ok: true,
             model: {
                 packId: 'kokoro-tts-en-v1',
+                pluginIdentity: null,
                 kind: 'tts_sherpa',
                 model: 'kokoro',
                 version: null,

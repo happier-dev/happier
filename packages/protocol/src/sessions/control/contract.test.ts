@@ -1,8 +1,169 @@
 import { describe, expect, it } from 'vitest';
 
 import * as protocol from '../../index.js';
+import {
+  SessionLookupByTagsRequestV2Schema,
+  SessionLookupByTagsResponseV2Schema,
+} from './contract.js';
 
 describe('sessionControl contract exports', () => {
+  it('validates the strict bounded session lookup-by-tags wire contract', () => {
+    expect(protocol.SessionLookupByTagsRequestV2Schema).toBe(SessionLookupByTagsRequestV2Schema);
+    expect(protocol.SessionLookupByTagsResponseV2Schema).toBe(SessionLookupByTagsResponseV2Schema);
+
+    expect(SessionLookupByTagsRequestV2Schema.safeParse({
+      tags: ['direct:v1:current', 'direct:v1:released', 'x'.repeat(256)],
+    }).success).toBe(true);
+    expect(SessionLookupByTagsRequestV2Schema.safeParse({ tags: [] }).success).toBe(false);
+    expect(SessionLookupByTagsRequestV2Schema.safeParse({ tags: ['same', 'same'] }).success).toBe(false);
+    expect(SessionLookupByTagsRequestV2Schema.safeParse({ tags: ['one', 'two', 'three', 'four', 'five'] }).success).toBe(false);
+    expect(SessionLookupByTagsRequestV2Schema.safeParse({ tags: [''] }).success).toBe(false);
+    expect(SessionLookupByTagsRequestV2Schema.safeParse({ tags: ['x'.repeat(257)] }).success).toBe(false);
+    expect(SessionLookupByTagsRequestV2Schema.safeParse({
+      tags: ['one'],
+      machineId: 'not-part-of-this-contract',
+    }).success).toBe(false);
+
+    const session = {
+      id: 'lookup-session',
+      seq: 0,
+      createdAt: 1,
+      updatedAt: 1,
+      active: false,
+      activeAt: 1,
+      metadata: 'encrypted',
+      metadataVersion: 0,
+      agentState: null,
+      agentStateVersion: 0,
+      dataEncryptionKey: null,
+    };
+    expect(SessionLookupByTagsResponseV2Schema.safeParse({
+      sessions: [session, session, session, session],
+    }).success).toBe(true);
+    expect(SessionLookupByTagsResponseV2Schema.safeParse({
+      sessions: [session, session, session, session, session],
+    }).success).toBe(false);
+    expect(SessionLookupByTagsResponseV2Schema.safeParse({ sessions: [], extra: true }).success).toBe(false);
+  });
+
+  it('validates the safe C9 transcript-authority projection without a raw source watermark', () => {
+    const result = (protocol as any).V2SessionRecordSchema.safeParse({
+      id: 'snapshot-session',
+      seq: 12,
+      createdAt: 1,
+      updatedAt: 2,
+      active: false,
+      activeAt: 2,
+      metadata: '{}',
+      metadataVersion: 1,
+      agentState: null,
+      agentStateVersion: 0,
+      dataEncryptionKey: null,
+      currentStorageState: 'snapshot_complete',
+      acceptedThroughServerSeq: null,
+      materializedThroughSourceAt: 1_700_000_000_000,
+      publishedThroughServerSeq: 12,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.data).toMatchObject({
+      currentStorageState: 'snapshot_complete',
+      publishedThroughServerSeq: 12,
+    });
+    expect(result.data).not.toHaveProperty('sourceWatermark');
+
+    expect((protocol as any).V2SessionRecordSchema.safeParse({
+      ...result.data,
+      currentStorageState: 'snapshot_completish',
+    }).success).toBe(false);
+  });
+
+  it('types the split metadata layout and owner envelope on v2 session records', () => {
+    const base = {
+      id: 'split-session',
+      seq: 1,
+      createdAt: 1,
+      updatedAt: 2,
+      active: true,
+      activeAt: 2,
+      metadata: 'shared-envelope',
+      metadataVersion: 3,
+      metadataLayoutVersion: 1,
+      ownerMetadata: 'oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==',
+      agentState: 'full-owner-state',
+      agentStateVersion: 4,
+      dataEncryptionKey: null,
+    };
+
+    expect(protocol.V2SessionRecordSchema.safeParse(base).success).toBe(true);
+    expect(protocol.V2SessionRecordSchema.safeParse({
+      ...base,
+      ownerMetadata: null,
+    }).success).toBe(false);
+    const {
+      ownerMetadata: _ownerMetadata,
+      agentState: _agentState,
+      ...sharedOnly
+    } = base;
+    expect(protocol.V2SessionRecordSchema.safeParse(sharedOnly).success)
+      .toBe(false);
+    expect(protocol.V2SessionRecordSchema.safeParse({
+      ...sharedOnly,
+      agentState: null,
+      agentStateVersion: 4,
+    }).success).toBe(true);
+    expect(protocol.V2SessionRecordSchema.safeParse({
+      ...base,
+      metadataLayoutVersion: '1',
+    }).success).toBe(false);
+    expect(protocol.V2SessionRecordSchema.safeParse({
+      ...base,
+      metadataLayoutVersion: 2,
+    }).success).toBe(false);
+    expect(protocol.V2SessionRecordSchema.safeParse({
+      ...base,
+      ownerMetadata: 42,
+    }).success).toBe(false);
+  });
+
+  it('keeps layout-zero Agent state required for released compatibility records', () => {
+    const layoutZero = {
+      id: 'legacy-session',
+      seq: 1,
+      createdAt: 1,
+      updatedAt: 2,
+      active: true,
+      activeAt: 2,
+      metadata: 'legacy-envelope',
+      metadataVersion: 3,
+      metadataLayoutVersion: 0,
+      agentState: null,
+      agentStateVersion: 4,
+      dataEncryptionKey: null,
+    };
+    expect(protocol.V2SessionRecordSchema.safeParse(layoutZero).success)
+      .toBe(true);
+    expect(protocol.V2SessionRecordSchema.safeParse({
+      ...layoutZero,
+      ownerMetadata: 'oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==',
+    }).success).toBe(false);
+    const {
+      metadataLayoutVersion: _metadataLayoutVersion,
+      ...omittedLayout
+    } = layoutZero;
+    expect(protocol.V2SessionRecordSchema.safeParse({
+      ...omittedLayout,
+      ownerMetadata: 'oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==',
+    }).success).toBe(false);
+    const {
+      agentState: _agentState,
+      agentStateVersion: _agentStateVersion,
+      ...missingAgentState
+    } = layoutZero;
+    expect(protocol.V2SessionRecordSchema.safeParse(missingAgentState).success)
+      .toBe(false);
+  });
+
   it('exports the manual unread cursor boundary helper', () => {
     expect(typeof (protocol as any).resolveManualUnreadCursorBoundary).toBe('function');
     expect((protocol as any).resolveManualUnreadCursorBoundary({
@@ -41,15 +202,6 @@ describe('sessionControl contract exports', () => {
     expect(typeof (protocol as any).SessionRunStreamStartEnvelopeSchema).toBe('object');
     expect(typeof (protocol as any).SessionRunStreamReadEnvelopeSchema).toBe('object');
     expect(typeof (protocol as any).SessionRunStreamCancelEnvelopeSchema).toBe('object');
-  });
-
-  it('exports and validates session catch-up authorization values', () => {
-    const schema = (protocol as any).SessionCatchUpAuthorizationV1Schema;
-
-    expect(schema.safeParse('explicit_cursor').success).toBe(true);
-    expect(schema.safeParse('reconnect_watermark').success).toBe(true);
-    expect(schema.safeParse('startup_recovery').success).toBe(true);
-    expect(schema.safeParse('no_explicit_authorization').success).toBe(false);
   });
 
   it('validates a session_list envelope shape', () => {
@@ -155,10 +307,10 @@ describe('sessionControl contract exports', () => {
       active: false,
       activeAt: 0,
       encryption: { type: 'dataKey' },
+      runtimeActivityState: 'active',
       runtimeActivityActiveCount: 1,
       runtimeActivityObservedAt: 1_000,
-      runtimeActivityExpiresAt: 2_000,
-      runtimeActivitySourceClass: 'provider_detached_task',
+      runtimeActivityRevision: 2,
     });
     expect(summaryParsed.success).toBe(true);
 
@@ -169,7 +321,8 @@ describe('sessionControl contract exports', () => {
       active: false,
       activeAt: 0,
       encryption: { type: 'dataKey' },
-      runtimeActivityActiveCount: -1,
+      runtimeActivityState: 'active',
+      runtimeActivityRevision: 2,
     });
     expect(invalidCount.success).toBe(false);
 
@@ -180,7 +333,11 @@ describe('sessionControl contract exports', () => {
       active: false,
       activeAt: 0,
       encryption: { type: 'dataKey' },
-      runtimeActivitySourceClass: 'claude_task_id',
+      runtimeActivityState: 'active',
+      runtimeActivityActiveCount: 1,
+      runtimeActivityObservedAt: 1_000,
+      runtimeActivityRevision: 2,
+      runtimeActivitySourceClass: 'agent_detached_task',
     });
     expect(invalidSourceClass.success).toBe(false);
   });
@@ -382,31 +539,6 @@ describe('sessionControl contract exports', () => {
     }).success).toBe(true);
   });
 
-  it('exports and validates continuation recovery metadata used to gate pending drains', () => {
-    expect((protocol as any).SESSION_CONTINUATION_RECOVERY_METADATA_KEY).toBe('sessionContinuationRecoveryV1');
-    expect(typeof (protocol as any).SessionContinuationRecoveryV1Schema?.safeParse).toBe('function');
-    expect(typeof (protocol as any).isSessionContinuationRecoveryBlockingPendingDrain).toBe('function');
-
-    const metadata = {
-      sessionContinuationRecoveryV1: {
-        v: 1,
-        attemptsById: {
-          'generation-1:restart-1': {
-            v: 1,
-            attemptId: 'generation-1:restart-1',
-            status: 'sending',
-            failureAtMs: 100,
-            updatedAtMs: 110,
-            resumePromptMode: 'standard',
-          },
-        },
-      },
-    };
-
-    expect((protocol as any).SessionMetadataSchema.safeParse(metadata).success).toBe(true);
-    expect((protocol as any).isSessionContinuationRecoveryBlockingPendingDrain(metadata)).toBe(true);
-  });
-
   it('validates primary turn status and sanitized runtime issue fields on v2 session records', () => {
     const runtimeIssue = {
       v: 1,
@@ -509,37 +641,6 @@ describe('sessionControl contract exports', () => {
     });
     expect(invalidBlockedCount.success).toBe(false);
 
-    const catchUpAuthorization = (protocol as any).V2SessionRecordSchema.safeParse({
-      id: 'sess_123',
-      seq: 7,
-      createdAt: 1,
-      updatedAt: 2,
-      active: false,
-      activeAt: 0,
-      metadata: '{}',
-      metadataVersion: 1,
-      agentState: null,
-      agentStateVersion: 1,
-      dataEncryptionKey: null,
-      initialTranscriptCatchUpAuthorization: 'explicit_cursor',
-    });
-    expect(catchUpAuthorization.success).toBe(true);
-
-    const invalidCatchUpAuthorization = (protocol as any).V2SessionRecordSchema.safeParse({
-      id: 'sess_123',
-      seq: 7,
-      createdAt: 1,
-      updatedAt: 2,
-      active: false,
-      activeAt: 0,
-      metadata: '{}',
-      metadataVersion: 1,
-      agentState: null,
-      agentStateVersion: 1,
-      dataEncryptionKey: null,
-      initialTranscriptCatchUpAuthorization: 'no_explicit_authorization',
-    });
-    expect(invalidCatchUpAuthorization.success).toBe(false);
   });
 
   it('validates public runtime activity projection fields on v2 session records', () => {
@@ -555,14 +656,14 @@ describe('sessionControl contract exports', () => {
       agentState: null,
       agentStateVersion: 1,
       dataEncryptionKey: null,
+      runtimeActivityState: 'active',
       runtimeActivityActiveCount: 1,
       runtimeActivityObservedAt: 1_000,
-      runtimeActivityExpiresAt: 2_000,
-      runtimeActivitySourceClass: 'provider_detached_task',
+      runtimeActivityRevision: 2,
     });
     expect(valid.success).toBe(true);
 
-    const invalidExpiry = (protocol as any).V2SessionRecordSchema.safeParse({
+    const invalidRevision = (protocol as any).V2SessionRecordSchema.safeParse({
       id: 'sess_123',
       seq: 7,
       createdAt: 1,
@@ -574,9 +675,12 @@ describe('sessionControl contract exports', () => {
       agentState: null,
       agentStateVersion: 1,
       dataEncryptionKey: null,
-      runtimeActivityExpiresAt: -1,
+      runtimeActivityState: 'idle',
+      runtimeActivityActiveCount: 0,
+      runtimeActivityObservedAt: 1_000,
+      runtimeActivityRevision: -1,
     });
-    expect(invalidExpiry.success).toBe(false);
+    expect(invalidRevision.success).toBe(false);
   });
 
   it('validates meaningful activity timestamps on v2 session records', () => {
@@ -755,8 +859,14 @@ describe('sessionControl contract exports', () => {
       ],
       nextCursor: null,
       hasNext: false,
+      attentionNextCursor: 'cursor_v2_attention',
+      attentionHasNext: true,
     });
     expect(listParsed.success).toBe(true);
+    expect(listParsed.success && listParsed.data).toMatchObject({
+      attentionNextCursor: 'cursor_v2_attention',
+      attentionHasNext: true,
+    });
 
     const invalidModeParsed = listSchema.safeParse({
       sessions: [
@@ -847,7 +957,7 @@ describe('sessionControl contract exports', () => {
       metadata: {
         systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true },
         sessionUsageLimitRecoveryV1: { v: 'corrupt', nonsense: true },
-        sessionContinuationRecoveryV1: 42,
+        retiredUnknownMetadata: 42,
       },
     });
     expect(parsed).toEqual({ v: 1, key: 'voice_conversation', hidden: true });

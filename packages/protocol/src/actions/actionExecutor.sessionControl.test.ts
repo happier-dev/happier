@@ -515,7 +515,12 @@ describe('createActionExecutor (session control)', () => {
     );
     await executor.execute(
       'session.usageLimit.waitResume.cancel' as any,
-      { sessionId: 's1', issueFingerprint: null },
+      {
+        sessionId: 's1',
+        issueFingerprint: 'usage-limit:s1:reset',
+        armedAtMs: 123,
+        runtimeAuthRecoveryAttemptId: 'runtime-auth-attempt:exact-1',
+      },
       { surface: 'cli' },
     );
     await executor.execute('session.usageLimit.checkNow' as any, { sessionId: 's1', provider: ' codex ' }, { surface: 'cli' });
@@ -550,7 +555,9 @@ describe('createActionExecutor (session control)', () => {
     });
     expect(sessionUsageLimitWaitResumeCancel).toHaveBeenCalledWith({
       sessionId: 's1',
-      issueFingerprint: null,
+      issueFingerprint: 'usage-limit:s1:reset',
+      armedAtMs: 123,
+      runtimeAuthRecoveryAttemptId: 'runtime-auth-attempt:exact-1',
       serverId: 'server-a',
     });
     expect(sessionUsageLimitCheckNow).toHaveBeenCalledWith({
@@ -654,6 +661,41 @@ describe('createActionExecutor (session control)', () => {
     });
   });
 
+  it('preserves a thrown session.spawn_new attempt nonce so CLI callers can resume without resubmitting', async () => {
+    const error = Object.assign(new Error('session_spawn_resolve_unsupported'), {
+      code: 'session_spawn_resolve_unsupported',
+      details: { spawnResponse: { status: 'pending' }, spawnNonce: 'stable-attempt-1' },
+    });
+    const executor = createExecutor({ sessionSpawnNew: vi.fn(async () => { throw error; }) });
+
+    const res = await executor.execute(
+      'session.spawn_new' as any,
+      { path: '/repo' },
+      { surface: 'cli', defaultSessionId: null, actionRequestId: 'attempt-1' },
+    );
+
+    expect(res).toMatchObject({
+      ok: false,
+      error: 'session_spawn_resolve_unsupported',
+      details: { spawnNonce: 'stable-attempt-1', accepted: true },
+    });
+  });
+
+  it('does not expose arbitrary thrown action details while preserving spawn retry details', async () => {
+    const error = Object.assign(new Error('action failed'), {
+      details: { token: 'do-not-leak' },
+    });
+    const executor = createExecutor({ sessionSpawnNew: vi.fn(async () => { throw error; }) });
+    const res = await executor.execute(
+      'session.spawn_new' as any,
+      { path: '/repo' },
+      { surface: 'cli', defaultSessionId: null },
+    );
+
+    expect(res).not.toHaveProperty('details');
+    expect(JSON.stringify(res)).not.toContain('do-not-leak');
+  });
+
   it('executes session.spawn_new for a canonical built-in backend key without requiring agentId', async () => {
     const sessionSpawnNew = vi.fn(async () => ({ ok: true }));
     const executor = createExecutor({ sessionSpawnNew });
@@ -674,6 +716,209 @@ describe('createActionExecutor (session control)', () => {
       backendTargetKey: 'backend:claude',
       title: 'Canonical backend spawn',
     }));
+  });
+
+  it('rejects contradictory structured and Agent spawn targets before calling the spawn dependency', async () => {
+    const sessionSpawnNew = vi.fn(async () => ({ ok: true }));
+    const executor = createExecutor({ sessionSpawnNew });
+
+    const res = await executor.execute(
+      'session.spawn_new' as any,
+      {
+        agentId: 'claude',
+        backendTarget: {
+          kind: 'backend',
+          backendId: 'codex',
+          sourceKind: 'built_in',
+        },
+        path: '/repo',
+      },
+      { surface: 'cli', defaultSessionId: null },
+    );
+
+    expect(res).toEqual({
+      ok: false,
+      errorCode: 'invalid_parameters',
+      error: 'invalid_parameters',
+    });
+    expect(sessionSpawnNew).not.toHaveBeenCalled();
+  });
+
+  it('does not restore a legacy configured ACP Agent carrier after structured target reconciliation', async () => {
+    const sessionSpawnNew = vi.fn(async () => ({ ok: true }));
+    const executor = createExecutor({ sessionSpawnNew });
+
+    const res = await executor.execute(
+      'session.spawn_new' as any,
+      {
+        agentId: 'customAcp',
+        backendTarget: {
+          kind: 'backend',
+          backendId: 'customAcpRuntimeCarrier',
+          configuredBackendId: 'kiro',
+          sourceKind: 'configured',
+        },
+        runtimeDescriptorV1: {
+          v: 1,
+          agentId: 'kiro',
+          agent: {},
+        },
+        path: '/repo',
+      },
+      { surface: 'cli', defaultSessionId: null },
+    );
+
+    expect(res).toEqual({ ok: true, result: { ok: true } });
+    expect(sessionSpawnNew).toHaveBeenCalledWith(expect.objectContaining({
+      backendTarget: {
+        kind: 'backend',
+        backendId: 'customAcpRuntimeCarrier',
+        configuredBackendId: 'kiro',
+        sourceKind: 'configured',
+      },
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'kiro',
+        agent: {},
+      },
+      path: '/repo',
+    }));
+    expect(sessionSpawnNew.mock.calls[0]?.[0]).not.toHaveProperty('agentId');
+  });
+
+  it('rejects a non-canonical runtime descriptor Agent id before session spawn', async () => {
+    const sessionSpawnNew = vi.fn(async () => ({ ok: true }));
+    const executor = createExecutor({ sessionSpawnNew });
+
+    const res = await executor.execute(
+      'session.spawn_new' as any,
+      {
+        backendTargetKey: 'backend:plugin-review-bot',
+        runtimeDescriptorV1: {
+          v: 1,
+          agentId: ' claude ',
+          agent: {},
+        },
+        path: '/repo',
+      },
+      { surface: 'cli', defaultSessionId: null },
+    );
+
+    expect(res).toEqual({
+      ok: false,
+      errorCode: 'invalid_parameters',
+      error: 'invalid_parameters',
+    });
+    expect(sessionSpawnNew).not.toHaveBeenCalled();
+  });
+
+  it('rejects a legacy ACP runtime descriptor carrier before configured session spawn', async () => {
+    const sessionSpawnNew = vi.fn(async () => ({ ok: true }));
+    const executor = createExecutor({ sessionSpawnNew });
+
+    const res = await executor.execute(
+      'session.spawn_new' as any,
+      {
+        backendTarget: {
+          kind: 'backend',
+          backendId: 'customAcpRuntimeCarrier',
+          configuredBackendId: 'kiro',
+          sourceKind: 'configured',
+        },
+        runtimeDescriptorV1: {
+          v: 1,
+          agentId: 'customAcp',
+          agent: {},
+        },
+        path: '/repo',
+      },
+      { surface: 'cli', defaultSessionId: null },
+    );
+
+    expect(res).toEqual({
+      ok: false,
+      errorCode: 'invalid_parameters',
+      error: 'invalid_parameters',
+    });
+    expect(sessionSpawnNew).not.toHaveBeenCalled();
+  });
+
+  it('forwards a V1 plugin key with its distinct runtime descriptor Agent carrier', async () => {
+    const sessionSpawnNew = vi.fn(async () => ({ ok: true }));
+    const executor = createExecutor({ sessionSpawnNew });
+    const runtimeDescriptorV1 = {
+      v: 1 as const,
+      agentId: 'claude',
+      agent: {},
+    };
+
+    const res = await executor.execute(
+      'session.spawn_new' as any,
+      {
+        backendTargetKey: 'agent:plugin-review-bot',
+        runtimeDescriptorV1,
+        path: '/repo',
+      },
+      { surface: 'cli', defaultSessionId: null },
+    );
+
+    expect(res).toEqual({ ok: true, result: { ok: true } });
+    expect(sessionSpawnNew).toHaveBeenCalledWith(expect.objectContaining({
+      backendTargetKey: 'agent:plugin-review-bot',
+      runtimeDescriptorV1,
+      path: '/repo',
+    }));
+    expect(sessionSpawnNew.mock.calls[0]?.[0]).not.toHaveProperty('agentId');
+  });
+
+  it('rejects a V1 plugin key without an explicit runtime carrier before session spawn', async () => {
+    const sessionSpawnNew = vi.fn(async () => ({ ok: true }));
+    const executor = createExecutor({ sessionSpawnNew });
+
+    const res = await executor.execute(
+      'session.spawn_new' as any,
+      {
+        backendTargetKey: 'agent:plugin-review-bot',
+        path: '/repo',
+      },
+      { surface: 'cli', defaultSessionId: null },
+    );
+
+    expect(res).toEqual({
+      ok: false,
+      errorCode: 'invalid_parameters',
+      error: 'invalid_parameters',
+    });
+    expect(sessionSpawnNew).not.toHaveBeenCalled();
+  });
+
+  it('forwards equivalent lossy V1 configured and lossless V2 structured targets', async () => {
+    const sessionSpawnNew = vi.fn(async () => ({ ok: true }));
+    const executor = createExecutor({ sessionSpawnNew });
+    const backendTarget = {
+      kind: 'backend' as const,
+      backendId: 'customAcpRuntimeCarrier',
+      configuredBackendId: 'kiro',
+      sourceKind: 'configured' as const,
+    };
+
+    const res = await executor.execute(
+      'session.spawn_new' as any,
+      {
+        backendTargetKey: 'acpBackend:kiro',
+        backendTarget,
+        path: '/repo',
+      },
+      { surface: 'cli', defaultSessionId: null },
+    );
+
+    expect(res).toEqual({ ok: true, result: { ok: true } });
+    expect(sessionSpawnNew).toHaveBeenCalledWith(expect.objectContaining({
+      backendTargetKey: 'acpBackend:kiro',
+      backendTarget,
+      path: '/repo',
+    }));
+    expect(sessionSpawnNew.mock.calls[0]?.[0]).not.toHaveProperty('agentId');
   });
 
   it('executes session.spawn_picker for a canonical built-in backend key without requiring agentId', async () => {

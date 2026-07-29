@@ -1,159 +1,294 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { PluginVoiceRealtimeConnection } from '@happier-dev/plugin-sdk/runtime';
 
-import { createElevenLabsRuntimeContribution } from './createRuntimeContribution.js';
-import type { ElevenLabsRuntimeHost } from './createRuntimeContribution.js';
+import {
+  activate,
+  createElevenLabsVoiceProviderRuntimeRegistration,
+} from './createRuntimeContribution.js';
+import { ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS } from '../../../protocol/voice/index.js';
 
-function createHost() {
-  let active: string | null = null;
-  const start = vi.fn(async (input: Readonly<{ controlSessionId: string }>) => {
-    active = input.controlSessionId;
-    return { status: 'connected' };
-  });
-  const stop = vi.fn(async () => { active = null; });
-  const sendClientControl = vi.fn(async () => ({ status: 'sent' as const }));
-  const mirrorDispose = vi.fn();
-  const hooks = { onStarted: vi.fn(() => 'initial-context'), onStopped: vi.fn() };
-  const host: ElevenLabsRuntimeHost = {
-    globalVoiceSessionId: '__voice_agent__',
-    getSettings: () => ({ voice: { providerId: 'realtime_elevenlabs' } }),
-    projectVoiceSettings: (settings) => ({
-      providerId: (settings as { voice?: { providerId?: string } })?.voice?.providerId ?? 'realtime_elevenlabs', assistantLanguage: null,
-      welcome: { enabled: false, mode: 'immediate' },
-      providerConfig: { billingMode: 'byo', byo: { agentId: 'agent' }, tts: {
-        voiceId: 'voice', modelId: null, voiceSettings: {
-          stability: null, similarityBoost: null, style: null, useSpeakerBoost: null, speed: null,
-        },
-      } },
-    }),
-    createProviderClient: () => ({
-      credentialStatus: async () => ({ exists: true }),
-      mintConversationAuth: async () => ({ kind: 'token', value: 'short-lived' }),
-    }),
-    getCredentials: async () => null,
-    fetchHostedVoiceToken: async () => ({ allowed: false, reason: 'disabled' }),
-    completeHostedVoiceSession: async () => undefined,
-    presentPaywall: async () => ({ purchased: false }),
-    alert: vi.fn(),
-    translate: (key) => key,
-    createMachineError: (input) => input,
-    machine: {
-      transitionToAcquiringMic: vi.fn(), transitionToConnecting: vi.fn(),
-      transitionToConnected: vi.fn(), transitionToSpeaking: vi.fn(), transitionToEnding: vi.fn(),
-      transitionToDisconnected: vi.fn(), setError: vi.fn(), setMuted: vi.fn(),
-      getSnapshot: () => ({ adapterId: 'realtime_elevenlabs' }),
-      projectSnapshot: () => ({
-        adapterId: 'realtime_elevenlabs', sessionId: active, status: active ? 'connected' : 'disconnected',
-        mode: 'idle', canStop: active !== null,
-      }),
-      subscribe: () => () => {},
-    },
-    createConversationController: () => ({
-      start, stop, fail: async () => { active = null; }, sendClientControl,
-      getActiveControlSessionId: () => active, getOwnedControlSessionId: () => active,
-      requestReconnect: async () => {},
-    }),
-    createSdkHandleConnection: () => { throw new Error('connection not expected'); },
-    createMicSession: () => ({ ensureActive: async () => {}, teardown: async () => {}, setMuted: vi.fn() }),
-    ensureBound: async () => undefined,
-    resolveConversationSessionId: () => null,
-    applyTargetSelection: vi.fn(),
-    enableAudioMode: async () => {}, disableAudioMode: async () => {},
-    createStorageMirror: () => mirrorDispose,
-    projectTranscript: vi.fn(), appendConversationNote: vi.fn(),
-    createInboundWatchdog: () => ({
-      start: vi.fn(), stop: vi.fn(), noteInboundEvent: vi.fn(),
-      markAwaitingResponse: vi.fn(), markTurnActive: vi.fn(),
-    }),
-    runtimeConfig: {
-      handleReadyTimeoutMs: 10, watchdogPollMs: 10, watchdogPlateauMs: 10,
-      inboundStallMs: 10, awaitingResponseMs: 10,
-    },
-    diagnostics: { appendSystem: vi.fn(), appendProviderPayload: vi.fn(), appendError: vi.fn() },
-    voiceHooks: hooks,
-    realtimeClientTools: {},
-    resolveRedactionPrefs: () => ({
-      shareFilePaths: false, shareSessionSummary: false, sharePermissionRequests: false,
-    }),
-    redactToolResultValue: (value) => value,
+const sdk = vi.hoisted(() => ({
+  startSession: vi.fn(),
+  endSession: vi.fn(async () => undefined),
+  setMicMuted: vi.fn(),
+  sendUserMessage: vi.fn(),
+  sendContextualUpdate: vi.fn(),
+  getId: vi.fn(() => 'conversation-1'),
+}));
+
+vi.mock('@elevenlabs/client', () => ({
+  Conversation: { startSession: sdk.startSession },
+}));
+
+function createSdkHandleConnection(input: Readonly<{ driver: Readonly<{
+  open(input: Readonly<{
+    signal: AbortSignal;
+    onControl(event: unknown): void;
+    onTransport(event: Readonly<{ type: 'session_identity'; sessionId: string }>): void;
+    onRemoteClose(reason: string): void;
+  }>): Promise<void>;
+  sendControl(event: never): Promise<void>;
+  close(): Promise<void>;
+}> }>, observations?: Readonly<{
+  onControl?(event: unknown): void;
+  onTransport?(event: Readonly<{ type: 'session_identity'; sessionId: string }>): void;
+}>): PluginVoiceRealtimeConnection {
+  let state: ReturnType<PluginVoiceRealtimeConnection['state']> = 'idle';
+  let providerSessionId: string | null = null;
+  let closePromise: Promise<void> | null = null;
+  const close = async (): Promise<void> => {
+    if (!closePromise) {
+      state = 'closed';
+      closePromise = input.driver.close();
+    }
+    await closePromise;
   };
-  return { host, start, stop, sendClientControl, hooks, mirrorDispose };
+  return {
+    kind: 'sdk_handle',
+    async connect(signal) {
+      state = 'connecting';
+      const abort = new Promise<never>((_resolve, reject) => {
+        signal.addEventListener('abort', () => {
+          reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+        }, { once: true });
+      });
+      try {
+        await Promise.race([
+          input.driver.open({
+            signal,
+            onControl(event) { observations?.onControl?.(event); },
+            onTransport(event) {
+              providerSessionId = event.sessionId;
+              observations?.onTransport?.(event);
+            },
+            onRemoteClose() { void close(); },
+          }),
+          abort,
+        ]);
+        if (state === 'closed' || signal.aborted) {
+          throw Object.assign(new Error('aborted'), { name: 'AbortError' });
+        }
+        state = 'open';
+      } catch (error) {
+        await close();
+        throw error;
+      }
+    },
+    sendControl: async (event) => await input.driver.sendControl(event as never),
+    controlEvents: () => ({ async *[Symbol.asyncIterator]() {} }),
+    transportEvents: () => ({ async *[Symbol.asyncIterator]() {} }),
+    async close() { await close(); },
+    state: () => state,
+    currentProviderSessionId: () => providerSessionId,
+    playbackCursorMs: () => null,
+    beginOutputInterruptionCandidate: () => 'unsupported',
+    resolveOutputInterruptionCandidate() {},
+  };
 }
 
-describe('createElevenLabsRuntimeContribution', () => {
-  it('owns global surface semantics and fails closed when provider settings are unavailable', async () => {
-    const fixture = createHost();
-    const runtime = createElevenLabsRuntimeContribution(fixture.host);
-    expect(runtime.adapter.resolveSurfaceCapabilities?.({ providerId: 'realtime_elevenlabs' })).toEqual({
-      allowsGlobalStart: true,
-      controlSessionScope: 'global',
-      requiresVoiceAgentFeature: false,
-      bargeInEnabled: false,
-    });
-    await runtime.dispose();
+describe('ElevenLabs public Voice provider leaf', () => {
+  it('registers the manifest-local id through a normal host-free activate(api) entry', () => {
+    const register = vi.fn();
+    activate({ voiceProviders: { register } });
 
-    const unavailable = createElevenLabsRuntimeContribution({
-      ...fixture.host,
-      projectVoiceSettings: () => null,
-    });
-    expect(unavailable.adapter.resolveSurfaceCapabilities?.({ providerId: 'realtime_elevenlabs' })).toBeNull();
-    await unavailable.dispose();
+    expect(register).toHaveBeenCalledWith('realtime-elevenlabs', expect.any(Object));
+    const runtime = register.mock.calls[0]![1] as Record<string, unknown>;
+    expect(runtime).toMatchObject({ requiresMicForConnection: false, outputLevelMeter: 'unavailable' });
+    expect(runtime).not.toHaveProperty('start');
+    expect(runtime).not.toHaveProperty('stop');
+    expect(runtime).not.toHaveProperty('getSnapshot');
+    expect((runtime.protocol as Readonly<{ encodeTurnControl(action: string): unknown }>).encodeTurnControl('cancel_response')).toBeNull();
   });
 
-  it('owns adapter start, context, text-only fallback, mute, and teardown', async () => {
-    const fixture = createHost();
-    const runtime = createElevenLabsRuntimeContribution(fixture.host);
-
-    await runtime.adapter.toggle({ sessionId: 'session-1' });
-    expect(fixture.hooks.onStarted).toHaveBeenCalledWith('session-1');
-    expect(fixture.start).toHaveBeenCalledWith(expect.objectContaining({ controlSessionId: 'session-1' }));
-    const contextChannel = runtime.adapter.resolveContextChannel?.({ providerId: 'realtime_elevenlabs' });
-    expect(contextChannel).not.toBeNull();
-    expect(runtime.adapter.resolveContextChannel?.({ providerId: 'another_provider' })).not.toBeNull();
-    contextChannel?.sendContextualUpdate('context-via-capability');
-    contextChannel?.sendTextMessage('text-via-capability');
-    runtime.adapter.sendContextUpdate({ sessionId: 'session-1', update: 'context' });
-    runtime.adapter.sendContextText?.({ sessionId: 'session-1', text: 'text' });
-    expect(fixture.sendClientControl).toHaveBeenCalledWith({ type: 'voice.context_update', text: 'context' });
-    expect(fixture.sendClientControl).toHaveBeenCalledWith({ type: 'voice.user_text', text: 'text' });
-    expect(fixture.sendClientControl).toHaveBeenCalledWith({ type: 'voice.context_update', text: 'context-via-capability' });
-    expect(fixture.sendClientControl).toHaveBeenCalledWith({ type: 'voice.user_text', text: 'text-via-capability' });
-
-    await runtime.adapter.stop({ sessionId: 'session-1' });
-    expect(fixture.hooks.onStopped).toHaveBeenCalledTimes(1);
-    await runtime.adapter.sendTextTurn?.({
-      controlSessionId: '__voice_agent__', conversationSessionId: 'carrier', text: 'reopen',
+  it('keeps auth bounded, delegates SDK media, and closes hosted bookkeeping with the connection', async () => {
+    sdk.startSession.mockResolvedValueOnce({
+      endSession: sdk.endSession,
+      setMicMuted: sdk.setMicMuted,
+      sendUserMessage: sdk.sendUserMessage,
+      sendContextualUpdate: sdk.sendContextualUpdate,
+      getId: sdk.getId,
     });
-    expect(fixture.start).toHaveBeenLastCalledWith(expect.objectContaining({
-      controlSessionId: '__voice_agent__', request: expect.objectContaining({ textOnly: true }),
-    }));
+    const runtime = createElevenLabsVoiceProviderRuntimeRegistration();
+    const signal = new AbortController().signal;
+    const prepared = await runtime.protocol.prepare({
+      controlSessionId: 'control-1', attemptId: 1, reason: 'initial', request: {},
+      platform: 'web', providerConfig: {
+        mode: 'default',
+        billingMode: 'byo',
+        byo: { agentId: 'agent-1' },
+        tts: {
+          voiceId: 'EST9Ui6982FZPSi7gCHi',
+          modelId: null,
+          voiceSettings: {
+            stability: null,
+            similarityBoost: null,
+            style: null,
+            useSpeakerBoost: null,
+            speed: null,
+          },
+        },
+      },
+      accountOperations: {
+        request: vi.fn(async () => ({
+          status: 200,
+          finalUrl: 'https://api.elevenlabs.io/v1/convai/conversation/token?agent_id=agent-1',
+          headers: { 'content-type': 'application/json' },
+          body: new TextEncoder().encode(JSON.stringify({ token: 'short-lived-token' })),
+        })),
+      },
+      providerConversation: null,
+      hostedConversation: null,
+      signal,
+    });
+    expect(prepared.kind).toBe('prepared');
+    if (prepared.kind !== 'prepared') throw new Error('expected_prepared');
+    expect(prepared.session.safeMetadata).not.toHaveProperty('token');
 
-    await runtime.dispose();
-    expect(fixture.mirrorDispose).toHaveBeenCalledTimes(1);
-    expect(fixture.stop).toHaveBeenCalled();
+    const publicSdkHandleConnection = vi.fn(createSdkHandleConnection);
+    const connection = await runtime.createConnection({
+      session: prepared.session,
+      attemptId: 1,
+      mic: {
+        ensureActive: vi.fn(async () => undefined), teardown: vi.fn(async () => undefined),
+        setMuted: vi.fn(), isMuted: vi.fn(() => true), getStream: vi.fn(() => null),
+      },
+      interruption: { duckGain: 0.18, retainedOutputMaxMs: 1_500 },
+      levels: { onOutputLevel: vi.fn() },
+      media: {
+        createSdkHandleConnection: publicSdkHandleConnection,
+        createWebRtcConnection: vi.fn(),
+        createPcmConnection: vi.fn(),
+      },
+      tools: [{
+        name: 'readSession',
+        description: 'Read session state',
+        parameters: { type: 'object', additionalProperties: false },
+        execute: vi.fn(async () => ({ status: 'ok', path: '[redacted]' })),
+      }] as never,
+      ui: {} as never,
+      signal,
+      execution: { kind: 'direct_media' },
+    });
+    expect(publicSdkHandleConnection).toHaveBeenCalledTimes(1);
+    await connection.connect(new AbortController().signal);
+    const startOptions = sdk.startSession.mock.calls[0]?.[0] as Readonly<{
+      clientTools?: Readonly<Record<string, (parameters: unknown) => Promise<unknown>>>;
+    }>;
+    expect(await startOptions.clientTools?.readSession?.({})).toEqual({
+      status: 'ok',
+      path: '[redacted]',
+    });
+    expect(sdk.setMicMuted).toHaveBeenCalledWith(true);
+    await runtime.setInputMuted?.(false);
+    expect(sdk.setMicMuted).toHaveBeenLastCalledWith(false);
+    await connection.close({ code: 'user_stop' });
+    expect(sdk.endSession).toHaveBeenCalledTimes(1);
+    await runtime.dispose?.();
   });
 
-  it('creates independent runtime state after disable/re-enable rather than caching an adapter', async () => {
-    const first = createElevenLabsRuntimeContribution(createHost().host);
-    await first.dispose();
-    const second = createElevenLabsRuntimeContribution(createHost().host);
-    expect(second).not.toBe(first);
-    expect(second.adapter).not.toBe(first.adapter);
-    await second.dispose();
-  });
+  it('aborts hosted bookkeeping and suppresses late SDK publication after End Voice', async () => {
+    let resolveSdkStart!: (conversation: Readonly<{
+      endSession: () => Promise<void>;
+      setMicMuted: (muted: boolean) => void;
+      sendUserMessage: (message: string) => void;
+      sendContextualUpdate: (update: string) => void;
+      getId: () => string;
+    }>) => void;
+    const pendingSdkStart = new Promise<Parameters<typeof resolveSdkStart>[0]>((resolve) => {
+      resolveSdkStart = resolve;
+    });
+    sdk.startSession.mockImplementationOnce(async () => await pendingSdkStart);
+    const lateConversation = {
+      endSession: vi.fn(async () => undefined),
+      setMicMuted: vi.fn(),
+      sendUserMessage: vi.fn(),
+      sendContextualUpdate: vi.fn(),
+      getId: vi.fn(() => 'late-conversation'),
+    };
+    const hostedConversation = {
+      start: vi.fn(async () => ({
+        allowed: true as const,
+        token: 'hosted-token',
+        leaseId: 'lease-late',
+        bindingNonce: 'nonce-late',
+        expiresAtMs: Date.now() + 60_000,
+      })),
+      complete: vi.fn(async () => undefined),
+      abort: vi.fn(async () => undefined),
+    };
+    const runtime = createElevenLabsVoiceProviderRuntimeRegistration();
+    const attempt = new AbortController();
+    const prepared = await runtime.protocol.prepare({
+      controlSessionId: 'control-late',
+      attemptId: 2,
+      reason: 'initial',
+      request: {},
+      platform: 'web',
+      providerConfig: {
+        ...ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS,
+        billingMode: 'happier',
+      },
+      accountOperations: { request: vi.fn() },
+      providerConversation: null,
+      hostedConversation,
+      signal: attempt.signal,
+    });
+    if (prepared.kind !== 'prepared') throw new Error('expected_prepared');
+    const controls: unknown[] = [];
+    const identities: unknown[] = [];
+    const connection = await runtime.createConnection({
+      session: prepared.session,
+      attemptId: 2,
+      mic: {
+        ensureActive: vi.fn(async () => undefined),
+        teardown: vi.fn(async () => undefined),
+        setMuted: vi.fn(),
+        isMuted: vi.fn(() => false),
+        getStream: vi.fn(() => null),
+      },
+      interruption: { duckGain: 0.18, retainedOutputMaxMs: 1_500 },
+      levels: { onOutputLevel: vi.fn() },
+      media: {
+        createSdkHandleConnection: (input) => createSdkHandleConnection(input, {
+          onControl: (event) => controls.push(event),
+          onTransport: (event) => identities.push(event),
+        }),
+        createWebRtcConnection: vi.fn(),
+        createPcmConnection: vi.fn(),
+      },
+      tools: [],
+      ui: {} as never,
+      signal: attempt.signal,
+      execution: { kind: 'direct_media' },
+    });
+    const startCallsBeforeConnect = sdk.startSession.mock.calls.length;
+    const connecting = connection.connect(attempt.signal);
+    await vi.waitFor(() => {
+      expect(sdk.startSession).toHaveBeenCalledTimes(startCallsBeforeConnect + 1);
+    });
+    const sdkOptions = sdk.startSession.mock.calls.at(-1)?.[0] as Readonly<{
+      onConnect(): void;
+      onMessage(value: unknown): void;
+      onModeChange(value: unknown): void;
+    }>;
 
-  it('disposes an active runtime exactly once and closes it before releasing host subscriptions', async () => {
-    const fixture = createHost();
-    const events: string[] = [];
-    fixture.stop.mockImplementation(async () => { events.push('runtime.stop'); });
-    fixture.mirrorDispose.mockImplementation(() => { events.push('mirror.dispose'); });
-    const runtime = createElevenLabsRuntimeContribution(fixture.host);
-    await runtime.adapter.start({ sessionId: 'session-1' });
+    attempt.abort();
+    await expect(connecting).rejects.toMatchObject({ name: 'AbortError' });
+    expect(connection.state()).toBe('closed');
 
-    await runtime.dispose();
-    await runtime.dispose();
+    sdkOptions.onConnect();
+    sdkOptions.onMessage({ source: 'ai', message: 'late transcript' });
+    sdkOptions.onModeChange({ mode: 'speaking' });
+    resolveSdkStart(lateConversation);
+    await vi.waitFor(() => expect(lateConversation.endSession).toHaveBeenCalledTimes(1));
 
-    expect(fixture.stop).toHaveBeenCalledTimes(1);
-    expect(fixture.mirrorDispose).toHaveBeenCalledTimes(1);
-    expect(events).toEqual(['runtime.stop', 'mirror.dispose']);
+    expect(controls).toEqual([]);
+    expect(identities).toEqual([]);
+    expect(hostedConversation.complete).not.toHaveBeenCalled();
+    expect(hostedConversation.abort).toHaveBeenCalledTimes(1);
+    expect(lateConversation.setMicMuted).not.toHaveBeenCalled();
+    await runtime.dispose?.();
+    expect(lateConversation.endSession).toHaveBeenCalledTimes(1);
+    expect(hostedConversation.abort).toHaveBeenCalledTimes(1);
   });
 });

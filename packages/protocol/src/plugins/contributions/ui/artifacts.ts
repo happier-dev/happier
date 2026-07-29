@@ -1,11 +1,12 @@
 import { z } from 'zod';
 
+import { isPortableRelativePath } from '../../../filesystem/portablePathSegment.js';
 import { PluginUiArtifactDigestV1Schema } from '../../ui/artifactIntegrity.js';
 import { PluginUiChannelV1Schema, PluginUiPlatformV1Schema } from './compatibility.js';
 
-const PluginUiArtifactRelativePathV1Schema = z.string().trim().min(1).refine(
-  (value) => !value.startsWith('/') && !value.includes('..'),
-  { message: 'artifact file paths must be relative and must not traverse parents' },
+export const PluginUiArtifactRelativePathV1Schema = z.string().min(1).refine(
+  isPortableRelativePath,
+  { message: 'artifact file paths must use portable relative path segments' },
 );
 
 const ExactRuntimeVersionSchema = z.string().trim().min(1).refine(
@@ -15,8 +16,6 @@ const ExactRuntimeVersionSchema = z.string().trim().min(1).refine(
 
 export const PluginUiArtifactIntegrityV1Schema = z.object({
   digest: PluginUiArtifactDigestV1Schema,
-  signature: z.string().trim().min(1).optional(),
-  signingKeyId: z.string().trim().min(1).optional(),
 }).strict();
 export type PluginUiArtifactIntegrityV1 = z.infer<typeof PluginUiArtifactIntegrityV1Schema>;
 
@@ -47,7 +46,6 @@ export type PluginUiArtifactCompatibilityV1 = z.infer<typeof PluginUiArtifactCom
 
 export const PluginUiArtifactKindV1Schema = z.enum([
   'hostedWebAsset',
-  'embeddedWebBundle',
   'reactNativeBundle',
   'reactNativeSourceMap',
 ]);
@@ -55,7 +53,6 @@ export type PluginUiArtifactKindV1 = z.infer<typeof PluginUiArtifactKindV1Schema
 
 export const PluginUiArtifactContributionFamilyV1Schema = z.enum([
   'hostedWeb',
-  'embeddedWebBundles',
   'reactNativeBundles',
 ]);
 export type PluginUiArtifactContributionFamilyV1 =
@@ -76,7 +73,6 @@ export const PluginUiArtifactContributionV1Schema = z.object({
   files: z.array(PluginUiArtifactFileV1Schema).min(1).optional(),
   url: z.string().trim().min(1).optional(),
   cacheKey: z.string().trim().min(1).optional(),
-  revokedAt: z.string().datetime().optional(),
   devUrl: z.string().trim().min(1).optional(),
 }).strict().superRefine((value, ctx) => {
   const isDevelopmentDevUrlArtifact = value.channel === 'development'
@@ -126,37 +122,6 @@ export const PluginUiArtifactContributionV1Schema = z.object({
       path: ['contributionFamily'],
       message: 'hostedWebAsset artifacts must belong to hostedWeb contributions',
     });
-  }
-
-  if (value.artifactKind === 'embeddedWebBundle') {
-    if (value.contributionFamily !== 'embeddedWebBundles') {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['contributionFamily'],
-        message: 'embeddedWebBundle artifacts must belong to embeddedWebBundles contributions',
-      });
-    }
-    if (value.platform !== 'web') {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['platform'],
-        message: 'embeddedWebBundle artifacts must target the web platform',
-      });
-    }
-    if (!value.assetPath) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['assetPath'],
-        message: 'embeddedWebBundle artifacts must use installed assetPath bytes',
-      });
-    }
-    if (value.url !== undefined || value.devUrl !== undefined) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: value.url !== undefined ? ['url'] : ['devUrl'],
-        message: 'embeddedWebBundle artifacts must not declare remote URLs',
-      });
-    }
   }
 });
 export type PluginUiArtifactContributionV1 = z.infer<typeof PluginUiArtifactContributionV1Schema>;

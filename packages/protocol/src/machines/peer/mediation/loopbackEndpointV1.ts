@@ -31,6 +31,7 @@ export const PeerLoopbackEndpointCandidateV1Schema = z
     url: z.string().min(1).max(MAX_LOOPBACK_ENDPOINT_URL_LENGTH),
     endpointFingerprint: z.string().min(1),
     expiresAt: z.number().int().nonnegative(),
+    directRouteGrantProofVerifierVersions: z.array(z.literal(2)).max(1).optional().default([]),
   })
   .superRefine((candidate, ctx) => {
     let parsedUrl: URL;
@@ -122,7 +123,10 @@ export const PeerLoopbackProbeResponseV1Schema = z.discriminatedUnion('ok', [
     .strict(),
 ]);
 
-export type PeerLoopbackEndpointCandidateV1 = z.infer<typeof PeerLoopbackEndpointCandidateV1Schema>;
+export type PeerLoopbackEndpointCandidateV1 = Omit<
+  z.output<typeof PeerLoopbackEndpointCandidateV1Schema>,
+  'directRouteGrantProofVerifierVersions'
+> & Readonly<{ directRouteGrantProofVerifierVersions?: readonly 2[] }>;
 export type PeerLoopbackProbeRequestV1 = z.infer<typeof PeerLoopbackProbeRequestV1Schema>;
 export type PeerLoopbackProbeFallbackReasonCodeV1 = z.infer<typeof PeerLoopbackProbeFallbackReasonCodeV1Schema>;
 export type PeerLoopbackProbeResponseV1 = z.infer<typeof PeerLoopbackProbeResponseV1Schema>;

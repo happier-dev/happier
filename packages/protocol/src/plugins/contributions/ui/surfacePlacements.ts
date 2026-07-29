@@ -89,11 +89,6 @@ export const PluginSurfaceRendererRefV1Schema = z.discriminatedUnion('kind', [
     contributionId: z.string().trim().min(1),
     fallback: PluginUiFallbackRefV1Schema.optional(),
   }).strict(),
-  z.object({
-    kind: z.literal('embeddedWeb'),
-    contributionId: z.string().trim().min(1),
-    fallback: PluginUiFallbackRefV1Schema.optional(),
-  }).strict(),
 ]);
 export type PluginSurfaceRendererRefV1 = z.infer<typeof PluginSurfaceRendererRefV1Schema>;
 
@@ -304,6 +299,10 @@ export const PluginSurfacePlacementDescriptorV1Schema = z.object({
 });
 export type PluginSurfacePlacementDescriptorV1 =
   z.infer<typeof PluginSurfacePlacementDescriptorV1Schema>;
+export type PluginSurfacePlacementDescriptor =
+  z.infer<typeof PluginSurfacePlacementDescriptorV1Schema>;
+export type PluginSurfacePlacementDescriptorInput =
+  z.input<typeof PluginSurfacePlacementDescriptorV1Schema>;
 
 function resolveRightSidebarPlacementScope(
   placement: PluginSurfacePlacementKindV1,

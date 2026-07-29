@@ -1,14 +1,16 @@
-import type { ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm';
+import type { ScmHostingProviderRef } from '@happier-dev/plugin-sdk/experimental/scm';
 import type {
   ScmHostingProviderCompareUrlInput,
   ScmHostingProviderRemoteDetectionInput,
   ScmHostingProviderRuntimeAdapter,
-} from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/experimental/scm/hostingProvider';
 
 import { gitlabCliPullRequestAdapter } from './pullRequests/index.js';
+import { PLUGIN_MANIFEST } from './manifest.js';
 import { encodeCompareRef, parseScmRemoteUrl, stripTrailingSlash } from './remoteUrl.js';
 
-export const GITLAB_SCM_HOSTING_PROVIDER_ID = 'scm.gitlab';
+export const GITLAB_SCM_HOSTING_PROVIDER_LOCAL_ID = 'gitlab';
+export const GITLAB_SCM_HOSTING_PROVIDER_ID = `${PLUGIN_MANIFEST.id}/${GITLAB_SCM_HOSTING_PROVIDER_LOCAL_ID}`;
 export const GITLAB_REMOTE_HOST_MATCHERS = Object.freeze({
   exactHosts: Object.freeze(['gitlab.com']),
 });

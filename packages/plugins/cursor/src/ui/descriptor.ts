@@ -24,7 +24,7 @@ export const CURSOR_UI_DESCRIPTOR = Object.freeze({
     },
     picker: {
       iconName: 'code-slash-outline',
-      cliGlyphTokenId: 'agentGlyph.cursor',
+      cliGlyph: 'CU',
       cliGlyphScale: 1.0,
       profileCompatibilityGlyphScale: 1.0,
     },
@@ -39,7 +39,6 @@ export const CURSOR_UI_DESCRIPTOR = Object.freeze({
     modelSelection: 'experimental',
     resume: 'experimental',
   },
-  settings: {},
   behavior: {},
   session: {},
   message: {},

@@ -35,4 +35,22 @@ describe('SESSION_STATE_FIELD_REGISTRY', () => {
       deliveryClass: 'durable_best_effort',
     });
   });
+
+  it('registers external-Agent observations as a distinct host-owned durable projection', () => {
+    expect(getSessionStateFieldDescriptor('runtime.externalAgent')).toEqual({
+      id: 'runtime.externalAgent',
+      class: 'runtime',
+      conflictPolicy: 'bindingOwned',
+      deliveryClass: 'durable_best_effort',
+    });
+  });
+
+  it('registers current external-session operation progress as durable descriptive state', () => {
+    expect(getSessionStateFieldDescriptor('runtime.externalSessionOperation')).toEqual({
+      id: 'runtime.externalSessionOperation',
+      class: 'runtime',
+      conflictPolicy: 'bindingOwned',
+      deliveryClass: 'durable_required',
+    });
+  });
 });

@@ -1,7 +1,7 @@
 import type {
   ExternalSessionCandidateV1,
   ExternalSessionTranscriptRawMessageV1,
-} from '@happier-dev/plugin-sdk/sessions';
+} from '@happier-dev/plugin-sdk/experimental/sessions';
 
 export type CodexExternalSessionAppServerMetadata = Readonly<{
   updatedAtMs: number;
@@ -45,11 +45,39 @@ type CodexStreamVectorForwardCursorV4 = Readonly<{
   }>[];
 }>;
 
+type CodexGenerationStreamVectorForwardCursorV6 = Readonly<{
+  v: 6;
+  kind: 'codexForwardStreamVector';
+  sourceGeneration: readonly string[];
+  streams: readonly Readonly<{
+    fileRelPath: string;
+    physicalGeneration: string;
+    nextOffsetBytes: number;
+    subIndex: number;
+  }>[];
+}>;
+
+type CodexAnchoredGenerationStreamVectorForwardCursorV7 = Readonly<{
+  v: 7;
+  kind: 'codexForwardStreamVector';
+  sourceGeneration: readonly string[];
+  streams: readonly Readonly<{
+    fileRelPath: string;
+    physicalGeneration: string;
+    nextOffsetBytes: number;
+    subIndex: number;
+    fingerprintOffsetBytes: number;
+    contentFingerprint: string;
+  }>[];
+}>;
+
 export type CodexExternalForwardCursor =
   | CodexForwardCursorV1
   | CodexAppServerForwardCursorV2
   | CodexMergedForwardCursorV3
-  | CodexStreamVectorForwardCursorV4;
+  | CodexStreamVectorForwardCursorV4
+  | CodexGenerationStreamVectorForwardCursorV6
+  | CodexAnchoredGenerationStreamVectorForwardCursorV7;
 
 export function encodeCodexExternalForwardCursor(value: CodexExternalForwardCursor): string {
   return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
@@ -110,6 +138,160 @@ export function decodeCodexExternalForwardCursor(raw: string): CodexExternalForw
         })
         .filter((entry): entry is { fileRelPath: string; nextOffsetBytes: number; subIndex: number } => entry !== null);
       return { v: 4, kind: 'codexForwardStreamVector', streams };
+    }
+    if (record.v === 6 && record.kind === 'codexForwardStreamVector') {
+      const sourceGeneration = Array.isArray(record.sourceGeneration)
+        ? record.sourceGeneration.filter(
+          (entry): entry is string => typeof entry === 'string' && entry.length > 0,
+        )
+        : [];
+      if (
+        !Array.isArray(record.sourceGeneration)
+        || sourceGeneration.length !== record.sourceGeneration.length
+      ) {
+        return null;
+      }
+      const rawStreams = Array.isArray(record.streams) ? record.streams : [];
+      const streams = rawStreams
+        .map((entry) => {
+          if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
+          const streamRecord = entry as Record<string, unknown>;
+          const fileRelPath = typeof streamRecord.fileRelPath === 'string'
+            ? streamRecord.fileRelPath.trim()
+            : '';
+          const physicalGeneration =
+            typeof streamRecord.physicalGeneration === 'string'
+              ? streamRecord.physicalGeneration.trim()
+              : '';
+          const nextOffsetBytes =
+            typeof streamRecord.nextOffsetBytes === 'number'
+              && Number.isFinite(streamRecord.nextOffsetBytes)
+              ? Math.trunc(streamRecord.nextOffsetBytes)
+              : NaN;
+          const subIndex =
+            typeof streamRecord.subIndex === 'number'
+              && Number.isFinite(streamRecord.subIndex)
+              ? Math.trunc(streamRecord.subIndex)
+              : NaN;
+          if (
+            !fileRelPath
+            || !physicalGeneration
+            || !Number.isFinite(nextOffsetBytes)
+            || nextOffsetBytes < 0
+            || !Number.isFinite(subIndex)
+            || subIndex < 0
+          ) {
+            return null;
+          }
+          return {
+            fileRelPath,
+            physicalGeneration,
+            nextOffsetBytes,
+            subIndex,
+          };
+        })
+        .filter((entry): entry is {
+          fileRelPath: string;
+          physicalGeneration: string;
+          nextOffsetBytes: number;
+          subIndex: number;
+        } => entry !== null);
+      if (streams.length !== rawStreams.length) return null;
+      return {
+        v: 6,
+        kind: 'codexForwardStreamVector',
+        sourceGeneration,
+        streams,
+      };
+    }
+    if (record.v === 7 && record.kind === 'codexForwardStreamVector') {
+      const sourceGeneration = Array.isArray(record.sourceGeneration)
+        ? record.sourceGeneration.filter(
+          (entry): entry is string => typeof entry === 'string' && entry.length > 0,
+        )
+        : [];
+      if (
+        !Array.isArray(record.sourceGeneration)
+        || sourceGeneration.length !== record.sourceGeneration.length
+      ) {
+        return null;
+      }
+      const rawStreams = Array.isArray(record.streams) ? record.streams : [];
+      const streams = rawStreams
+        .map((entry) => {
+          if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
+          const streamRecord = entry as Record<string, unknown>;
+          const fileRelPath = typeof streamRecord.fileRelPath === 'string'
+            ? streamRecord.fileRelPath.trim()
+            : '';
+          const physicalGeneration =
+            typeof streamRecord.physicalGeneration === 'string'
+              ? streamRecord.physicalGeneration.trim()
+              : '';
+          const nextOffsetBytes =
+            typeof streamRecord.nextOffsetBytes === 'number'
+              && Number.isSafeInteger(streamRecord.nextOffsetBytes)
+              ? streamRecord.nextOffsetBytes
+              : NaN;
+          const subIndex =
+            typeof streamRecord.subIndex === 'number'
+              && Number.isSafeInteger(streamRecord.subIndex)
+              ? streamRecord.subIndex
+              : NaN;
+          const fingerprintOffsetBytes =
+            typeof streamRecord.fingerprintOffsetBytes === 'number'
+              && Number.isSafeInteger(streamRecord.fingerprintOffsetBytes)
+              ? streamRecord.fingerprintOffsetBytes
+              : NaN;
+          const contentFingerprint =
+            typeof streamRecord.contentFingerprint === 'string'
+              ? streamRecord.contentFingerprint.trim()
+              : '';
+          if (
+            !fileRelPath
+            || !physicalGeneration
+            || !Number.isSafeInteger(nextOffsetBytes)
+            || nextOffsetBytes < 0
+            || !Number.isSafeInteger(subIndex)
+            || subIndex < 0
+            || !Number.isSafeInteger(fingerprintOffsetBytes)
+            || fingerprintOffsetBytes < nextOffsetBytes
+            || (subIndex === 0 && fingerprintOffsetBytes !== nextOffsetBytes)
+            || (subIndex > 0 && fingerprintOffsetBytes === nextOffsetBytes)
+            || !/^[a-f0-9]{64}$/u.test(contentFingerprint)
+          ) {
+            return null;
+          }
+          return {
+            fileRelPath,
+            physicalGeneration,
+            nextOffsetBytes,
+            subIndex,
+            fingerprintOffsetBytes,
+            contentFingerprint,
+          };
+        })
+        .filter((entry): entry is {
+          fileRelPath: string;
+          physicalGeneration: string;
+          nextOffsetBytes: number;
+          subIndex: number;
+          fingerprintOffsetBytes: number;
+          contentFingerprint: string;
+        } => entry !== null);
+      if (
+        streams.length === 0
+        || streams.length !== rawStreams.length
+        || new Set(streams.map((entry) => entry.fileRelPath)).size !== streams.length
+      ) {
+        return null;
+      }
+      return {
+        v: 7,
+        kind: 'codexForwardStreamVector',
+        sourceGeneration,
+        streams,
+      };
     }
     return null;
   } catch {

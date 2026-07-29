@@ -3,7 +3,6 @@ export * from './artifacts.js';
 export * from './compatibility.js';
 export * from './hostedWeb.js';
 export * from './hostedWebSecurity.js';
-export * from './embeddedWebBundles.js';
 export * from './i18n.js';
 export * from './json.js';
 export * from './predicates.js';

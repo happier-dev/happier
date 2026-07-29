@@ -16,11 +16,11 @@ import * as legacyCustomAcpCompat from '../compat/customAcp.js';
 import { getAgentCliRuntimeSpecForLookupId } from './runtimeLookup.js';
 
 describe('AGENT_CLI_RUNTIME_SPECS', () => {
-  it('sources canonical provider runtime specs from bundled provider definitions', () => {
+  it('projects canonical runtime specs from bundled native CLI metadata', () => {
     for (const providerId of AGENT_IDS) {
-      expect(getAgentCliRuntimeSpec(providerId)).toBe(
-        BUNDLED_AGENT_DEFINITIONS_BY_ID[providerId].agentCliRuntime,
-      );
+      expect(BUNDLED_AGENT_DEFINITIONS_BY_ID[providerId]).toHaveProperty('cli');
+      expect(BUNDLED_AGENT_DEFINITIONS_BY_ID[providerId]).not.toHaveProperty('agentCliRuntime');
+      expect(getAgentCliRuntimeSpec(providerId).id).toBe(providerId);
     }
   });
 
@@ -210,6 +210,7 @@ describe('AGENT_CLI_RUNTIME_SPECS', () => {
       'opencode',
       'antigravity',
       'gemini',
+      'grok',
       'auggie',
       'qwen',
       'kimi',

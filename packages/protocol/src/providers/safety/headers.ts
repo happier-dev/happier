@@ -1,5 +1,6 @@
 import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from './limits.js';
 import { isUnsafeTelemetryDataKey } from '../../common/sensitiveKeys.js';
+import { compareProviderCanonicalStringsV1 } from '../canonicalOrderV1.js';
 
 const HEADER_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/u;
 const QUERY_NAME_PATTERN = /^[A-Za-z0-9._~-]+$/u;
@@ -73,7 +74,8 @@ export function normalizeProviderPublicHeaders(
     }
     normalized.set(name, value);
   }
-  return Object.fromEntries([...normalized.entries()].sort(([a], [b]) => a.localeCompare(b, 'en')));
+  return Object.fromEntries([...normalized.entries()].sort(([a], [b]) =>
+    compareProviderCanonicalStringsV1(a, b)));
 }
 
 export function normalizeProviderCredentialHeaderName(name: string): string {

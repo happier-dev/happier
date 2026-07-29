@@ -1,4 +1,4 @@
-import { BackendTargetRefSchema } from '../backendTargets/backendTargetRef.js';
+import { BackendTargetRefSchema } from '../backends/targets/backendTargetRef.js';
 import {
   buildExecutionRunsGuidanceBlockV1,
   isExecutionRunsGuidanceIntentV1,

@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import * as reactNativeBuild from './reactNativeBuild';
 
 const { defineReactNativeBundleBuildArtifact } = reactNativeBuild;
+const FILE_DIGEST = `sha256:${'a'.repeat(64)}`;
+const artifactFile = (relativePath: string) => ({ relativePath, digest: FILE_DIGEST, byteSize: 1 });
 
 function readReactNativeBuildExport<TExport>(name: string): TExport {
     const value = (reactNativeBuild as Record<string, unknown>)[name];
@@ -17,12 +19,13 @@ describe('React Native bundle build SDK helper', () => {
             platform: 'ios',
             entry: 'react-native/native-preview/ios.bundle.js',
             files: [
-                'react-native/native-preview/ios.bundle.js',
-                'react-native/native-preview/ios.bundle.js.map',
+                artifactFile('react-native/native-preview/ios.bundle.js'),
+                artifactFile('react-native/native-preview/ios.bundle.js.map'),
             ],
             digest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
             repackVersion: '5.0.0',
             hostUiApiVersion: '1.0.0',
+            module: { containerName: 'native_preview', modulePath: './renderSurface', exportName: 'renderSurface' },
             compatibility: {
                 reactVersion: '19.0.0',
                 reactNativeVersion: '0.83.4',
@@ -37,11 +40,12 @@ describe('React Native bundle build SDK helper', () => {
             platform: 'ios',
             entry: 'react-native/native-preview/ios.bundle.js',
             files: [
-                'react-native/native-preview/ios.bundle.js',
-                'react-native/native-preview/ios.bundle.js.map',
+                artifactFile('react-native/native-preview/ios.bundle.js'),
+                artifactFile('react-native/native-preview/ios.bundle.js.map'),
             ],
             digest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
             builtWith: { bundler: 'repack', version: '5.0.0' },
+            repack: { containerName: 'native_preview', modulePath: './renderSurface', exportName: 'renderSurface' },
             hostUiApiVersion: '1.0.0',
             compat: {
                 react: '19.0.0',
@@ -57,10 +61,11 @@ describe('React Native bundle build SDK helper', () => {
             contributionId: 'native-preview',
             platform: 'ios',
             entry: 'react-native/native-preview/ios.hbc',
-            files: ['react-native/native-preview/ios.hbc'],
+            files: [artifactFile('react-native/native-preview/ios.hbc')],
             digest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
             repackVersion: '5.0.0',
             hostUiApiVersion: '1.0.0',
+            module: { containerName: 'native_preview', modulePath: './renderSurface', exportName: 'renderSurface' },
             compatibility: {
                 reactVersion: '19.0.0',
                 reactNativeVersion: '0.83.4',
@@ -73,10 +78,11 @@ describe('React Native bundle build SDK helper', () => {
             contributionId: 'native-preview',
             platform: 'ios' as const,
             entry: 'react-native/native-preview/ios.bundle.js',
-            files: ['react-native/native-preview/ios.bundle.js'],
+            files: [artifactFile('react-native/native-preview/ios.bundle.js')],
             digest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
             repackVersion: '5.0.0',
             hostUiApiVersion: '1.0.0',
+            module: { containerName: 'native_preview', modulePath: './renderSurface', exportName: 'renderSurface' },
             compatibility: {
                 reactVersion: '19.0.0',
                 reactNativeVersion: '0.83.4',
@@ -90,7 +96,10 @@ describe('React Native bundle build SDK helper', () => {
 
         expect(() => defineReactNativeBundleBuildArtifact({
             ...baseInput,
-            files: ['react-native/native-preview/ios.bundle.js', 'react-native\\native-preview\\ios.map'],
+            files: [
+                artifactFile('react-native/native-preview/ios.bundle.js'),
+                artifactFile('react-native\\native-preview\\ios.map'),
+            ],
         })).toThrow(/relative path/u);
     });
 
@@ -102,6 +111,11 @@ describe('React Native bundle build SDK helper', () => {
                 sourceEntry: string;
                 repackVersion: string;
                 hostUiApiVersion: string;
+                module: {
+                    containerName: string;
+                    modulePath: string;
+                    exportName: string;
+                };
                 compatibility: {
                     reactVersion: string;
                     reactNativeVersion: string;
@@ -121,6 +135,11 @@ describe('React Native bundle build SDK helper', () => {
                 sharedSingletons: readonly string[];
                 nativeModulePolicy: string;
             };
+            module: {
+                containerName: string;
+                modulePath: string;
+                exportName: string;
+            };
             runtime: { kind: string; requiredFeatureId: string };
         }>('defineReactNativeRepackBuildPreset');
 
@@ -128,6 +147,11 @@ describe('React Native bundle build SDK helper', () => {
             contributionId: 'native-preview',
             platform: 'ios',
             sourceEntry: 'ui/surface.native.tsx',
+            module: {
+                containerName: 'native_preview',
+                modulePath: './PluginPanel',
+                exportName: 'PluginPanel',
+            },
             repackVersion: '5.0.0',
             hostUiApiVersion: '1.0.0',
             compatibility: {
@@ -143,7 +167,7 @@ describe('React Native bundle build SDK helper', () => {
             bundler: 'repack',
             output: {
                 root: 'dist/happier-plugin-ui/react-native/native-preview',
-                entry: 'react-native/native-preview/ios.bundle.js',
+                entry: 'react-native/native-preview/ios/ios.bundle.js',
             },
             repack: {
                 version: '5.0.0',
@@ -151,14 +175,18 @@ describe('React Native bundle build SDK helper', () => {
                 hermesBytecode: false,
                 external: [
                     'react',
+                    'react/jsx-runtime',
+                    'react/jsx-dev-runtime',
                     'react-native',
                     'react-native-reanimated',
                     '@react-navigation/native',
                     '@react-navigation/native-stack',
-                    '@happier-dev/plugin-sdk/ui/hostApiClient',
+                    '@happier-dev/plugin-sdk/ui/client',
                 ],
                 sharedSingletons: [
                     'react',
+                    'react/jsx-runtime',
+                    'react/jsx-dev-runtime',
                     'react-native',
                     'react-native-reanimated',
                     '@react-navigation/native',
@@ -166,11 +194,49 @@ describe('React Native bundle build SDK helper', () => {
                 ],
                 nativeModulePolicy: 'hostProvidedOnly',
             },
+            module: {
+                containerName: 'native_preview',
+                modulePath: './PluginPanel',
+                exportName: 'PluginPanel',
+            },
             runtime: {
                 kind: 'hostGated',
                 requiredFeatureId: 'plugins.ui.reactNativeBundles',
             },
         });
+    });
+
+    it('generates the exact no-fallback Module Federation shared map for author Re.Pack configs', () => {
+        const createReactNativeRepackSharedModules = readReactNativeBuildExport<
+            () => Readonly<Record<string, Readonly<{
+                singleton: true;
+                eager: false;
+                import: false;
+            }>>>
+        >('createReactNativeRepackSharedModules');
+
+        const shared = createReactNativeRepackSharedModules();
+        expect(Object.keys(shared)).toEqual([
+            'react',
+            'react/jsx-runtime',
+            'react/jsx-dev-runtime',
+            'react-native',
+            'react-native-reanimated',
+            '@react-navigation/native',
+            '@react-navigation/native-stack',
+        ]);
+        expect(shared['react/jsx-runtime']).toEqual({
+            singleton: true,
+            eager: false,
+            import: false,
+        });
+        expect(shared['react/jsx-dev-runtime']).toEqual({
+            singleton: true,
+            eager: false,
+            import: false,
+        });
+        expect(shared['react/compiler-runtime']).toBeUndefined();
+        expect(Object.isFrozen(shared)).toBe(true);
     });
 
     it('rejects Re.Pack preset output names that would publish Hermes bytecode', () => {
@@ -182,6 +248,11 @@ describe('React Native bundle build SDK helper', () => {
                 outputFileName?: string;
                 repackVersion: string;
                 hostUiApiVersion: string;
+                module: {
+                    containerName: string;
+                    modulePath: string;
+                    exportName: string;
+                };
                 compatibility: {
                     reactVersion: string;
                     reactNativeVersion: string;
@@ -194,6 +265,11 @@ describe('React Native bundle build SDK helper', () => {
             platform: 'ios',
             sourceEntry: 'ui/surface.native.tsx',
             outputFileName: 'ios.hbc',
+            module: {
+                containerName: 'native_preview',
+                modulePath: './PluginPanel',
+                exportName: 'PluginPanel',
+            },
             repackVersion: '5.0.0',
             hostUiApiVersion: '1.0.0',
             compatibility: {
@@ -201,5 +277,54 @@ describe('React Native bundle build SDK helper', () => {
                 reactNativeVersion: '0.83.4',
             },
         })).toThrow(/Hermes bytecode/u);
+    });
+
+    it('rejects non-portable generated output path segments before build I/O', () => {
+        const defineReactNativeRepackBuildPreset = readReactNativeBuildExport<(
+            input: {
+                contributionId: string;
+                platform: 'ios' | 'android';
+                sourceEntry: string;
+                outputFileName?: string;
+                repackVersion: string;
+                hostUiApiVersion: string;
+                module: {
+                    containerName: string;
+                    modulePath: string;
+                    exportName: string;
+                };
+                compatibility: {
+                    reactVersion: string;
+                    reactNativeVersion: string;
+                };
+            },
+        ) => unknown>('defineReactNativeRepackBuildPreset');
+        const base = {
+            contributionId: 'native-preview',
+            platform: 'ios' as const,
+            sourceEntry: 'ui/surface.native.tsx',
+            module: {
+                containerName: 'native_preview',
+                modulePath: './PluginPanel',
+                exportName: 'PluginPanel',
+            },
+            repackVersion: '5.0.0',
+            hostUiApiVersion: '1.0.0',
+            compatibility: {
+                reactVersion: '19.2.0',
+                reactNativeVersion: '0.83.4',
+            },
+        };
+
+        for (const outputFileName of ['aux.js', 'NUL.txt', 'ios.']) {
+            expect(() => defineReactNativeRepackBuildPreset({
+                ...base,
+                outputFileName,
+            })).toThrow(/path segment/u);
+        }
+        expect(() => defineReactNativeRepackBuildPreset({
+            ...base,
+            contributionId: 'con',
+        })).toThrow(/path segment/u);
     });
 });

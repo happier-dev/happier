@@ -75,9 +75,8 @@ export const PluginSurfaceCategoryV1Schema = z.enum([
 export type PluginSurfaceCategoryV1 = z.infer<typeof PluginSurfaceCategoryV1Schema>;
 
 /**
- * Runtime modes a surface can be rendered through. Names follow §16's vocabulary;
- * `embeddedWeb` maps to the embedded-web renderer-ref kind and `reactNative`
- * to the RN host. `*Bundle` names are reserved for artifact kinds/families.
+ * Runtime modes a surface can be rendered through. `*Bundle` names are
+ * reserved for artifact kinds/families.
  */
 export const PluginSurfaceRuntimeModeV1Schema = z.enum([
   'host',
@@ -85,7 +84,6 @@ export const PluginSurfaceRuntimeModeV1Schema = z.enum([
   'structured',
   'action',
   'hostedWeb',
-  'embeddedWeb',
   'reactNative',
 ]);
 export type PluginSurfaceRuntimeModeV1 = z.infer<typeof PluginSurfaceRuntimeModeV1Schema>;
@@ -93,7 +91,7 @@ export type PluginSurfaceRuntimeModeV1 = z.infer<typeof PluginSurfaceRuntimeMode
 /**
  * The closed set of live runtime hosts. Faithful to the actual
  * `PluginSurfaceHost` mount dispatch (`host` -> native blueprint host;
- * `hostedWeb`/`embeddedWeb` -> sandboxed web/webview host;
+ * `hostedWeb` -> sandboxed web/webview host;
  * `reactNative` -> RN host).
  */
 export const PluginSurfaceRuntimeHostV1Schema = z.enum([
@@ -119,7 +117,6 @@ export const CANONICAL_RUNTIME_MODE_HOST: Readonly<
   structured: 'nativeBlueprintHost',
   action: 'nativeBlueprintHost',
   hostedWeb: 'sandboxedWebHost',
-  embeddedWeb: 'sandboxedWebHost',
   reactNative: 'reactNativeHost',
 });
 
@@ -140,7 +137,7 @@ function isNativeBlueprintMode(mode: PluginSurfaceRuntimeModeV1): boolean {
 const CATEGORY_DEFAULT_RUNTIME_MODES: Readonly<
   Record<PluginSurfaceCategoryV1, readonly PluginSurfaceRuntimeModeV1[]>
 > = Object.freeze({
-  panel: Object.freeze(['host', 'hostedWeb', 'embeddedWeb', 'reactNative'] as const),
+  panel: Object.freeze(['host', 'hostedWeb', 'reactNative'] as const),
   action: Object.freeze(['declarative', 'action'] as const),
   message: Object.freeze(['structured'] as const),
   container: Object.freeze(['host', 'declarative'] as const),

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import {
     buildProviderSessionIdSessionMetadata,
     type ExternalSessionsSource,
-} from '@happier-dev/plugin-sdk/sessions';
+} from '@happier-dev/plugin-sdk/experimental/sessions';
 
 import { resolveClaudeConfigDirOverride, resolveClaudeProjectId } from './path.js';
 

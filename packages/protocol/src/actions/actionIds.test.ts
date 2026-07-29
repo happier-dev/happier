@@ -9,6 +9,11 @@ import {
 } from './actionIds.js';
 
 describe('ActionIdSchema', () => {
+  it('does not recognize retired plugin call or trust actions', () => {
+    expect(ActionIdSchema.safeParse('plugins.call').success).toBe(false);
+    expect(ActionIdSchema.safeParse('plugins.trust').success).toBe(false);
+  });
+
   it('accepts known action ids', () => {
     expect(ActionIdSchema.parse('review.start')).toBe('review.start');
     expect(ActionIdSchema.parse('subagents.delegate.start')).toBe('subagents.delegate.start');
@@ -75,6 +80,7 @@ describe('ActionIdSchema', () => {
         'session.restore',
         'session.handoff',
         'session.handoff.prepare_target',
+        'session.handoff.prepare_target.resume',
         'session.handoff.prepare_target_result.get',
         'session.handoff.commit',
         'session.handoff.abort',
@@ -115,6 +121,7 @@ describe('ActionIdSchema', () => {
         'session.usageLimit.checkNow',
         'session.usageLimit.consumeResetCredit',
         'session.terminalComposer.clear',
+        'session.pendingInput.interruptAndRun',
         'session.vendor_plugin_catalog.list',
         'session.skill_catalog.list',
         'session.history.get',
@@ -187,11 +194,18 @@ describe('ActionIdSchema', () => {
         'sessions.external.link.ensure',
         'sessions.external.follow',
         'sessions.external.unfollow',
-        'sessions.external.followPolicy.set',
+        'sessions.external.backgroundFollow.set',
         'sessions.external.status.get',
         'sessions.external.transcript.page',
         'sessions.external.transcript.readAfter',
         'sessions.external.takeover',
+        'sessions.external.materialize.start',
+        'sessions.external.takeover.start',
+        'sessions.external.operation.status.get',
+        'sessions.external.operation.cancel',
+        'sessions.external.operation.resume',
+        'sessions.external.operation.retry',
+        'sessions.external.operation.discard',
       ],
       voice_controls: [
         'ui.voice_global.reset',
@@ -366,6 +380,11 @@ describe('ActionIdSchema', () => {
         'plugins.uninstall',
         'plugins.reload',
         'plugins.list',
+        'plugins.sessionHooks.status.get',
+        'plugins.sessionHooks.install',
+        'plugins.sessionHooks.disable',
+        'plugins.sessionHooks.enable',
+        'plugins.sessionHooks.uninstall',
       ],
       plugin_permission_grants: [
         'plugins.permissions.grants.list',
@@ -410,6 +429,7 @@ describe('ActionIdSchema', () => {
       'session.restore',
       'session.handoff',
       'session.handoff.prepare_target',
+      'session.handoff.prepare_target.resume',
       'session.handoff.prepare_target_result.get',
       'session.handoff.commit',
       'session.handoff.abort',
@@ -444,6 +464,7 @@ describe('ActionIdSchema', () => {
       'session.usageLimit.checkNow',
       'session.usageLimit.consumeResetCredit',
       'session.terminalComposer.clear',
+      'session.pendingInput.interruptAndRun',
       'session.vendor_plugin_catalog.list',
       'session.skill_catalog.list',
       'session.history.get',
@@ -500,11 +521,18 @@ describe('ActionIdSchema', () => {
       'sessions.external.link.ensure',
       'sessions.external.follow',
       'sessions.external.unfollow',
-      'sessions.external.followPolicy.set',
+      'sessions.external.backgroundFollow.set',
       'sessions.external.status.get',
       'sessions.external.transcript.page',
       'sessions.external.transcript.readAfter',
       'sessions.external.takeover',
+      'sessions.external.materialize.start',
+      'sessions.external.takeover.start',
+      'sessions.external.operation.status.get',
+      'sessions.external.operation.cancel',
+      'sessions.external.operation.resume',
+      'sessions.external.operation.retry',
+      'sessions.external.operation.discard',
       'ui.voice_global.reset',
       'ui.voice_agent.teleport',
       'ui.pet.choose',
@@ -641,6 +669,11 @@ describe('ActionIdSchema', () => {
       'plugins.uninstall',
       'plugins.reload',
       'plugins.list',
+      'plugins.sessionHooks.status.get',
+      'plugins.sessionHooks.install',
+      'plugins.sessionHooks.disable',
+      'plugins.sessionHooks.enable',
+      'plugins.sessionHooks.uninstall',
       'plugins.permissions.grants.list',
       'plugins.permissions.grants.request',
       'plugins.permissions.grants.grant',

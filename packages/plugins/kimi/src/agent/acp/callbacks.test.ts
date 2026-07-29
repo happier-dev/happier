@@ -14,12 +14,11 @@ function collectKimiShimDir(env: Readonly<Record<string, string>> | undefined): 
 }
 
 describe('Kimi ACP callbacks', () => {
-  it('normalizes danger-full-access aliases through the shared ACP permission intent parser', () => {
+  it('maps the canonical yolo permission intent into Kimi argv', () => {
     expect(buildKimiAcpArgv({
       baseArgs: ['--model', 'kimi-k2'],
       cwd: '/workspace',
-      env: {},
-      permissionMode: 'danger-full-access',
+      permissionIntent: 'yolo',
     })).toEqual([
       '--work-dir',
       '/workspace',
@@ -36,11 +35,13 @@ describe('Kimi ACP callbacks', () => {
     Object.defineProperty(process, 'platform', { ...originalPlatformDescriptor, value: 'linux' });
     try {
       for (const selector of ['poll', 'POLL', ' PoLl ']) {
-        const env = await buildKimiAcpEnv({
-          cwd: '/workspace',
-          env: {
-            HAPPIER_KIMI_ACP_SELECTOR: selector,
-            PYTHONPATH: '/existing',
+        const env = buildKimiAcpEnv({
+          launchEnvironment: {
+            values: {
+              HAPPIER_KIMI_ACP_SELECTOR: selector,
+              PYTHONPATH: '/existing',
+            },
+            unset: [],
           },
         });
         envs.push(env);

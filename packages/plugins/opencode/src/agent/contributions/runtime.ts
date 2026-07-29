@@ -3,7 +3,6 @@ import {
   createOpenCodeAttachArgs,
   resolveOpenCodeAttachTarget,
 } from '../surfaces/sessions/attach/descriptor.js';
-import { openCodeServerCatalogControlAdapter } from '../runtime/server/catalog/control.js';
 import {
   isOpenCodeManagedServerCommand,
   OPENCODE_MANAGED_SERVER_STATE_PATH_ENV_KEY,
@@ -21,7 +20,6 @@ import {
 } from '../auth/services/selection.js';
 import { materializeOpenCodeAuthEnvironment } from '../auth/services/materialize.js';
 import { resolveOpenCodeResumeReachabilityUnsupported } from '../auth/services/resumeReachability.js';
-import { createOpenCodeConnectedServiceRuntimeAuthAdapter } from '../auth/services/runtime/failure.js';
 import { OPEN_CODE_AUTH_SERVICE_SHARING_DESCRIPTOR } from '../auth/services/stateSharing.js';
 import {
   OPENCODE_RESTART_REMATERIALIZE_REQUIRED_REASON,
@@ -35,6 +33,13 @@ import { readOpenCodeSessionMetadataRuntimeDescriptor } from '../identity/runtim
 import { resolveOpenCodeSessionRuntimePreferences } from '../preferences/session.js';
 import { OPENCODE_SESSION_CONTROL_ADAPTER } from '../surfaces/sessions/controls/adapter.js';
 import { extractOpenCodeSessionHandoffAgentBundleRecords } from '../surfaces/sessions/handoff/exportRecords.js';
+import { createOpenCodeHandoffSurfaceForExec } from '../surfaces/sessions/handoff/descriptor.js';
+import { resolveOpenCodeReplayChildLaunch } from '../surfaces/sessions/fork/descriptor.js';
+import {
+  OPEN_CODE_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
+  OPEN_CODE_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
+} from '../auth/services/requestAuth/purposes.js';
+import { OPEN_CODE_SYSTEM_TOOL_ID } from '../systemTool.js';
 
 const OPENCODE_CONNECTED_SERVICE_STATE_SHARING_DESCRIPTOR = Object.freeze({
   providerId: OPEN_CODE_AUTH_SERVICE_SHARING_DESCRIPTOR.providerId,
@@ -61,6 +66,9 @@ const OPENCODE_CONNECTED_SERVICE_STATE_SHARING_DESCRIPTOR = Object.freeze({
 export const OPENCODE_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
   agentId: 'opencode',
   builtInAcpCatalog: true,
+  agentCliSystemTool: {
+    toolId: OPEN_CODE_SYSTEM_TOOL_ID,
+  },
   cliSessionCommand: {
     backendIdForSessionRuntime: 'opencode',
     agentIdForAccountSettings: 'opencode',
@@ -83,14 +91,19 @@ export const OPENCODE_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
       probeOauthRefreshToken: async () => 'unknown',
     }),
   },
-  catalogControlAdapter: openCodeServerCatalogControlAdapter,
   sessionRuntimePreferences: {
     resolve: resolveOpenCodeSessionRuntimePreferences,
   },
   sessionHandoff: {
+    surface: ({ exec }: Readonly<{ exec: Parameters<
+      typeof createOpenCodeHandoffSurfaceForExec
+    >[0] }>) => createOpenCodeHandoffSurfaceForExec(exec),
     agentBundleRecords: {
       extract: extractOpenCodeSessionHandoffAgentBundleRecords,
     },
+    resolveReplayChildLaunch: async ({ parentMetadata }: Readonly<{
+      parentMetadata: Readonly<Record<string, unknown>>;
+    }>) => await resolveOpenCodeReplayChildLaunch({ parentMetadata }),
   },
   managedServer: {
     namespace: 'opencode',
@@ -119,6 +132,21 @@ export const OPENCODE_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
   },
   connectedServices: {
     serviceIds: OPEN_CODE_SUPPORTED_AUTH_SERVICE_IDS,
+    requestAuthUses: Object.freeze([Object.freeze({
+      purpose: OPEN_CODE_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
+      materialization: Object.freeze({
+        kind: 'httpHeaders' as const,
+        origin: 'https://api.anthropic.com',
+        headerNames: Object.freeze(['authorization']),
+      }),
+    }), Object.freeze({
+      purpose: OPEN_CODE_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
+      materialization: Object.freeze({
+        kind: 'httpHeaders' as const,
+        origin: 'https://chatgpt.com',
+        headerNames: Object.freeze(['authorization', 'chatgpt-account-id']),
+      }),
+    })]),
     readConnectedServiceId: readOpenCodeConnectedServiceId,
     createAuthMaterializationInput: createOpenCodeAuthMaterializationInput,
     materializeAuthEnvironment: materializeOpenCodeAuthEnvironment,
@@ -127,7 +155,11 @@ export const OPENCODE_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
     restartRematerializeRequiredReason: OPENCODE_RESTART_REMATERIALIZE_REQUIRED_REASON,
     resolveResumeReachabilityUnsupported: resolveOpenCodeResumeReachabilityUnsupported,
     classifyUsageLimitError: classifyOpenCodeUsageLimitError,
-    runtimeAuthAdapter: createOpenCodeConnectedServiceRuntimeAuthAdapter(),
+    runtimeAuthAdapter: false,
+    recoveryCapabilities: {
+      predictiveSoftSwitch: { mode: 'unsupported' },
+      generationApplicationScope: 'request_time_auth',
+    },
     usageLimitRecovery: OPEN_CODE_USAGE_LIMIT_RECOVERY,
   },
   preflightSessionControls: OPENCODE_PREFLIGHT_SESSION_CONTROLS,

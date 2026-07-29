@@ -15,7 +15,7 @@ function connectionCandidate(sourceProfileId: string, connectionId: string, secr
     connection: {
       v: 1 as const,
       id: connectionId,
-      source: { kind: 'contribution' as const, contributionKey: 'happier.provider.deepseek:providers:deepseek' },
+      source: { kind: 'contribution' as const, contributionKey: 'happier.provider.deepseek/deepseek' },
       role: 'default' as const,
       displayName: 'DeepSeek',
       displayNameMode: 'automatic' as const,
@@ -297,7 +297,7 @@ describe('migrateLegacyAiLaunchProfilesV1', () => {
           connection: {
             ...base.connection,
             id: `pc-${fixture.id}`,
-            source: { kind: 'contribution', contributionKey: `happier.provider.${fixture.id}:providers:${fixture.id}` },
+            source: { kind: 'contribution', contributionKey: `happier.provider.${fixture.id}/${fixture.id}` },
           },
           selectedModel: { agentTargetKey: fixture.agentTargetKey, modelId: fixture.modelId },
           manualModels: [{ id: fixture.modelId, addedAt: 20 }],

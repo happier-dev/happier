@@ -1,4 +1,7 @@
-import type { ExternalSessionsSource } from '@happier-dev/plugin-sdk/sessions';
+import type {
+  AgentExternalSessionSource,
+  ExternalSessionsSource,
+} from '@happier-dev/plugin-sdk/experimental/sessions';
 
 export {
   inferCodexExternalSessionsSourceFromHome,
@@ -8,6 +11,19 @@ export {
 export type CodexExternalSessionsSourceValidationPolicyResult =
   | Readonly<{ ok: true; source: ExternalSessionsSource }>
   | Readonly<{ ok: false; error: string }>;
+
+export function inferCodexExternalSessionsActiveServerDir(
+  source: AgentExternalSessionSource,
+): string | null {
+  const homePath = typeof source.homePath === 'string'
+    ? source.homePath.trim()
+    : '';
+  if (!homePath) return null;
+  const normalized = homePath.replaceAll('\\', '/');
+  const marker = '/daemon/connected-services/homes/';
+  const markerIndex = normalized.lastIndexOf(marker);
+  return markerIndex > 0 ? normalized.slice(0, markerIndex) : null;
+}
 
 export function validateCodexExternalSessionsSourcePolicy(params: Readonly<{
   source: ExternalSessionsSource;

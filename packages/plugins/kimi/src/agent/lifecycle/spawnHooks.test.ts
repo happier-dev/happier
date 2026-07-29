@@ -39,7 +39,7 @@ describe('Kimi daemon spawn prerequisites', () => {
         cwd: '/repo',
       },
     }, fixture.context)).resolves.toMatchObject({
-      allowed: false,
+      decision: 'deny',
       reasonCode: 'kimi_acp_unavailable',
       errorMessage: expect.stringContaining('ACP-compatible Kimi CLI'),
     });
@@ -65,7 +65,7 @@ describe('Kimi daemon spawn prerequisites', () => {
       payload: {
         cwd: '/repo',
       },
-    }, fixture.context)).resolves.toEqual({ allowed: true });
+    }, fixture.context)).resolves.toEqual({ decision: 'allow' });
   });
 
   it('passes runtime-selection env to the ACP compatibility preflight', async () => {
@@ -88,7 +88,7 @@ describe('Kimi daemon spawn prerequisites', () => {
           },
         },
       },
-    }, fixture.context)).resolves.toEqual({ allowed: true });
+    }, fixture.context)).resolves.toEqual({ decision: 'allow' });
 
     expect(fixture.runSystemTool).toHaveBeenCalledWith(expect.objectContaining({
       env: {

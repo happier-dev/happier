@@ -21,7 +21,7 @@ describe('Copilot prompt asset descriptors', () => {
     });
   });
 
-  it('exports inert prompt asset contribution descriptors for generated host projection', () => {
+  it('exports the host adapter descriptor without masquerading as a manifest prompt-asset declaration', () => {
     expect(PLUGIN_PROMPT_ASSET_DESCRIPTORS).toEqual([
       expect.objectContaining({
         adapterKind: 'skillMd',
@@ -29,5 +29,7 @@ describe('Copilot prompt asset descriptors', () => {
         providerId: 'copilot',
       }),
     ]);
+    expect(PLUGIN_PROMPT_ASSET_DESCRIPTORS[0]).not.toHaveProperty('resource');
+    expect(PLUGIN_PROMPT_ASSET_DESCRIPTORS[0]).not.toHaveProperty('target');
   });
 });

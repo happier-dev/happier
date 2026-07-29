@@ -55,7 +55,7 @@ export const GoogleGeminiTranscribeRequestSchema = z.object({
 export type GoogleGeminiTranscribeRequest = z.infer<typeof GoogleGeminiTranscribeRequestSchema>;
 export const GoogleGeminiTranscribeResponseSchema = z.union([
   z.object({ ok: z.literal(true), requestId: z.string().min(1).max(128), text: z.string().max(1_000_000) }).strict(),
-  z.object({ ok: z.literal(false), errorCode: z.enum(['invalid_parameters', 'credential_unavailable', 'request_timeout', 'cancelled', 'provider_response_invalid', 'internal_error']) }).strict(),
+  z.object({ ok: z.literal(false), errorCode: z.enum(['invalid_parameters', 'credential_unavailable', 'provider_unavailable', 'request_timeout', 'cancelled', 'provider_response_invalid', 'internal_error']) }).strict(),
 ]);
 
 export const GoogleCloudSynthesizeRequestSchema = z.object({
@@ -78,7 +78,7 @@ export const GoogleCloudSynthesizeResponseSchema = z.union([
     sizeBytes: z.number().int().positive().max(32 * 1024 * 1024),
     mimeType: z.enum(['audio/mpeg', 'audio/wav']),
   }).strict(),
-  z.object({ ok: z.literal(false), errorCode: z.enum(['invalid_parameters', 'credential_unavailable', 'request_timeout', 'cancelled', 'provider_response_invalid', 'internal_error']) }).strict(),
+  z.object({ ok: z.literal(false), errorCode: z.enum(['invalid_parameters', 'credential_unavailable', 'provider_unavailable', 'request_timeout', 'cancelled', 'provider_response_invalid', 'internal_error']) }).strict(),
 ]);
 
 export const GoogleVoiceTranscribeUploadInitRequestSchema = DaemonVoiceOpenAiCompatTranscribeUploadInitRequestSchema;

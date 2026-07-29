@@ -1,13 +1,13 @@
 export const SESSION_BRIDGE_LIFECYCLE_HOOK_EVENT_IDS_V1 = [
-  'session.spawn_new',
+  'session.spawned',
   'session.message.send',
 ] as const;
 
 export const EXECUTION_RUN_BRIDGE_LIFECYCLE_HOOK_EVENT_IDS_V1 = [
-  'execution_run.start',
-  'execution_run.send',
-  'execution_run.stop',
-  'execution_run.terminal',
+  'executionRun.started',
+  'executionRun.messageSent',
+  'executionRun.stopped',
+  'executionRun.completed',
 ] as const;
 
 export const BRIDGE_LIFECYCLE_HOOK_EVENT_IDS_V1 = [
@@ -17,7 +17,7 @@ export const BRIDGE_LIFECYCLE_HOOK_EVENT_IDS_V1 = [
 
 export const BRIDGE_LIFECYCLE_HOOK_EVENT_IDS_BY_BRIDGE_V1 = Object.freeze({
   session: SESSION_BRIDGE_LIFECYCLE_HOOK_EVENT_IDS_V1,
-  execution_run: EXECUTION_RUN_BRIDGE_LIFECYCLE_HOOK_EVENT_IDS_V1,
+  executionRun: EXECUTION_RUN_BRIDGE_LIFECYCLE_HOOK_EVENT_IDS_V1,
 } as const);
 
 export type SessionBridgeLifecycleHookEventIdV1 = (typeof SESSION_BRIDGE_LIFECYCLE_HOOK_EVENT_IDS_V1)[number];

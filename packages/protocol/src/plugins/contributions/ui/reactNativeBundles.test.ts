@@ -73,6 +73,20 @@ describe('React Native bundle UI contributions', () => {
     }).success).toBe(false);
   });
 
+  it('rejects removed per-bundle signing metadata', () => {
+    expect(PluginReactNativeBundleContributionV1Schema.safeParse({
+      ...validContribution,
+      bundle: {
+        ...validContribution.bundle,
+        integrity: {
+          ...validContribution.bundle.integrity,
+          signature: 'legacy-ui-signature',
+          signingKeyId: 'legacy-ui-key',
+        },
+      },
+    }).success).toBe(false);
+  });
+
   it('accepts a web bundle platform (LEDGER DEC-6: reactNative mode also renders on web via react-native-web)', () => {
     const parsed = PluginReactNativeBundleContributionV1Schema.parse({
       ...validContribution,

@@ -59,4 +59,47 @@ describe('sessionMetadata terminal metadata', () => {
     expect(parsed.mode).toBe('windows_console');
     expect((parsed as any).windows?.host).toBe('console');
   });
+
+  it('parses recoverable terminal-host lifecycle metadata', () => {
+    const parsed = (protocol as any).SessionTerminalMetadataSchema.parse({
+      mode: 'tmux', tmux: { target: 'happy:win-1' },
+      controlServiceabilityV1: { v: 1, attachmentId: 'attachment-1', state: 'recoverable_unservable', observedAt: 123, reason: 'session_rpc_unavailable' },
+    });
+    expect(parsed.controlServiceabilityV1.state).toBe('recoverable_unservable');
+    expect((protocol as any).SessionTerminalMetadataSchema.safeParse({
+      mode: 'tmux', tmux: { target: 'happy:win-1' },
+      controlServiceabilityV1: { v: 1, state: 'running', observedAt: 123 },
+    }).success).toBe(false);
+  });
+
+  it('accepts only explicitly retired legacy mode-less terminal metadata', () => {
+    expect((protocol as any).SessionTerminalMetadataSchema.safeParse({
+      controlServiceabilityV1: {
+        v: 1,
+        attachmentId: 'attachment-retired',
+        state: 'unknown',
+        observedAt: 123,
+        reason: 'attachment_retired',
+        retired: true,
+      },
+    }).success).toBe(true);
+
+    expect((protocol as any).SessionTerminalMetadataSchema.safeParse({
+      controlServiceabilityV1: {
+        v: 1,
+        attachmentId: 'attachment-still-live',
+        state: 'unknown',
+        observedAt: 123,
+      },
+    }).success).toBe(false);
+  });
+
+  it('permits destructive deletion only with explicit terminal retirement evidence', () => {
+    const canDelete = (protocol as any).isSessionTerminalPermanentlyAbsent;
+    expect(canDelete(undefined)).toBe(false);
+    expect(canDelete({ v: 1, state: 'unknown', observedAt: 1 })).toBe(false);
+    expect(canDelete({ v: 1, state: 'servable', observedAt: 1 })).toBe(false);
+    expect(canDelete({ v: 1, state: 'recoverable_unservable', observedAt: 1 })).toBe(false);
+    expect(canDelete({ v: 1, state: 'unknown', observedAt: 1, retired: true })).toBe(true);
+  });
 });

@@ -4,8 +4,7 @@ import {
     type RuntimeEventV1,
 } from '@happier-dev/protocol/runtime';
 
-import type { SubscriptionV1 } from '../context.js';
-import { createSubscription } from './subscription.js';
+import { createSubscription, type TestSubscription } from './subscription.js';
 
 type RuntimeEventSubscriberV1 = Readonly<{
     subscribeRuntimeEvents(handler: (event: RuntimeEventV1) => void): () => void;
@@ -17,7 +16,7 @@ export type RuntimeEventValidationFailureV1 = Readonly<{
 }>;
 
 export interface AdapterHarnessV1 {
-    attachRuntime(runtime: RuntimeEventSubscriberV1): SubscriptionV1;
+    attachRuntime(runtime: RuntimeEventSubscriberV1): TestSubscription;
     recordRuntimeEvent(event: unknown): void;
     rawEvents(): readonly unknown[];
     canonical(): readonly RuntimeEventV1[];
@@ -48,7 +47,7 @@ export function createAdapterHarness(): AdapterHarnessV1 {
     const canonicalEvents: RuntimeEventV1[] = [];
     const validationFailures: RuntimeEventValidationFailureV1[] = [];
     const waiters = new Map<RuntimeEventKindV1, Set<(event: RuntimeEventV1) => void>>();
-    const subscriptions = new Set<SubscriptionV1>();
+    const subscriptions = new Set<TestSubscription>();
 
     const resolveWaiters = (event: RuntimeEventV1): void => {
         const kindWaiters = waiters.get(event.kind);

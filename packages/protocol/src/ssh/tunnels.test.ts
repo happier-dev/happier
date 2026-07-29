@@ -53,4 +53,22 @@ describe('ssh tunnel protocol schemas', () => {
       checkedAt: '2026-05-06T00:00:00.000Z',
     }).success).toBe(false);
   });
+
+  it('exports daemon SSH tunnel system task kind constants for host capability wiring', async () => {
+    const mod = await loadModule();
+
+    expect(mod?.SSH_TUNNEL_SYSTEM_TASK_KINDS).toEqual({
+      ensure: 'daemon.sshTunnel.ensure.v1',
+      list: 'daemon.sshTunnel.list.v1',
+      release: 'daemon.sshTunnel.release.v1',
+      stop: 'daemon.sshTunnel.stop.v1',
+    });
+    expect(mod?.SSH_TUNNEL_SYSTEM_TASK_KIND_IDS).toEqual([
+      'daemon.sshTunnel.ensure.v1',
+      'daemon.sshTunnel.list.v1',
+      'daemon.sshTunnel.release.v1',
+      'daemon.sshTunnel.stop.v1',
+    ]);
+    expect(new Set(mod!.SSH_TUNNEL_SYSTEM_TASK_KIND_IDS).size).toBe(mod!.SSH_TUNNEL_SYSTEM_TASK_KIND_IDS.length);
+  });
 });

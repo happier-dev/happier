@@ -24,6 +24,11 @@ type PiRuntimeSelection = Readonly<{
   groupId?: string | null;
 }>;
 
+const PI_REQUEST_AUTH_SERVICE_IDS = new Set([
+  'openai-codex',
+  'claude-subscription',
+]);
+
 function readRecord(value: unknown): Record<string, unknown> | null {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
@@ -205,12 +210,6 @@ export function mapPiLimitCategoryToRuntimeAuthFailureKind(
   return null;
 }
 
-function quotaScopeForCategory(category: RuntimeLimitCategory): string | undefined {
-  return category === 'usage_limit' || category === 'rate_limit' || category === 'temporary_throttle'
-    ? 'account'
-    : undefined;
-}
-
 function isCompactionDependencyFailure(text: string): boolean {
   return /\bcompaction\b/u.test(text)
     && /\b(dependency|dependencies|unavailable|failed|failure)\b/u.test(text);
@@ -234,11 +233,11 @@ function classifyPiRuntimeAuthFailure(input: Readonly<{
   const textParts: string[] = [];
   collectEvidenceText(evidence, textParts);
   const text = textParts.join(' ').toLowerCase();
-  const providerCategory = classifyProviderLimitEvidence(evidence);
+  const providerEvidence = classifyProviderLimitEvidence(evidence);
   const dependencyFailure = isCompactionDependencyFailure(text);
-  const category = providerCategory === 'unknown' && /\b(no|missing)\s+api\s+key\b/u.test(text)
+  const category = providerEvidence.category === 'unknown' && /\b(no|missing)\s+api\s+key\b/u.test(text)
     ? 'auth_invalid'
-    : providerCategory;
+    : providerEvidence.category;
   const kind = dependencyFailure ? 'dependency_failure' : mapPiLimitCategoryToRuntimeAuthFailureKind(category);
   if (!kind) return null;
 
@@ -247,9 +246,12 @@ function classifyPiRuntimeAuthFailure(input: Readonly<{
   const selection = chooseSelection({ selection: input.selection, serviceIds });
   const serviceId = selection?.serviceId ?? serviceIds[0] ?? null;
   if (!serviceId) return null;
+  // Request-auth providers report exact structured failures at the request leaf. Reclassifying their
+  // terminal assistant text here would create a second recovery owner and would be especially unsafe
+  // for Anthropic, whose supported Pi seam exposes only incidental SDK-formatted error text.
+  if (!dependencyFailure && PI_REQUEST_AUTH_SERVICE_IDS.has(serviceId)) return null;
 
   const timing = parseResetTiming(evidence);
-  const quotaScope = quotaScopeForCategory(category);
 
   return {
     kind,
@@ -259,12 +261,16 @@ function classifyPiRuntimeAuthFailure(input: Readonly<{
     groupId: selection?.groupId ?? null,
     resetsAtMs: timing.resetAtMs,
     retryAfterMs: timing.retryAfterMs,
-    ...(quotaScope ? { quotaScope } : {}),
+    ...(providerEvidence.quotaScope !== 'unknown'
+      ? { quotaScope: providerEvidence.quotaScope }
+      : {}),
     providerLimitId: null,
     action: null,
     planType: null,
     rateLimits: evidence,
-    source: 'stable_provider_message',
+    source: providerEvidence.provenance.kind === 'structured'
+      ? 'structured_provider_error'
+      : 'stable_provider_message',
   };
 }
 

@@ -1,10 +1,10 @@
+import { CURRENT_FLAGSHIP_CLAUDE_MODEL_ID } from '@happier-dev/protocol';
+
 import { normalizePiThinkingLevel } from '../../../protocol/thinking.js';
 import {
-  PI_BROKER_PROVIDERS,
-  PI_BROKER_SELECTIONS_ENV,
-  parsePiBrokerSelections,
-  resolvePiBrokerExtensionPath,
-} from '../../auth/services/broker/index.js';
+  PI_REQUEST_AUTH_CAPABILITY_PATH_ENV,
+  resolvePiRequestAuthExtensionPath,
+} from '../../auth/services/requestAuth/index.js';
 import { buildPiToolsForPermissionMode } from './permissions.js';
 import type { PiPermissionMode } from './types.js';
 
@@ -34,7 +34,7 @@ function resolvePiLaunchSelectionForConnectedService(serviceId: string | null | 
       return { provider: 'openai', startupModel: 'gpt-5.4', modelScope: 'openai/*' };
     case 'claude-subscription':
     case 'anthropic':
-      return { provider: 'anthropic', startupModel: 'claude-opus-4-8', modelScope: 'anthropic/*' };
+      return { provider: 'anthropic', startupModel: CURRENT_FLAGSHIP_CLAUDE_MODEL_ID, modelScope: 'anthropic/*' };
     default:
       return null;
   }
@@ -57,12 +57,12 @@ export function readPiConnectedServiceIdFromEnv(env: Readonly<Record<string, str
   return null;
 }
 
-function resolvePiBrokerExtensionArgs(env: Readonly<Record<string, string | undefined>> | undefined): readonly string[] {
+function resolvePiRequestAuthExtensionArgs(env: Readonly<Record<string, string | undefined>> | undefined): readonly string[] {
   const agentDir = readString(env?.PI_CODING_AGENT_DIR);
-  if (!agentDir) return [];
-  const selections = parsePiBrokerSelections(env?.[PI_BROKER_SELECTIONS_ENV]);
-  const hasBrokeredProvider = PI_BROKER_PROVIDERS.some((provider) => selections[provider]);
-  return hasBrokeredProvider ? ['--extension', resolvePiBrokerExtensionPath(agentDir)] : [];
+  const capabilityPath = readString(env?.[PI_REQUEST_AUTH_CAPABILITY_PATH_ENV]);
+  return agentDir && capabilityPath
+    ? ['--extension', resolvePiRequestAuthExtensionPath(agentDir)]
+    : [];
 }
 
 export function buildPiRpcArgs(opts?: Readonly<{
@@ -74,7 +74,7 @@ export function buildPiRpcArgs(opts?: Readonly<{
 }>): readonly string[] {
   const launchSelection = resolvePiLaunchSelectionForConnectedService(opts?.connectedServiceId);
   const args: string[] = [
-    ...resolvePiBrokerExtensionArgs(opts?.env),
+    ...resolvePiRequestAuthExtensionArgs(opts?.env),
     ...(launchSelection
       ? [
         '--provider',

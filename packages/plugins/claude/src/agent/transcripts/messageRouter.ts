@@ -1,4 +1,5 @@
 import type { RawJSONLines } from './rawJsonLines.js';
+import { parseClaudeTaskNotification } from './taskNotification.js';
 import { isClaudeInternalTranscriptMessage } from './visibility.js';
 
 function isTaskNotificationUserText(message: RawJSONLines): boolean {
@@ -7,15 +8,6 @@ function isTaskNotificationUserText(message: RawJSONLines): boolean {
     const content = (message as { message?: { content?: unknown } }).message?.content;
     if (typeof content !== 'string') return false;
     return /^\s*<task-notification>/i.test(content);
-}
-
-function extractTaskNotification(payload: string): { taskId: string; result: string } | null {
-    const raw = String(payload ?? '');
-    const taskId = raw.match(/<task-id>\s*([^<\n\r]+?)\s*<\/task-id>/i)?.[1]?.trim() ?? '';
-    if (!taskId) return null;
-    const result = raw.match(/<result>\s*([\s\S]*?)\s*<\/result>/i)?.[1]?.trim() ?? '';
-    if (!result) return null;
-    return { taskId, result };
 }
 
 function messageKey(message: RawJSONLines): string {
@@ -82,11 +74,10 @@ export function createMessageRouter(params: Readonly<{
 
     function maybeRewriteTaskNotificationToToolResult(message: RawJSONLines): RawJSONLines | null | undefined {
         if (!isTaskNotificationUserText(message)) return message;
-        const content = String((message as { message: { content: string } }).message.content ?? '');
-        const parsed = extractTaskNotification(content);
-        if (!parsed) return null;
+        const notification = parseClaudeTaskNotification(message);
+        if (!notification?.taskId || !notification.result) return null;
 
-        const toolUseId = taskToolUseIdByAgentId.get(parsed.taskId) ?? null;
+        const toolUseId = taskToolUseIdByAgentId.get(notification.taskId) ?? null;
         if (!toolUseId) {
             return null;
         }
@@ -101,7 +92,7 @@ export function createMessageRouter(params: Readonly<{
                     {
                         type: 'tool_result',
                         tool_use_id: toolUseId,
-                        content: [{ type: 'text', text: parsed.result }],
+                        content: [{ type: 'text', text: notification.result }],
                         is_error: false,
                     },
                 ],

@@ -3,70 +3,94 @@ import { spawn } from 'node:child_process';
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { PluginUiArtifactsManifestV1Schema } from '@happier-dev/protocol/plugins/ui';
+import {
+    PLUGIN_UI_HOST_RUNTIME_GLOBAL_KEY,
+    PluginUiArtifactsManifestV1Schema,
+} from '@happier-dev/protocol/plugins/ui';
 
-import type {
-    ExecLaunchInputV1,
-    ExecProcessHandleV1,
-    ExecRunResultV1,
-    ExecRuntimeServiceV1,
-} from '../../exec.js';
 import { defineHostedWebViteBuildPreset } from '../hostedWebBuild.js';
 import { defineReactNativeRepackBuildPreset } from '../reactNativeBuild.js';
-import { defineReactNativeWebViteBuildPreset } from '../reactNativeWebBuild.js';
+import {
+    createReactNativeWebVitePlugins,
+    defineReactNativeWebViteBuildPreset,
+} from '../reactNativeWebBuild.js';
 import { buildUiArtifacts, type PluginUiBuildSurfaceV1 } from './buildUiArtifacts.js';
 import {
     createManagedRuntimeBundlerRunner,
     resolvePluginUiBundlerInvocation,
+    resolveManagedPluginUiBuildVersions,
     resolveRepackBundleCommandOptions,
+    type ManagedBundlerExecResult,
+    type ManagedBundlerExecService,
 } from './managedBundler.js';
+
+type ManagedBundlerLaunch = Parameters<ManagedBundlerExecService['run']>[0];
 
 const hostUiApiVersion = '1.0.0';
 const reactVersion = '19.2.0';
+
+describe('resolveManagedPluginUiBuildVersions', () => {
+    let projectRoot: string;
+
+    beforeEach(async () => {
+        projectRoot = await mkdtemp(join(tmpdir(), 'happier-managed-bundler-versions-'));
+        const versions = [
+            ['vite', '7.3.1'],
+            ['react', reactVersion],
+            ['react-native', '0.83.4'],
+            ['@callstack/repack', '5.2.5'],
+        ] as const;
+        for (const [packageName, version] of versions) {
+            const packageRoot = join(projectRoot, 'node_modules', ...packageName.split('/'));
+            await mkdir(packageRoot, { recursive: true });
+            await writeFile(join(packageRoot, 'package.json'), JSON.stringify({ name: packageName, version }), 'utf8');
+        }
+    });
+
+    afterEach(async () => {
+        await rm(projectRoot, { recursive: true, force: true });
+    });
+
+    it('derives exact provenance and compatibility versions from the managed project packages', () => {
+        expect(resolveManagedPluginUiBuildVersions(projectRoot, [{
+            rendererId: 'native',
+            entry: 'ui/native.tsx',
+            kind: 'reactNative',
+            platforms: ['web', 'ios', 'android'],
+        }])).toEqual({
+            hostUiApiVersion: '1.0.0',
+            viteVersion: '7.3.1',
+            repackVersion: '5.2.5',
+            reactVersion,
+            reactNativeVersion: '0.83.4',
+        });
+    });
+});
 
 /**
  * Captures every launch handed to `exec.run` without spawning anything, so
  * the "which installable / which argv" dispatch decision can be asserted in
  * isolation from process I/O.
  */
-function createCapturingExec(runResult: ExecRunResultV1): Readonly<{
-    exec: ExecRuntimeServiceV1;
-    calls: ExecLaunchInputV1[];
+function createCapturingExec(runResult: ManagedBundlerExecResult): Readonly<{
+    exec: ManagedBundlerExecService;
+    calls: ManagedBundlerLaunch[];
 }> {
-    const calls: ExecLaunchInputV1[] = [];
-    const unavailableHandle: ExecProcessHandleV1 = {
-        pid: null,
-        exit: Promise.resolve(runResult),
-        async writeStdin() {
-            throw new Error('not used by this fixture');
-        },
-        kill() {},
-        async dispose() {},
-    };
-    const exec: ExecRuntimeServiceV1 = {
-        systemTools: {
-            async resolve() {
-                throw new Error('systemTools.resolve is not used by this fixture');
-            },
-        },
+    const calls: ManagedBundlerLaunch[] = [];
+    const exec: ManagedBundlerExecService = {
         async run(input) {
             calls.push(input);
             return runResult;
         },
-        async spawn() {
-            return unavailableHandle;
-        },
-        spawnClient: (() => {
-            throw new Error('spawnClient is not used by this fixture');
-        }) as ExecRuntimeServiceV1['spawnClient'],
     };
     return { exec, calls };
 }
 
 describe('createManagedRuntimeBundlerRunner dispatch', () => {
-    const OK: ExecRunResultV1 = { exitCode: 0, signal: null, stdout: '', stderr: '' };
+    const OK: ManagedBundlerExecResult = { exitCode: 0, signal: null, stdout: '', stderr: '' };
 
     it('routes a hostedWeb surface to the vite installable with the real `vite build` argv', async () => {
         const { exec, calls } = createCapturingExec(OK);
@@ -145,6 +169,7 @@ describe('createManagedRuntimeBundlerRunner dispatch', () => {
                 contributionId: 'fixtureReactNativeNative',
                 platform: 'ios',
                 sourceEntry: 'ui/panel.native.tsx',
+                module: { containerName: 'fixture_native', modulePath: './renderSurface', exportName: 'renderSurface' },
                 repackVersion: '5.2.5',
                 hostUiApiVersion,
                 compatibility: { reactVersion, reactNativeVersion: '0.83.4' },
@@ -186,6 +211,7 @@ describe('createManagedRuntimeBundlerRunner dispatch', () => {
                 contributionId: 'fixtureOverride',
                 platform: 'android',
                 sourceEntry: 'ui/panel.native.tsx',
+                module: { containerName: 'fixture_override', modulePath: './renderSurface', exportName: 'renderSurface' },
                 repackVersion: '5.2.5',
                 hostUiApiVersion,
                 compatibility: { reactVersion, reactNativeVersion: '0.83.4' },
@@ -240,6 +266,7 @@ describe('resolveRepackBundleCommandOptions (direct-path parity)', () => {
             contributionId: 'fixtureParity',
             platform: 'ios',
             sourceEntry: 'ui/panel.native.tsx',
+            module: { containerName: 'fixture_parity', modulePath: './renderSurface', exportName: 'renderSurface' },
             repackVersion: '5.2.5',
             hostUiApiVersion,
             compatibility: { reactVersion, reactNativeVersion: '0.83.4' },
@@ -308,28 +335,11 @@ function resolveRealViteBinPath(): string {
     return join(dirname(packageJsonPath), 'bin', 'vite.js');
 }
 
-function createRealViteExec(): ExecRuntimeServiceV1 {
+function createRealViteExec(): ManagedBundlerExecService {
     const viteBinPath = resolveRealViteBinPath();
-    const unavailableHandle: ExecProcessHandleV1 = {
-        pid: null,
-        exit: Promise.resolve({ exitCode: null, signal: null, stdout: '', stderr: '' }),
-        async writeStdin() {
-            throw new Error('not used by this fixture');
-        },
-        kill() {},
-        async dispose() {},
-    };
     return {
-        systemTools: {
-            async resolve() {
-                throw new Error('systemTools.resolve is not used by this fixture');
-            },
-        },
         async run(input) {
-            if (input.kind !== 'managed-installable') {
-                throw new Error(`Expected a managed-installable launch, received "${input.kind}"`);
-            }
-            return await new Promise<ExecRunResultV1>((resolve, reject) => {
+            return await new Promise<ManagedBundlerExecResult>((resolve, reject) => {
                 const child = spawn(process.execPath, [viteBinPath, ...(input.args ?? [])], {
                     cwd: input.cwd,
                     stdio: ['ignore', 'pipe', 'pipe'],
@@ -344,12 +354,6 @@ function createRealViteExec(): ExecRuntimeServiceV1 {
                 });
             });
         },
-        async spawn() {
-            return unavailableHandle;
-        },
-        spawnClient: (() => {
-            throw new Error('spawnClient is not used by this fixture');
-        }) as ExecRuntimeServiceV1['spawnClient'],
     };
 }
 
@@ -366,7 +370,12 @@ describe('createManagedRuntimeBundlerRunner (real vite build)', () => {
     let projectRoot: string;
 
     beforeEach(async () => {
-        projectRoot = await mkdtemp(join(tmpdir(), 'happier-managed-bundler-vite-'));
+        const projectParent = fileURLToPath(new URL(
+            '../../../../plugins/inspector/node_modules/.cache/',
+            import.meta.url,
+        ));
+        await mkdir(projectParent, { recursive: true });
+        projectRoot = await mkdtemp(join(projectParent, 'happier-managed-bundler-vite-'));
     });
 
     afterEach(async () => {
@@ -432,5 +441,106 @@ describe('createManagedRuntimeBundlerRunner (real vite build)', () => {
             'utf8',
         );
         expect(indexHtml).toContain('<script');
+    }, 60_000);
+
+    it('routes automatic JSX from a transitive module through the host runtime shim without bundling React JSX runtime', async () => {
+        const contributionId = 'fixtureAutomaticJsx';
+        const preset = defineReactNativeWebViteBuildPreset({
+            contributionId,
+            sourceEntry: 'src/main.tsx',
+            viteVersion: '7.3.1',
+            hostUiApiVersion,
+            compatibility: { reactVersion, reactNativeVersion: '0.83.4' },
+        });
+        const sdkBuildModuleUrl = new URL('../../../dist/ui/reactNativeWebBuild.js', import.meta.url).href;
+
+        await writeFile(
+            join(projectRoot, 'vite.config.mjs'),
+            [
+                `import { createReactNativeWebVitePlugins } from ${JSON.stringify(sdkBuildModuleUrl)};`,
+                'export default {',
+                "  base: './',",
+                '  plugins: [...createReactNativeWebVitePlugins()],',
+                "  esbuild: { jsx: 'automatic' },",
+                '  build: {',
+                `    outDir: ${JSON.stringify(preset.output.root)},`,
+                '    emptyOutDir: true,',
+                '    minify: false,',
+                "    lib: { entry: 'src/main.tsx', formats: ['es'], fileName: () => 'entry.mjs' },",
+                '  },',
+                '};',
+                '',
+            ].join('\n'),
+        );
+        await mkdir(join(projectRoot, 'src'), { recursive: true });
+        await writeFile(
+            join(projectRoot, 'src', 'main.tsx'),
+            "export { renderAutomaticJsx, renderExplicitJsx } from './transitive';\n",
+        );
+        await writeFile(
+            join(projectRoot, 'src', 'transitive.tsx'),
+            [
+                "import { jsx } from 'react/jsx-runtime';",
+                '',
+                'export function renderAutomaticJsx() {',
+                '  return <section data-owner="host-jsx-runtime">shared</section>;',
+                '}',
+                '',
+                'export function renderExplicitJsx() {',
+                '  return jsx("section", { children: "shared" });',
+                '}',
+                '',
+            ].join('\n'),
+        );
+
+        const surface: PluginUiBuildSurfaceV1 = {
+            kind: 'reactNative',
+            preset,
+            hostUiApiVersion,
+            compatibility: { reactVersion, reactNativeVersion: '0.83.4' },
+        };
+        const artifactsRoot = join(projectRoot, 'dist/happier-plugin-ui');
+        const runBundler = createManagedRuntimeBundlerRunner({
+            exec: createRealViteExec(),
+            emittedRoot: artifactsRoot,
+            viteInstallableId: 'plugin-ui.bundler.vite',
+            listEmittedFiles: async (_surface, context) =>
+                listFilesRecursive(join(context.projectRoot, preset.output.root)),
+            timeoutMs: 60_000,
+        });
+
+        await buildUiArtifacts({ projectRoot, surfaces: [surface], runBundler });
+        const entrySource = await readFile(join(artifactsRoot, preset.output.entry), 'utf8');
+        expect(entrySource).toContain(PLUGIN_UI_HOST_RUNTIME_GLOBAL_KEY);
+        expect(entrySource).toContain('"react/jsx-runtime"');
+        expect(entrySource).toContain('"react/jsx-dev-runtime"');
+        expect(entrySource).not.toContain('reactJsxRuntime_production');
+        expect(entrySource).not.toContain('reactJsxDevRuntime_production');
+        expect(entrySource).not.toContain('REACT_ELEMENT_TYPE');
+
+        const sentinel = Object.freeze({ owner: 'host-jsx-runtime' });
+        (globalThis as unknown as Record<string, unknown>)[PLUGIN_UI_HOST_RUNTIME_GLOBAL_KEY] = {
+            'react/jsx-runtime': {
+                Fragment: Symbol.for('fixture.fragment'),
+                jsx: () => sentinel,
+                jsxs: () => sentinel,
+            },
+            'react/jsx-dev-runtime': {
+                Fragment: Symbol.for('fixture.fragment'),
+                jsxDEV: () => sentinel,
+            },
+        };
+        try {
+            const builtModule = await import(
+                /* @vite-ignore */ `data:text/javascript,${encodeURIComponent(entrySource)}`
+            ) as Readonly<{
+                renderAutomaticJsx: () => unknown;
+                renderExplicitJsx: () => unknown;
+            }>;
+            expect(builtModule.renderAutomaticJsx()).toBe(sentinel);
+            expect(builtModule.renderExplicitJsx()).toBe(sentinel);
+        } finally {
+            delete (globalThis as unknown as Record<string, unknown>)[PLUGIN_UI_HOST_RUNTIME_GLOBAL_KEY];
+        }
     }, 60_000);
 });

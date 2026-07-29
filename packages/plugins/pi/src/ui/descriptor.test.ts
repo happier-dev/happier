@@ -44,9 +44,9 @@ describe('PI_UI_DESCRIPTOR', () => {
         connectedService: { serviceId: null, labelKey: 'agentInput.agent.pi', connectRoute: null },
         icon: { assetId: 'pi' },
       },
-      settings: { descriptorId: 'pi.agentSettings.v1' },
       behavior: { descriptorId: 'pi.uiBehavior.v1' },
     });
+    expect(PI_UI_DESCRIPTOR).not.toHaveProperty('settings');
   });
 
   it('is a data-only no-execute descriptor', () => {

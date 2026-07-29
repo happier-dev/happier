@@ -1,25 +1,42 @@
-import type { CreateSessionRuntimeParamsV1 } from '@happier-dev/plugin-sdk';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
-const OPENCODE_PROVIDER_CONFIG_RELATIVE_PATH = 'opencode/opencode.json';
+import type { AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agent-runtime';
 
-export function applyOpenCodeProviderBindingToSessionParams(
-  sessionParams: CreateSessionRuntimeParamsV1,
-): CreateSessionRuntimeParamsV1 {
-  const materialization = sessionParams.providerBindingMaterialization;
-  if (!materialization) return sessionParams;
-  if (materialization.kind !== 'configFile') {
-    throw new Error('OpenCode requires config-file provider materialization');
+import { OPENCODE_PROVIDER_CONFIG_RELATIVE_PATH } from './adapter.js';
+
+export async function readOpenCodeProviderConfigContent(
+  request: AgentSessionOpenRequest,
+): Promise<string | undefined> {
+  const materialization = request.providerBinding?.materialization;
+  if (materialization === undefined) return undefined;
+  if (
+    materialization.kind !== 'configFile'
+    || materialization.relativePaths.length !== 1
+    || materialization.relativePaths[0] !== OPENCODE_PROVIDER_CONFIG_RELATIVE_PATH
+  ) {
+    throw new Error('OpenCode Provider binding requires its canonical config-file materialization');
   }
-  const relativePaths = materialization.relativePaths.map((value) => value.replaceAll('\\', '/'));
-  if (relativePaths.length !== 1 || relativePaths[0] !== OPENCODE_PROVIDER_CONFIG_RELATIVE_PATH) {
-    throw new Error('OpenCode provider materialization is missing its canonical config file');
-  }
+  return readFile(
+    join(materialization.rootPath, OPENCODE_PROVIDER_CONFIG_RELATIVE_PATH),
+    'utf8',
+  );
+}
 
+export async function withOpenCodeProviderConfigLaunchEnvironment(
+  request: AgentSessionOpenRequest,
+): Promise<AgentSessionOpenRequest> {
+  const providerConfigContent = await readOpenCodeProviderConfigContent(request);
+  if (providerConfigContent === undefined) return request;
   return {
-    ...sessionParams,
-    env: {
-      ...(sessionParams.env ?? {}),
-      XDG_CONFIG_HOME: materialization.rootPath,
+    ...request,
+    launchEnvironment: {
+      values: {
+        ...(request.launchEnvironment?.values ?? {}),
+        OPENCODE_CONFIG_CONTENT: providerConfigContent,
+      },
+      unset: (request.launchEnvironment?.unset ?? [])
+        .filter((key) => key !== 'OPENCODE_CONFIG_CONTENT'),
     },
   };
 }

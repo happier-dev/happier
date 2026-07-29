@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 
-import type { ExecRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
+import type { PluginExecService } from '@happier-dev/plugin-sdk/runtime';
 
 import {
     computeClaudeCodeCredentialFingerprint,
@@ -26,7 +26,7 @@ export type ClaudeCodeNativeAuthVerificationResult = Readonly<{
 
 export async function verifyClaudeCodeNativeAuth(params: Readonly<{
     claudeConfigDir: string;
-    exec?: ExecRuntimeServiceV1 | null | undefined;
+    exec?: PluginExecService | null | undefined;
     /** Reference time for the expiry-vs-now usability gate; defaults to now. */
     now?: number;
     homeDir?: string | null | undefined;

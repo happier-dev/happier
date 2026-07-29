@@ -1,9 +1,11 @@
 import type {
   CloudAuthCallbackSessionV1,
   CloudCustomAuthenticatorContextV1,
-  FetchRuntimeRequestV1,
-  FetchRuntimeResponseV1,
-} from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+import type {
+  CodexRuntimeFetchRequest as FetchRuntimeRequestV1,
+  CodexRuntimeFetchResponse as FetchRuntimeResponseV1,
+} from '../../runtimeFetch.js';
 import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
 import { describe, expect, it, vi } from 'vitest';
 

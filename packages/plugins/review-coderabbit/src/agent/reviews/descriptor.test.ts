@@ -13,24 +13,35 @@ describe('CodeRabbit review descriptor', () => {
 
     const backend = PLUGIN_MANIFEST.contributes.agents[0];
     expect(backend?.id).toBe('coderabbit');
-    expect(backend?.capabilities.session.supported).toBe(false);
-    expect(backend?.capabilities.executionRun.review.intents).toContain('review');
+    expect(backend?.primary).toBe('executionRuns');
+    expect(backend?.capabilities.executionRuns).toEqual({ open: ['create'], checkpoint: false, stop: true });
   });
 
   it('projects a review-only execution run profile', () => {
     expect(createCodeRabbitReviewExecutionProfile()).toMatchObject({
-      id: 'coderabbit.review',
-      kind: 'executionRun.profile',
+      id: 'review',
       intent: 'review',
-      displayKey: 'plugins.coderabbit.executionRuns.review.label',
+      promptAsset: 'review-prompt',
+      defaults: { retention: 'ephemeral', runClass: 'bounded', io: 'streaming' },
     });
   });
 
   it('declares the CodeRabbit system tool used by the runtime resolver', () => {
     expect(PLUGIN_MANIFEST.contributes.systemTools).toContainEqual(expect.objectContaining({
-      toolId: 'coderabbit',
-      displayName: 'CodeRabbit',
-      lookupNames: ['coderabbit'],
+      id: 'coderabbit-cli',
+      title: 'CodeRabbit CLI',
+      executableNames: ['coderabbit'],
     }));
+  });
+
+  it('discloses only launch-environment keys consumed by the native review path', () => {
+    const processAccess = PLUGIN_MANIFEST.hostAccess.required.find((request) => request.id === 'coderabbit-process');
+
+    expect(processAccess?.scope.envKeys).toEqual([
+      'CODERABBIT_API_KEY',
+      'HAPPIER_CODERABBIT_REVIEW_TIMEOUT_MS',
+      'HAPPIER_CODERABBIT_REVIEW_RATE_LIMIT_MAX_ATTEMPTS',
+      'HAPPIER_CODERABBIT_REVIEW_MAX_ELIGIBLE_FILES',
+    ]);
   });
 });

@@ -93,14 +93,14 @@ const CODEX_GENERATED_SESSION_CONTROL_ADAPTER = createGeneratedRuntimeProjection
         "path": [
           "directSessionV1",
           "codexBackendMode"
-        ]
+        ],
+        "providerId": "codex"
       },
       {
         "path": [
           "externalSessionV1",
           "codexBackendMode"
-        ],
-        "providerId": "codex"
+        ]
       }
     ],
     "rawDescriptorPaths": [

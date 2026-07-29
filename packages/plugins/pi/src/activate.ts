@@ -1,12 +1,14 @@
-import type {
-  PluginApi,
-} from '@happier-dev/plugin-sdk';
+import type { PluginApi } from '@happier-dev/plugin-sdk';
 
-import { createPiBackendEngine } from './agent/runtime/engine.js';
+import { piExternalSessionsContribution } from './agent/externalSessions/contribution.js';
+import { piExternalSessionObservationContribution } from './agent/externalSessions/observation.js';
+import { createPiAgentRuntime } from './agent/runtime/engine.js';
 
 export function activate(api: PluginApi): void {
-  api.registerAgentRuntime({
-    agentId: 'pi',
-    create: createPiBackendEngine,
-  });
+  api.agents.register('pi', createPiAgentRuntime);
+  api.agents.registerExternalSessions('pi', piExternalSessionsContribution);
+  api.agents.registerExternalSessionObservation(
+    'pi',
+    piExternalSessionObservationContribution,
+  );
 }

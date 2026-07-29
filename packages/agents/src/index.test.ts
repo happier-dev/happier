@@ -5,7 +5,6 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import * as agents from './index.js';
-import * as agentSettings from './agentSettings/index.js';
 import {
   AGENTS_CORE,
   AGENT_MODEL_CONFIG,
@@ -51,6 +50,8 @@ import {
   type CanonicalAgentId,
   type AgentCliRuntimeSpec,
   legacyCustomAcpCompat,
+  CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE,
+  isClaudeUnifiedTerminalDialogChoiceAgentStateRequest,
 } from './index.js';
 import type { EngineSpec, RuntimeDiscovery, RuntimeKindSpec } from './index.js';
 import type { AgentRuntimeKindOverrides } from './runtimeKinds.js';
@@ -96,11 +97,25 @@ function listProductionSourceFiles(root: string): string[] {
 }
 
 describe('agents package exports', () => {
+  it('re-exports the Claude unified terminal dialog-choice provenance helper', () => {
+    expect(CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE)
+      .toBe('claude_unified_terminal_dialog_choice');
+    expect(isClaudeUnifiedTerminalDialogChoiceAgentStateRequest({
+      source: CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE,
+    })).toBe(true);
+    expect(isClaudeUnifiedTerminalDialogChoiceAgentStateRequest({ source: 'other' })).toBe(false);
+  });
+
   it('does not expose writable session-state binding internals from the package root', () => {
     expect('runtimeDescriptorBinding' in agents).toBe(false);
     expect('applySessionStateFieldMetadataPatch' in agents).toBe(false);
     expect('buildSessionStateFieldMetadataPatch' in agents).toBe(false);
     expect('createSessionStateFieldMetadataUpdater' in agents).toBe(false);
+  });
+
+  it('does not expose callerless hosted-direct transcript helpers from the package root', () => {
+    expect(agents).not.toHaveProperty('replayTranscriptSourceHistory');
+    expect(agents).not.toHaveProperty('bridgeTranscriptSourceHandoffGap');
   });
 
   it('does not expose session-state metadata writer helpers from the package root', () => {
@@ -186,7 +201,7 @@ describe('agents package exports', () => {
     expect('readOpenCodeRuntimeDescriptorProviderExtra' in agents).toBe(false);
   });
 
-  it('does not expose OpenCode plugin-owned agent settings from the package root or settings facade', () => {
+  it('does not expose OpenCode plugin-owned agent settings from the package root', () => {
     const openCodeAgentSettingsExports = [
       'OPENCODE_AGENT_SETTINGS_DEFINITION',
       'OPENCODE_AGENT_FIELDS',
@@ -200,7 +215,6 @@ describe('agents package exports', () => {
 
     for (const exportName of openCodeAgentSettingsExports) {
       expect(exportName in agents).toBe(false);
-      expect(exportName in agentSettings).toBe(false);
     }
   });
 
@@ -217,7 +231,7 @@ describe('agents package exports', () => {
     expect('pi' in agents.providers).toBe(false);
   });
 
-  it('does not expose Kimi plugin-owned agent setting shims from the package root or settings facade', () => {
+  it('does not expose Kimi plugin-owned agent setting shims from the package root', () => {
     const kimiAgentSettingExports = [
       'KIMI_AGENT_SETTINGS_DEFINITION',
       'KIMI_AGENT_FIELDS',
@@ -229,50 +243,28 @@ describe('agents package exports', () => {
 
     for (const exportName of kimiAgentSettingExports) {
       expect(exportName in agents).toBe(false);
-      expect(exportName in agentSettings).toBe(false);
     }
   });
 
-  it('does not expose Claude plugin-owned agent setting helpers from the package root or settings facade', () => {
+  it('does not expose Claude plugin-owned agent setting helpers from the package root', () => {
     const claudeAgentSettingExports = [
       'CLAUDE_REMOTE_AGENT_SETTINGS_DEFINITION',
       'CLAUDE_REMOTE_AGENT_FIELDS',
       'CLAUDE_REMOTE_AGENT_SETTINGS_DEFAULTS',
       'CLAUDE_UNIFIED_TERMINAL_HOSTS',
-      'CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICES',
       'MAX_CLAUDE_REMOTE_ADVANCED_OPTIONS_JSON_CHARS',
       'buildClaudeRemoteAgentSettingsShape',
       'isValidClaudeRemoteAdvancedOptionsJson',
       'normalizeClaudeUnifiedTerminalHost',
-      'normalizeClaudeUnifiedTerminalResumeChoice',
       'normalizeClaudeRemoteAdvancedOptionsJson',
     ] as const;
 
     for (const exportName of claudeAgentSettingExports) {
       expect(exportName in agents).toBe(false);
-      expect(exportName in agentSettings).toBe(false);
     }
   });
 
-  it('does not expose Codex agent-settings field-map shims through the settings facade', () => {
-    const codexAgentSettingExports = [
-      'CODEX_AGENT_SETTINGS_DEFINITION',
-      'CODEX_AGENT_FIELDS',
-      'CODEX_AGENT_SETTINGS_DEFAULTS',
-      'buildCodexAgentSettingsShape',
-    ] as const;
-
-    for (const exportName of codexAgentSettingExports) {
-      expect(exportName in agentSettings).toBe(false);
-    }
-  });
-
-  it('does not expose runtime helpers through the agent-settings facade', () => {
-    expect('resolveCodexSpawnExtrasForRuntime' in agentSettings).toBe(false);
-    expect('resolveCodexSpawnExtrasFromSettings' in agentSettings).toBe(false);
-    expect('resolveCodexRuntimeBackendMode' in agentSettings).toBe(false);
-    expect('buildClaudeRemoteOutgoingMessageMetaExtras' in agentSettings).toBe(false);
-    expect('resolveProviderOutgoingMessageMetaExtras' in agentSettings).toBe(false);
+  it('does not expose Agent settings runtime helpers through the package root', () => {
     expect('buildClaudeRemoteOutgoingMessageMetaExtras' in agents).toBe(false);
     expect('resolveProviderOutgoingMessageMetaExtras' in agents).toBe(false);
     expect('getProviderMessageMetaEnricher' in agents).toBe(false);
@@ -302,8 +294,8 @@ describe('agents package exports', () => {
     expect('isClaudeLocalPermissionBridgeAgentStateRequest' in agents).toBe(false);
   });
 
-  it('does not keep a Claude provider source owner under the agents package', () => {
-    expect(existsSync(join(packageDir, 'src/providers/claude'))).toBe(false);
+  it('keeps the shared Claude dialog provenance source under the agents package', () => {
+    expect(existsSync(join(packageDir, 'src/providers/claude/permissionRequestSource.ts'))).toBe(true);
   });
 
   it('does not keep a Codex provider source owner under the agents package', () => {

@@ -51,6 +51,20 @@ describe('peer TCP tunnel relay protocol', () => {
       encoding: 'binary_frame_v2',
       frame: Buffer.from(binaryFrame),
     }).success).toBe(true);
+    const browserArrayBuffer = binaryFrame.buffer.slice(
+      binaryFrame.byteOffset,
+      binaryFrame.byteOffset + binaryFrame.byteLength,
+    );
+    const browserParsed = mod?.PeerTcpTunnelRelayBinaryEnvelopeV2Schema.safeParse({
+      v: 2,
+      scopeUserId: 'user_1',
+      sender: { kind: 'machine', machineId: 'machine_1' },
+      recipient: { kind: 'user' },
+      encoding: 'binary_frame_v2',
+      frame: browserArrayBuffer,
+    });
+    expect(browserParsed?.success).toBe(true);
+    expect(browserParsed?.success ? browserParsed.data.frame : null).toBeInstanceOf(Uint8Array);
     expect(mod?.PeerTcpTunnelRelayBinaryEnvelopeV2Schema.safeParse({
       v: 2,
       scopeUserId: 'user_1',
@@ -192,7 +206,83 @@ describe('peer TCP tunnel relay protocol', () => {
     })).toEqual({ valid: false, reasonCode: 'bad_signature' });
   });
 
-  it('accepts daemon voice STT as a distinct signed relay authorization flow kind', async () => {
+  it('strictly verifies V2 relay authorizations with the relay socket id inside the signature', async () => {
+    const mod = await loadTunnelRelayModule();
+    expect(mod?.verifyPeerTcpTunnelRelayAuthorizationV2).toBeTypeOf('function');
+    if (!mod?.verifyPeerTcpTunnelRelayAuthorizationV2) return;
+
+    const keyPair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(12));
+    const payload = {
+      v: 2,
+      grantId: 'relay_grant_v2_1',
+      accountId: 'user_1',
+      targetMachineId: 'machine_1',
+      flowKind: 'tcp_tunnel',
+      routeKind: 'server_relay',
+      tunnelId: 'tun_v2_1',
+      relaySocketId: 'relay_socket_a',
+      destination: { host: '127.0.0.1', port: 3000 },
+      capProfileId: 'interactive',
+      maxFrameBytes: 64 * 1024,
+      maxIdleMs: 30_000,
+      maxDurationMs: 300_000,
+      maxTotalBytes: 64 * 1024 * 1024,
+      iat: 1_000,
+      exp: 301_000,
+      aud: 'happier-tcp-tunnel-relay-authorization',
+    } as const;
+    const authorization = {
+      payload,
+      signature: {
+        keyId: 'relay_key_1',
+        alg: 'Ed25519',
+        valueBase64Url: Buffer.from(tweetnacl.sign.detached(
+          new TextEncoder().encode(mod.createPeerTcpTunnelRelayAuthorizationSigningInputV2(payload)),
+          keyPair.secretKey,
+        )).toString('base64url'),
+      },
+    } as const;
+    const trustRoots = [{
+      keyId: 'relay_key_1',
+      publicKeyBase64Url: Buffer.from(keyPair.publicKey).toString('base64url'),
+    }];
+
+    expect(mod.verifyPeerTcpTunnelRelayAuthorizationV2({
+      authorization,
+      nowMs: 2_000,
+      trustRoots,
+    })).toEqual({ valid: true, payload });
+    expect(mod.verifyPeerTcpTunnelRelayAuthorizationV2({
+      authorization: {
+        ...authorization,
+        payload: { ...payload, relaySocketId: 'relay_socket_b' },
+      },
+      nowMs: 2_000,
+      trustRoots,
+    })).toEqual({ valid: false, reasonCode: 'bad_signature' });
+    expect(mod.PeerTcpTunnelRelayAuthorizationV2Schema.safeParse({
+      ...authorization,
+      payload: { ...payload, unexpected: true },
+    }).success).toBe(false);
+    expect(mod.PeerTcpTunnelRelayAuthorizationV2Schema.safeParse({
+      ...authorization,
+      payload: { ...payload, destination: { ...payload.destination, unexpected: true } },
+    }).success).toBe(false);
+    expect(mod.PeerTcpTunnelRelayAuthorizationV2Schema.safeParse({
+      ...authorization,
+      payload: { ...payload, relaySocketId: 's'.repeat(mod.PEER_TCP_TUNNEL_RELAY_SOCKET_ID_MAX_LENGTH + 1) },
+    }).success).toBe(false);
+    expect(mod.verifyPeerTcpTunnelRelayAuthorizationV2({
+      authorization: {
+        ...authorization,
+        payload: { ...payload, v: 1 },
+      },
+      nowMs: 2_000,
+      trustRoots,
+    })).toEqual({ valid: false, reasonCode: 'authorization_invalid' });
+  });
+
+  it('accepts only application-bound Voice media relay authority', async () => {
     const mod = await loadTunnelRelayModule();
 
     const parsed = mod?.PeerTcpTunnelRelayEnvelopeV1Schema.safeParse({
@@ -206,7 +296,7 @@ describe('peer TCP tunnel relay protocol', () => {
         open: {
           v: 1,
           kind: 'open',
-          tunnelId: 'voice-stt:machine_1:request_1',
+          tunnelId: 'voice-media:machine_1:request_1',
           targetMachineId: 'machine_1',
           routeKind: 'server_relay',
           destination: { host: '127.0.0.1', port: 3000 },
@@ -216,9 +306,12 @@ describe('peer TCP tunnel relay protocol', () => {
               grantId: 'relay_grant_voice_1',
               accountId: 'user_1',
               targetMachineId: 'machine_1',
-              flowKind: 'daemon_voice_stt',
+              flowKind: 'voice_media',
               routeKind: 'server_relay',
-              tunnelId: 'voice-stt:machine_1:request_1',
+              tunnelId: 'voice-media:machine_1:request_1',
+              applicationKind: 'speech_transcription',
+              applicationAttemptId: 'request_1',
+              applicationAuthorityDigest: `sha256:${'ab'.repeat(32)}`,
               destination: { host: '127.0.0.1', port: 3000 },
               capProfileId: 'machine_live_stream_relay_caps_v1',
               maxFrameBytes: 32_000,
@@ -240,5 +333,12 @@ describe('peer TCP tunnel relay protocol', () => {
     });
 
     expect(parsed?.success).toBe(true);
+    expect(mod?.PeerTcpTunnelRelayAuthorizationPayloadV1Schema.safeParse({
+      ...(parsed?.success ? parsed.data.frame.kind === 'open'
+        ? parsed.data.frame.open.relayAuthorization?.payload
+        : {}
+      : {}),
+      applicationKind: undefined,
+    }).success).toBe(false);
   });
 });

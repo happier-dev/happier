@@ -1,5 +1,7 @@
 import {
+    PLUGIN_UI_HOST_REACT_RUNTIME_EXTERNAL_SPECIFIERS,
     PluginUiArtifactsManifestEntryV1Schema,
+    type PluginUiArtifactFileV1,
     type PluginUiArtifactsManifestEntryV1,
 } from '@happier-dev/protocol/plugins/ui';
 
@@ -11,11 +13,11 @@ import {
 
 type ReactNativeBundleBuildPlatform = 'ios' | 'android';
 
-const HOST_API_CLIENT_EXTERNAL = '@happier-dev/plugin-sdk/ui/hostApiClient';
+const HOST_API_CLIENT_EXTERNAL = '@happier-dev/plugin-sdk/ui/client';
 const REACT_NATIVE_BUNDLES_FEATURE_ID = 'plugins.ui.reactNativeBundles';
 const REACT_NATIVE_BUNDLE_REQUIRED_FEATURE_IDS = Object.freeze([REACT_NATIVE_BUNDLES_FEATURE_ID] as const);
 const REPACK_SHARED_SINGLETONS = Object.freeze([
-    'react',
+    ...PLUGIN_UI_HOST_REACT_RUNTIME_EXTERNAL_SPECIFIERS,
     'react-native',
     'react-native-reanimated',
     '@react-navigation/native',
@@ -26,14 +28,46 @@ const REPACK_EXTERNALS = Object.freeze([
     HOST_API_CLIENT_EXTERNAL,
 ] as const);
 
-export type ReactNativeBundleBuildArtifactInputV1 = Readonly<{
+type ReactNativeRepackSharedModuleSpecifier = typeof REPACK_SHARED_SINGLETONS[number];
+
+export type ReactNativeRepackSharedModuleConfig = Readonly<{
+    singleton: true;
+    eager: false;
+    import: false;
+}>;
+
+export type ReactNativeRepackSharedModules = Readonly<
+    Record<ReactNativeRepackSharedModuleSpecifier, ReactNativeRepackSharedModuleConfig>
+>;
+
+const REPACK_SHARED_MODULE_CONFIG: ReactNativeRepackSharedModuleConfig = Object.freeze({
+    singleton: true,
+    eager: false,
+    import: false,
+});
+
+const REPACK_SHARED_MODULES = Object.freeze(Object.fromEntries(
+    REPACK_SHARED_SINGLETONS.map((specifier) => [specifier, REPACK_SHARED_MODULE_CONFIG]),
+) as Record<ReactNativeRepackSharedModuleSpecifier, ReactNativeRepackSharedModuleConfig>);
+
+/**
+ * Generates the exact Module Federation shared map used by a Re.Pack plugin
+ * author config. Every entry is a host-provided singleton with no bundled
+ * fallback; unknown React subpaths are intentionally not matched.
+ */
+export function createReactNativeRepackSharedModules(): ReactNativeRepackSharedModules {
+    return REPACK_SHARED_MODULES;
+}
+
+export type ReactNativeBundleBuildArtifactInput = Readonly<{
     contributionId: string;
     platform: ReactNativeBundleBuildPlatform;
     entry: string;
-    files: readonly string[];
+    files: readonly PluginUiArtifactFileV1[];
     digest: string;
     repackVersion: string;
     hostUiApiVersion: string;
+    module: ReactNativeRepackModuleIdentity;
     compatibility: Readonly<{
         reactVersion: string;
         reactNativeVersion: string;
@@ -42,13 +76,20 @@ export type ReactNativeBundleBuildArtifactInputV1 = Readonly<{
     }>;
 }>;
 
-export type ReactNativeRepackBuildPresetInputV1 = Readonly<{
+export type ReactNativeRepackModuleIdentity = Readonly<{
+    containerName: string;
+    modulePath: string;
+    exportName: string;
+}>;
+
+export type ReactNativeRepackBuildPresetInput = Readonly<{
     contributionId: string;
     platform: ReactNativeBundleBuildPlatform;
     sourceEntry: string;
     outputFileName?: string;
     repackVersion: string;
     hostUiApiVersion: string;
+    module: ReactNativeRepackModuleIdentity;
     compatibility: Readonly<{
         reactVersion: string;
         reactNativeVersion: string;
@@ -57,7 +98,7 @@ export type ReactNativeRepackBuildPresetInputV1 = Readonly<{
     }>;
 }>;
 
-export type ReactNativeRepackBuildPresetV1 = Readonly<{
+export type ReactNativeRepackBuildPreset = Readonly<{
     tier: 'reactNative';
     bundler: 'repack';
     contributionId: string;
@@ -75,6 +116,7 @@ export type ReactNativeRepackBuildPresetV1 = Readonly<{
         sharedSingletons: typeof REPACK_SHARED_SINGLETONS;
         nativeModulePolicy: 'hostProvidedOnly';
     }>;
+    module: ReactNativeRepackModuleIdentity;
     compatibility: Readonly<{
         hostUiApiVersion: string;
         reactVersion: string;
@@ -96,14 +138,17 @@ function assertPlainJavaScriptBundlePath(path: string): void {
 }
 
 export function defineReactNativeBundleBuildArtifact(
-    input: ReactNativeBundleBuildArtifactInputV1,
+    input: ReactNativeBundleBuildArtifactInput,
 ): PluginUiArtifactsManifestEntryV1 {
     const entry = readRelativeBuildPath(input.entry, 'entry');
-    const files = input.files.map((file, index) => readRelativeBuildPath(file, `files[${index}]`));
+    const files = input.files.map((file, index) => ({
+        ...file,
+        relativePath: readRelativeBuildPath(file.relativePath, `files[${index}].relativePath`),
+    }));
 
     assertPlainJavaScriptBundlePath(entry);
     for (const file of files) {
-        assertPlainJavaScriptBundlePath(file);
+        assertPlainJavaScriptBundlePath(file.relativePath);
     }
 
     return PluginUiArtifactsManifestEntryV1Schema.parse({
@@ -114,6 +159,11 @@ export function defineReactNativeBundleBuildArtifact(
         files,
         digest: input.digest,
         builtWith: { bundler: 'repack', version: readRequiredString(input.repackVersion, 'repackVersion') },
+        repack: {
+            containerName: readRequiredString(input.module.containerName, 'module.containerName'),
+            modulePath: readRequiredString(input.module.modulePath, 'module.modulePath'),
+            exportName: readRequiredString(input.module.exportName, 'module.exportName'),
+        },
         hostUiApiVersion: readRequiredString(input.hostUiApiVersion, 'hostUiApiVersion'),
         compat: {
             react: readRequiredString(input.compatibility.reactVersion, 'compatibility.reactVersion'),
@@ -142,8 +192,8 @@ export function defineReactNativeBundleBuildArtifact(
 }
 
 export function defineReactNativeRepackBuildPreset(
-    input: ReactNativeRepackBuildPresetInputV1,
-): ReactNativeRepackBuildPresetV1 {
+    input: ReactNativeRepackBuildPresetInput,
+): ReactNativeRepackBuildPreset {
     const contributionId = readOutputPathSegment(input.contributionId, 'contributionId');
     const sourceEntry = readRelativeBuildPath(input.sourceEntry, 'sourceEntry');
     const outputFileName = input.outputFileName
@@ -151,6 +201,7 @@ export function defineReactNativeRepackBuildPreset(
         : `${input.platform}.bundle.js`;
     assertPlainJavaScriptBundlePath(outputFileName);
 
+    const module = input.module;
     return Object.freeze({
         tier: 'reactNative',
         bundler: 'repack',
@@ -159,7 +210,7 @@ export function defineReactNativeRepackBuildPreset(
         sourceEntry,
         output: Object.freeze({
             root: `dist/happier-plugin-ui/react-native/${contributionId}`,
-            entry: `react-native/${contributionId}/${outputFileName}`,
+            entry: `react-native/${contributionId}/${input.platform}/${outputFileName}`,
         }),
         repack: Object.freeze({
             version: readRequiredString(input.repackVersion, 'repackVersion'),
@@ -168,6 +219,11 @@ export function defineReactNativeRepackBuildPreset(
             external: REPACK_EXTERNALS,
             sharedSingletons: REPACK_SHARED_SINGLETONS,
             nativeModulePolicy: 'hostProvidedOnly',
+        }),
+        module: Object.freeze({
+            containerName: readRequiredString(module.containerName, 'module.containerName'),
+            modulePath: readRequiredString(module.modulePath, 'module.modulePath'),
+            exportName: readRequiredString(module.exportName, 'module.exportName'),
         }),
         compatibility: Object.freeze({
             hostUiApiVersion: readRequiredString(input.hostUiApiVersion, 'hostUiApiVersion'),

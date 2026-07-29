@@ -5,7 +5,8 @@ import type {
   ConnectedServiceQuotaRecoveryCreditConsumeReceiptStatusV1,
   ConnectedServiceQuotaSnapshotV1,
 } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
-import type { FetchRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
+import type { PluginConnectedAccountRuntime } from '@happier-dev/plugin-sdk/runtime';
+import type { CodexRuntimeFetch } from '../runtimeFetch.js';
 
 import { mapCodexRateLimitResetCredits } from './rateLimitResetCredits.js';
 import {
@@ -35,6 +36,30 @@ function normalizeResetAtMs(value: unknown): number | null {
   const num = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(num) || num <= 0) return null;
   return num > 1_000_000_000_000 ? Math.trunc(num) : Math.trunc(num * 1000);
+}
+
+export function parseOpenAiCodexConnectedAccountQuotaLimits(
+  value: unknown,
+): Awaited<
+  ReturnType<NonNullable<PluginConnectedAccountRuntime['quota']>>
+>['limits'] {
+  const data = isRecord(value) ? value : {};
+  const rateLimit = isRecord(data.rate_limit) ? data.rate_limit : null;
+  const primary = rateLimit && isRecord(rateLimit.primary_window) ? rateLimit.primary_window : null;
+  const secondary = rateLimit && isRecord(rateLimit.secondary_window) ? rateLimit.secondary_window : null;
+  return [
+    ['session', primary],
+    ['weekly', secondary],
+  ].map(([id, window]) => {
+    const usageWindow = isRecord(window) ? window : null;
+    const used = normalizePct(usageWindow?.used_percent);
+    const resetsAtMs = normalizeResetAtMs(usageWindow?.reset_at);
+    return {
+      id: String(id),
+      ...(used === null ? {} : { used, remaining: 100 - used }),
+      ...(resetsAtMs === null ? {} : { resetsAtMs }),
+    };
+  });
 }
 
 function resolveConnectedServiceQuotaAccountLabel(record: ConnectedServiceCredentialRecordV1): string | null {
@@ -92,7 +117,7 @@ function toRequestBody(value: unknown): BodyInit | null | undefined {
   return JSON.stringify(value);
 }
 
-function defaultRuntimeFetch(): FetchRuntimeServiceV1 {
+function defaultRuntimeFetch(): CodexRuntimeFetch {
   return async ({ url, method, headers, body, signal }) => {
     const response = await fetch(url, {
       method,
@@ -143,7 +168,7 @@ export function createOpenAiCodexQuotaFetcher(params?: Readonly<{
    * The usageUrl override (if set) takes precedence over this flag.
    */
   disablePrivateEndpoint?: boolean;
-  runtimeFetch?: FetchRuntimeServiceV1;
+  runtimeFetch?: CodexRuntimeFetch;
 }>): CodexQuotaFetcher {
   const usageUrl = typeof params?.usageUrl === 'string' && params.usageUrl.trim().length > 0
     ? params.usageUrl.trim()
@@ -260,12 +285,7 @@ export function createOpenAiCodexQuotaFetcher(params?: Readonly<{
       });
 
       const planLabel = normalizeNonEmptyString(data.plan_type);
-      const rateLimit = isRecord(data.rate_limit) ? data.rate_limit : null;
-      const primary = rateLimit && isRecord(rateLimit.primary_window) ? rateLimit.primary_window : null;
-      const secondary = rateLimit && isRecord(rateLimit.secondary_window) ? rateLimit.secondary_window : null;
-
-      const sessionPct = normalizePct(primary?.used_percent);
-      const weeklyPct = normalizePct(secondary?.used_percent);
+      const connectedAccountLimits = parseOpenAiCodexConnectedAccountQuotaLimits(data);
 
       return {
         v: 1,
@@ -277,30 +297,17 @@ export function createOpenAiCodexQuotaFetcher(params?: Readonly<{
         planLabel,
         accountLabel: resolveConnectedServiceQuotaAccountLabel(record),
         ...(recoveryCredits ? { recoveryCredits } : {}),
-        meters: [
-          {
-            meterId: 'session',
-            label: 'Session',
-            used: null,
-            limit: null,
-            unit: 'unknown',
-            utilizationPct: sessionPct,
-            resetsAt: normalizeResetAtMs(primary?.reset_at),
-            status: sessionPct === null ? 'unavailable' : 'ok',
-            details: {},
-          },
-          {
-            meterId: 'weekly',
-            label: 'Weekly',
-            used: null,
-            limit: null,
-            unit: 'unknown',
-            utilizationPct: weeklyPct,
-            resetsAt: normalizeResetAtMs(secondary?.reset_at),
-            status: weeklyPct === null ? 'unavailable' : 'ok',
-            details: {},
-          },
-        ],
+        meters: connectedAccountLimits.map((limit) => ({
+          meterId: limit.id,
+          label: limit.id === 'session' ? 'Session' : 'Weekly',
+          used: null,
+          limit: null,
+          unit: 'unknown',
+          utilizationPct: limit.used ?? null,
+          resetsAt: limit.resetsAtMs ?? null,
+          status: limit.used === undefined ? 'unavailable' : 'ok',
+          details: {},
+        })),
       };
     },
   };

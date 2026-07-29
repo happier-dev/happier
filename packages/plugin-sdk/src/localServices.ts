@@ -1,4 +1,34 @@
-import type { ExecLaunchInputV1 } from './exec.js';
+export type LocalServiceLaunchV1 =
+    | Readonly<{
+        kind: 'agent-cli';
+        agentId: string;
+        args?: readonly string[];
+        cwd?: string;
+        env?: Readonly<Record<string, string>>;
+        unsetEnvKeys?: readonly string[];
+        stdin?: string | Uint8Array;
+    }>
+    | Readonly<{
+        kind: 'binary';
+        executablePath: string;
+        args?: readonly string[];
+        cwd?: string;
+        env?: Readonly<Record<string, string>>;
+        unsetEnvKeys?: readonly string[];
+        stdin?: string | Uint8Array;
+    }>
+    | Readonly<{
+        kind: 'managed-installable';
+        installableId: string;
+        executableName?: string;
+        args?: readonly string[];
+        cwd?: string;
+        env?: Readonly<Record<string, string>>;
+        unsetEnvKeys?: readonly string[];
+        stdin?: string | Uint8Array;
+        sourcePreference?: 'managed-first' | 'system-first';
+    }>
+    | Readonly<{ kind: 'ipc'; endpoint: string }>;
 
 export const HAPPIER_LOCAL_SERVICE_ENV = Object.freeze({
     PORT: 'PORT',
@@ -11,7 +41,7 @@ export type LocalServiceConfidenceV1 = 'high' | 'medium' | 'low';
 
 export type LocalServiceOwnerScopedDeclarationV1 = Readonly<{
     id: string;
-    launch: ExecLaunchInputV1;
+    launch: LocalServiceLaunchV1;
     launchMode:
         | Readonly<{ kind: 'detectAfterLaunch'; minimumConfidence?: LocalServiceConfidenceV1 }>
         | Readonly<{
@@ -30,7 +60,7 @@ export type LocalServiceOwnerScopedDeclarationV1 = Readonly<{
     healthCheck:
         | Readonly<{ kind: 'none' }>
         | Readonly<{ kind: 'http'; path?: string; timeoutMs?: number }>
-        | Readonly<{ kind: 'command'; launch: ExecLaunchInputV1; timeoutMs?: number }>;
+        | Readonly<{ kind: 'command'; launch: LocalServiceLaunchV1; timeoutMs?: number }>;
     restart: Readonly<{ kind: 'never' }>;
     cleanup: Readonly<{ staleAfterMs: number }>;
 }>;

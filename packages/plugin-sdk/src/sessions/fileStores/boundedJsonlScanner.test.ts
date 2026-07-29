@@ -16,8 +16,55 @@ type ScannerModule = Readonly<{
     maxItems: number;
   }>): Promise<Readonly<{
     lines: readonly string[];
+    lineStartOffsets: readonly number[];
+    diagnostics?: readonly Readonly<{
+      code: string;
+      count: number;
+      positions: readonly number[];
+    }>[];
     nextCursor: ByteCursor;
     truncated: boolean;
+  }>>;
+  readJsonlFileBackwardPage(params: Readonly<{
+    filePath: string;
+    endOffsetBytes: number | null;
+    maxBytes: number;
+    maxItems: number;
+    chunkBytes?: number;
+    fileSystem?: Readonly<{
+      read(filePath: string, position: number, length: number): Promise<Buffer>;
+      stat(filePath: string): Promise<Readonly<{ size: number; mtimeMs: number }>>;
+    }>;
+  }>): Promise<Readonly<{
+    items: readonly unknown[];
+    diagnostics?: readonly Readonly<{
+      code: string;
+      count: number;
+      positions: readonly number[];
+    }>[];
+    nextEndOffsetBytes: number;
+    reachedStart: boolean;
+  }>>;
+  readJsonlFileForward(params: Readonly<{
+    filePath: string;
+    offsetBytes: number;
+    maxBytes: number;
+    maxItems: number;
+    chunkBytes?: number;
+  }>): Promise<Readonly<{
+    items: readonly Readonly<{
+      value: unknown;
+      startOffsetBytes: number;
+      endOffsetBytes: number;
+    }>[];
+    diagnostics?: readonly Readonly<{
+      code: string;
+      count: number;
+      positions: readonly number[];
+    }>[];
+    nextOffsetBytes: number;
+    truncated: boolean;
+    reachedEnd: boolean;
   }>>;
   scanJsonlSessionFile(filePath: string, bounds?: Readonly<{
     headBytes?: number;
@@ -57,6 +104,44 @@ afterEach(async () => {
 });
 
 describe('bounded JSONL session scanner', () => {
+  it('accepts a fixed-width mutable title slot before the session header', async () => {
+    const scanner = await loadScanner();
+    const root = await mkdtemp(join(tmpdir(), 'happier-file-store-title-slot-'));
+    tempDirs.add(root);
+    const filePath = join(root, '2026-07-21T10-00-00-000Z_session-current.jsonl');
+    await writeFile(filePath, [
+      jsonlLine({
+        type: 'title',
+        v: 1,
+        title: 'Mutable slot title',
+        updatedAt: '2026-07-21T10:00:05.000Z',
+        pad: ' '.repeat(64),
+      }),
+      jsonlLine({
+        type: 'session',
+        version: 3,
+        id: 'session-current',
+        timestamp: '2026-07-21T10:00:00.000Z',
+        cwd: '/repo',
+        title: 'Stale header title',
+      }),
+      jsonlLine({
+        type: 'message',
+        id: 'user-1',
+        parentId: null,
+        timestamp: '2026-07-21T10:00:01.000Z',
+        message: { role: 'user', content: 'hello' },
+      }),
+    ].join(''), 'utf8');
+
+    await expect(scanner.scanJsonlSessionFile(filePath)).resolves.toEqual(expect.objectContaining({
+      sessionId: 'session-current',
+      title: 'Mutable slot title',
+      cwd: '/repo',
+      createdAtMs: Date.parse('2026-07-21T10:00:00.000Z'),
+    }));
+  });
+
   it('derives discovery fields without whole-file reads', async () => {
     const scanner = await loadScanner();
     const root = await mkdtemp(join(tmpdir(), 'happier-file-store-scan-'));
@@ -162,6 +247,65 @@ describe('bounded JSONL session scanner', () => {
     expect(scanner.decodeJsonlByteCursor('not-a-cursor')).toBeNull();
   });
 
+  it('reports stable source byte offsets and advances by original bytes for malformed UTF-8', async () => {
+    const scanner = await loadScanner();
+    const root = await mkdtemp(join(tmpdir(), 'happier-file-store-source-offsets-'));
+    tempDirs.add(root);
+    const filePath = join(root, 'source-offsets.jsonl');
+    const firstLine = Buffer.from(`${JSON.stringify({ type: 'message', id: 'one' })}\n`, 'utf8');
+    const malformedUtf8Line = Buffer.from([0x7b, 0x22, 0x78, 0x22, 0x3a, 0xff, 0x7d, 0x0a]);
+    const thirdLine = Buffer.from(`${JSON.stringify({ type: 'message', id: 'three' })}\n`, 'utf8');
+    await writeFile(filePath, Buffer.concat([firstLine, malformedUtf8Line, thirdLine]));
+
+    const page = await scanner.readJsonlAfterCursor({
+      filePath,
+      cursor: null,
+      maxBytes: firstLine.byteLength + malformedUtf8Line.byteLength + thirdLine.byteLength,
+      maxItems: 10,
+    });
+
+    expect(page.lineStartOffsets).toEqual([
+      0,
+      firstLine.byteLength + malformedUtf8Line.byteLength,
+    ]);
+    expect(page.diagnostics).toEqual([{
+      code: 'malformed_source_utf8',
+      count: 1,
+      positions: [firstLine.byteLength + 5],
+    }]);
+    expect(page.nextCursor.offset).toBe(
+      firstLine.byteLength + malformedUtf8Line.byteLength + thirdLine.byteLength,
+    );
+  });
+
+  it('keeps an exact malformed UTF-8 aggregate while bounding retained byte positions', async () => {
+    const scanner = await loadScanner();
+    const root = await mkdtemp(join(tmpdir(), 'happier-file-store-source-diagnostic-bound-'));
+    tempDirs.add(root);
+    const filePath = join(root, 'source-diagnostic-bound.jsonl');
+    const malformedLine = Buffer.from([0x7b, 0x22, 0x78, 0x22, 0x3a, 0xff, 0x7d, 0x0a]);
+    const lineCount = 205;
+    await writeFile(filePath, Buffer.concat(Array.from({ length: lineCount }, () => malformedLine)));
+
+    const page = await scanner.readJsonlAfterCursor({
+      filePath,
+      cursor: null,
+      maxBytes: malformedLine.byteLength * lineCount,
+      maxItems: 1,
+    });
+
+    expect(page.lines).toEqual([]);
+    expect(page.diagnostics).toEqual([{
+      code: 'malformed_source_utf8',
+      count: lineCount,
+      positions: Array.from(
+        { length: 200 },
+        (_, index) => index * malformedLine.byteLength + 5,
+      ),
+    }]);
+    expect(page.nextCursor.offset).toBe(malformedLine.byteLength * lineCount);
+  });
+
   it('does not skip bytes after a chunk ending exactly on a newline', async () => {
     const scanner = await loadScanner();
     const root = await mkdtemp(join(tmpdir(), 'happier-file-store-cursor-boundary-'));
@@ -188,4 +332,120 @@ describe('bounded JSONL session scanner', () => {
 
     expect(secondPage.lines).toEqual([secondLine.trim()]);
   });
+
+  it('advances backward pages that contain only malformed records', async () => {
+    const scanner = await loadScanner();
+    const root = await mkdtemp(join(tmpdir(), 'happier-file-store-malformed-backward-'));
+    tempDirs.add(root);
+    const filePath = join(root, 'malformed-backward.jsonl');
+    const content = 'not-json\n{\n';
+    await writeFile(filePath, content, 'utf8');
+
+    const page = await scanner.readJsonlFileBackwardPage({
+      filePath,
+      endOffsetBytes: null,
+      maxBytes: 1024,
+      maxItems: 10,
+    });
+
+    expect(page.items).toEqual([]);
+    expect(page.nextEndOffsetBytes).toBe(0);
+    expect(page.reachedStart).toBe(true);
+  });
+
+  it.each(['forward', 'backward'] as const)(
+    'rejects malformed source UTF-8 inside valid JSON without admitting an item in the %s scanner',
+    async (direction) => {
+      const scanner = await loadScanner();
+      const root = await mkdtemp(join(tmpdir(), 'happier-file-store-malformed-utf8-'));
+      tempDirs.add(root);
+      const filePath = join(root, `${direction}.jsonl`);
+      const prefix = Buffer.from('{"type":"message","message":{"content":"', 'utf8');
+      const suffix = Buffer.from('"}}\n', 'utf8');
+      await writeFile(filePath, Buffer.concat([prefix, Buffer.from([0xff]), suffix]));
+
+      const page = direction === 'forward'
+        ? await scanner.readJsonlFileForward({
+          filePath,
+          offsetBytes: 0,
+          maxBytes: 1024,
+          maxItems: 10,
+        })
+        : await scanner.readJsonlFileBackwardPage({
+          filePath,
+          endOffsetBytes: null,
+          maxBytes: 1024,
+          maxItems: 10,
+        });
+
+      expect(page.items).toEqual([]);
+      expect(page.diagnostics).toEqual([{
+        code: 'malformed_source_utf8',
+        count: 1,
+        positions: [prefix.byteLength],
+      }]);
+    },
+  );
+
+  it.each(['forward', 'backward'] as const)(
+    'preserves a valid literal replacement character in the %s scanner',
+    async (direction) => {
+      const scanner = await loadScanner();
+      const root = await mkdtemp(join(tmpdir(), 'happier-file-store-valid-replacement-'));
+      tempDirs.add(root);
+      const filePath = join(root, `${direction}.jsonl`);
+      await writeFile(filePath, jsonlLine({ type: 'message', text: '\uFFFD' }), 'utf8');
+
+      const page = direction === 'forward'
+        ? await scanner.readJsonlFileForward({
+          filePath,
+          offsetBytes: 0,
+          maxBytes: 1024,
+          maxItems: 10,
+        })
+        : await scanner.readJsonlFileBackwardPage({
+          filePath,
+          endOffsetBytes: null,
+          maxBytes: 1024,
+          maxItems: 10,
+        });
+
+      expect(page.items).toHaveLength(1);
+      expect(page.items[0]).toMatchObject({ value: { text: '\uFFFD' } });
+      expect(page.diagnostics ?? []).toEqual([]);
+    },
+  );
+
+  it.each(['forward', 'backward'] as const)(
+    'preserves a valid multibyte scalar split across read chunks in the %s scanner',
+    async (direction) => {
+      const scanner = await loadScanner();
+      const root = await mkdtemp(join(tmpdir(), 'happier-file-store-chunked-utf8-'));
+      tempDirs.add(root);
+      const filePath = join(root, `${direction}.jsonl`);
+      const prefix = Buffer.from('{"text":"', 'utf8');
+      const padding = 'x'.repeat(1023 - prefix.byteLength);
+      await writeFile(filePath, `{"text":"${padding}€"}\n`, 'utf8');
+
+      const page = direction === 'forward'
+        ? await scanner.readJsonlFileForward({
+          filePath,
+          offsetBytes: 0,
+          maxBytes: 4096,
+          maxItems: 10,
+          chunkBytes: 1024,
+        })
+        : await scanner.readJsonlFileBackwardPage({
+          filePath,
+          endOffsetBytes: null,
+          maxBytes: 4096,
+          maxItems: 10,
+          chunkBytes: 1024,
+        });
+
+      expect(page.items).toHaveLength(1);
+      expect(page.items[0]).toMatchObject({ value: { text: `${padding}€` } });
+      expect(page.diagnostics ?? []).toEqual([]);
+    },
+  );
 });

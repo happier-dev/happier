@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  ANTIGRAVITY_AGENT_SETTINGS_CONTRIBUTION,
-  ANTIGRAVITY_AGENT_SETTINGS_DEFAULTS,
-  ANTIGRAVITY_AGENT_SETTINGS_DESCRIPTOR,
-} from './definition.js';
+import { ANTIGRAVITY_AGENT_SETTINGS_CONTRIBUTION } from './definition.js';
 
 describe('Antigravity agent settings definition', () => {
   it('defines runtime mode as a provider-account enum setting with auto default', () => {
@@ -13,15 +9,14 @@ describe('Antigravity agent settings definition', () => {
     ));
 
     expect(ANTIGRAVITY_AGENT_SETTINGS_CONTRIBUTION).toMatchObject({
-      id: 'antigravity.agentSettings.v1',
-      kind: 'agentSettings.v1',
-      agentId: 'antigravity',
-      storageScope: 'agentAccount',
+      id: 'agent-settings',
+      version: 1,
+      target: { kind: 'agent', agent: 'antigravity' },
+      scope: 'synced',
     });
     expect(field).toMatchObject({
       id: 'antigravityRuntimeMode',
       default: 'auto',
-      storageScope: 'account',
       analytics: {
         trackCurrentState: true,
         trackChanges: true,
@@ -30,44 +25,25 @@ describe('Antigravity agent settings definition', () => {
         identityScope: 'person',
       },
       schema: {
-        kind: 'enum',
-        values: ['auto', 'cliPrint', 'sdk'],
+        type: 'string',
+        enum: ['auto', 'cliPrint', 'sdk'],
       },
-      ui: {
-        kind: 'enum',
+      presentation: {
+        control: 'select',
       },
     });
-    expect(field?.ui?.enumOptions?.map((option) => option.id)).toEqual(['auto', 'cliPrint', 'sdk']);
-    expect(ANTIGRAVITY_AGENT_SETTINGS_DEFAULTS).toEqual({
-      antigravityRuntimeMode: 'auto',
-    });
+    expect(field?.presentation?.options?.map((option) => option.value)).toEqual([
+      'auto',
+      'cliPrint',
+      'sdk',
+    ]);
   });
 
-  it('builds the canonical agent settings UI descriptor from the contribution', () => {
-    expect(ANTIGRAVITY_AGENT_SETTINGS_DESCRIPTOR).toMatchObject({
-      kind: 'agentSettings.v1',
-      descriptorId: 'antigravity.agentSettings.v1',
-      agentId: 'antigravity',
-      settings: {
-        antigravityRuntimeMode: {
-          default: 'auto',
-          schema: {
-            kind: 'enum',
-            values: ['auto', 'cliPrint', 'sdk'],
-          },
-          storageScope: 'account',
-        },
-      },
-    });
-    expect(ANTIGRAVITY_AGENT_SETTINGS_DESCRIPTOR.uiSections).toEqual([
+  it('keeps presentation metadata on the canonical settings contribution', () => {
+    expect(ANTIGRAVITY_AGENT_SETTINGS_CONTRIBUTION.presentation.sections).toEqual([
       expect.objectContaining({
-        id: 'antigravityRuntime',
-        fields: [
-          expect.objectContaining({
-            key: 'antigravityRuntimeMode',
-            kind: 'enum',
-          }),
-        ],
+        id: 'antigravity-runtime',
+        fields: ['antigravityRuntimeMode'],
       }),
     ]);
   });

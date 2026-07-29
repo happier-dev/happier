@@ -3,11 +3,6 @@ import { redactBugReportSensitiveText, trimBugReportTextToMaxBytes } from '@happ
 import { createClaudeConnectedServiceRuntimeAuthAdapter } from '../../../auth/services/runtime/index.js';
 import { resolveClaudeAgentSdkRuntimeAuthRetryDecision } from './runtimeAuthRetryDecision.js';
 
-export {
-    isClaudeAgentSdkStopHookWithNoBackgroundTasks,
-    readClaudeAgentSdkBackgroundTaskId,
-} from './providerActivity.js';
-
 function collectAgentSdkResultErrorText(value: unknown, output: string[]): void {
     if (typeof value === 'string') {
         const trimmed = value.trim();

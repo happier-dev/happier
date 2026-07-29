@@ -78,6 +78,13 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function hasOnlyKeys(
+  value: Readonly<Record<string, unknown>>,
+  allowedKeys: ReadonlySet<string>,
+): boolean {
+  return Object.keys(value).every((key) => allowedKeys.has(key));
+}
+
 function normalizeTrimmedString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
@@ -284,4 +291,79 @@ export function readCanonicalCodexAgentRuntimeDescriptorV1(
     home,
     ...connectedServiceFields,
   };
+}
+
+export function readStrictCanonicalCodexAgentRuntimeDescriptorV1(
+  value: unknown,
+): CanonicalCodexAgentRuntimeDescriptorV1 | null {
+  const descriptor = asRecord(value);
+  if (
+    !descriptor
+    || !hasOnlyKeys(
+      descriptor,
+      new Set(['v', 'agentId', 'providerId', 'agent', 'provider']),
+    )
+  ) {
+    return null;
+  }
+  const payload = asRecord(descriptor.agent) ?? asRecord(descriptor.provider);
+  if (
+    !payload
+    || !hasOnlyKeys(
+      payload,
+      new Set([
+        'backendMode',
+        'providerSessionId',
+        'vendorSessionId',
+        'homePath',
+        'home',
+        'connectedServiceId',
+        'connectedServiceProfileId',
+        'connectedServiceGroupId',
+        'agentExtra',
+        'providerExtra',
+      ]),
+    )
+  ) {
+    return null;
+  }
+  const extraInput = payload.agentExtra ?? payload.providerExtra;
+  if (extraInput !== undefined) {
+    const extra = asRecord(extraInput);
+    if (
+      !extra
+      || !hasOnlyKeys(
+        extra,
+        new Set(['owner', 'schemaId', 'v', 'runtimeHandle', 'runtimeAffinity']),
+      )
+      || extra.owner !== 'codex'
+      || extra.schemaId !== 'codex.agentRuntimeDescriptorExtra'
+      || extra.v !== 1
+    ) {
+      return null;
+    }
+    const carrierInput = extra.runtimeHandle ?? extra.runtimeAffinity;
+    if (carrierInput !== undefined) {
+      const carrier = asRecord(carrierInput);
+      if (
+        !carrier
+        || !hasOnlyKeys(
+          carrier,
+          new Set([
+            'backendMode',
+            'providerSessionId',
+            'vendorSessionId',
+            'homePath',
+            'home',
+            'connectedServiceId',
+            'connectedServiceProfileId',
+            'connectedServiceGroupId',
+          ]),
+        )
+      ) {
+        return null;
+      }
+    }
+  }
+  return readCanonicalCodexAgentRuntimeDescriptorV1(value);
 }

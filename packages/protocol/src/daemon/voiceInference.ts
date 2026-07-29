@@ -2,7 +2,14 @@ import { z } from 'zod';
 
 import { TransferSessionIdSchema } from '../transfers/sessions/index.js';
 import { ModelPackKindSchema, ModelPackRuntimeFamilySchema } from '../voice/modelPacks/manifest.js';
+import { VoiceModelPackIdentityV1Schema } from '../voice/modelPacks/identityV1.js';
 import { VOICE_RUNTIME_DAEMON_STT_PCM_FORMAT } from '../voice/runtimeConfig.js';
+import { VoiceSpeechDiagnosticsCaptureContextV1Schema } from '../voice/diagnostics.js';
+import { buildQualifiedPluginContributionKey } from '../plugins/contributionIdentity.js';
+import {
+  PeerApplicationEncryptionAuthorityBindingV1Schema,
+  PeerApplicationEncryptionStartResponseV1Schema,
+} from '../machines/peer/mediation/peerApplicationEncryptionV1.js';
 
 export const LocalNeuralExecutionSchema = z.enum(['auto', 'device', 'daemon']);
 export type LocalNeuralExecution = z.infer<typeof LocalNeuralExecutionSchema>;
@@ -15,23 +22,15 @@ export const DAEMON_VOICE_INFERENCE_TTS_STREAM_SEGMENT_TEXT_MAX_LENGTH = 4_000;
 export const DaemonVoiceInferenceServiceStateSchema = z.enum(['unavailable', 'idle', 'warming', 'ready', 'degraded']);
 export type DaemonVoiceInferenceServiceState = z.infer<typeof DaemonVoiceInferenceServiceStateSchema>;
 
-export const DaemonVoiceInferenceAudioCodecSchema = z.enum(['mp3', 'wav', 'opus']);
+// The packaged daemon runtime currently has exactly one codec owner and always
+// produces WAV. Additive codecs belong here only after a runtime encoder exists.
+export const DaemonVoiceInferenceAudioCodecSchema = z.literal('wav');
 export type DaemonVoiceInferenceAudioCodec = z.infer<typeof DaemonVoiceInferenceAudioCodecSchema>;
 
-export const DaemonVoiceInferenceAudioOutputSchema = z.discriminatedUnion('codec', [
-  z.object({
-    codec: z.literal('wav'),
-    mimeType: z.literal('audio/wav'),
-  }),
-  z.object({
-    codec: z.literal('mp3'),
-    mimeType: z.literal('audio/mpeg'),
-  }),
-  z.object({
-    codec: z.literal('opus'),
-    mimeType: z.literal('audio/opus'),
-  }),
-]);
+export const DaemonVoiceInferenceAudioOutputSchema = z.object({
+  codec: z.literal('wav'),
+  mimeType: z.literal('audio/wav'),
+}).strict();
 export type DaemonVoiceInferenceAudioOutput = z.infer<typeof DaemonVoiceInferenceAudioOutputSchema>;
 
 export const DaemonVoiceInferenceNormalizationStrategySchema = z.enum(['daemon_decode', 'ui_pretranscoded_pcm16_fallback']);
@@ -85,8 +84,25 @@ export const DaemonVoiceInferenceModelRuntimeStateSchema = z.enum([
 ]);
 export type DaemonVoiceInferenceModelRuntimeState = z.infer<typeof DaemonVoiceInferenceModelRuntimeStateSchema>;
 
+export const DaemonVoiceModelPackLicenseReviewV1Schema = z.object({
+  pluginId: VoiceModelPackIdentityV1Schema.shape.pluginId,
+  packId: VoiceModelPackIdentityV1Schema.shape.packId,
+  pluginVersion: z.string().min(1).max(128),
+  packVersion: z.string().min(1).max(128),
+  licenseId: z.string().min(1).max(128),
+  licenseTitle: z.string().min(1).max(256),
+  licenseText: z.string().min(1).max(128 * 1024),
+  licenseSourceUrl: z.string().url().max(2048),
+  licenseTextDigest: z.string().regex(/^(?:sha256:)?[0-9a-f]{64}$/i),
+  artifactDigest: z.string().regex(/^(?:sha256:)?[0-9a-f]{64}$/i),
+  accepted: z.boolean(),
+}).strict();
+export type DaemonVoiceModelPackLicenseReviewV1 = z.infer<typeof DaemonVoiceModelPackLicenseReviewV1Schema>;
+
 export const DaemonVoiceInferenceModelStatusSchema = z.object({
   packId: z.string().min(1),
+  /** Null is the built-in/legacy namespace; non-null is a structured public-plugin identity. */
+  pluginIdentity: VoiceModelPackIdentityV1Schema.nullable().default(null),
   kind: ModelPackKindSchema,
   model: z.string().min(1),
   version: z.string().min(1).nullable().default(null),
@@ -102,6 +118,19 @@ export const DaemonVoiceInferenceModelStatusSchema = z.object({
   // omitted in output and existing callers/payloads are byte-for-byte unaffected.
   runtimeState: DaemonVoiceInferenceModelRuntimeStateSchema.optional(),
   residentMemoryBytes: z.number().int().nonnegative().optional(),
+  /** Exact external-pack consent binding. Absent for built-in packs and licenses without consent. */
+  licenseReview: DaemonVoiceModelPackLicenseReviewV1Schema.nullable().optional(),
+}).superRefine((status, ctx) => {
+  if (status.pluginIdentity && buildQualifiedPluginContributionKey({
+    pluginId: status.pluginIdentity.pluginId,
+    localId: status.pluginIdentity.packId,
+  }) !== status.packId) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['pluginIdentity', 'packId'],
+      message: 'Plugin model-pack identity must match the qualified projected pack id.',
+    });
+  }
 });
 export type DaemonVoiceInferenceModelStatus = z.infer<typeof DaemonVoiceInferenceModelStatusSchema>;
 
@@ -190,6 +219,18 @@ export const DaemonVoiceInferenceModelsInstallResponseSchema = z.union([
 ]);
 export type DaemonVoiceInferenceModelsInstallResponse = z.infer<typeof DaemonVoiceInferenceModelsInstallResponseSchema>;
 
+export const DaemonVoiceInferenceModelLicenseAcceptRequestSchema = DaemonVoiceModelPackLicenseReviewV1Schema
+  .omit({ licenseTitle: true, licenseText: true, accepted: true })
+  .extend({ qualifiedPackId: z.string().min(1).max(2048) })
+  .strict();
+export type DaemonVoiceInferenceModelLicenseAcceptRequest = z.infer<typeof DaemonVoiceInferenceModelLicenseAcceptRequestSchema>;
+
+export const DaemonVoiceInferenceModelLicenseAcceptResponseSchema = z.union([
+  z.object({ ok: z.literal(true), model: DaemonVoiceInferenceModelStatusSchema }).passthrough(),
+  DaemonVoiceInferenceErrorSchema,
+]);
+export type DaemonVoiceInferenceModelLicenseAcceptResponse = z.infer<typeof DaemonVoiceInferenceModelLicenseAcceptResponseSchema>;
+
 export const DaemonVoiceInferenceModelsRemoveRequestSchema = z.object({
   packId: z.string().min(1),
 }).strict();
@@ -236,6 +277,7 @@ export const DaemonVoiceInferenceTtsSynthesizeRequestSchema = z.object({
   voiceId: z.string().min(1).nullable().default(null),
   speed: z.number().min(0.5).max(2).nullable().default(null),
   output: DaemonVoiceInferenceAudioOutputSchema.default({ codec: 'wav', mimeType: 'audio/wav' }),
+  diagnostics: VoiceSpeechDiagnosticsCaptureContextV1Schema.optional(),
 }).strict();
 export type DaemonVoiceInferenceTtsSynthesizeRequest = z.infer<typeof DaemonVoiceInferenceTtsSynthesizeRequestSchema>;
 
@@ -318,6 +360,7 @@ export const DaemonVoiceInferenceTtsStreamStartRequestSchema = z.object({
   speed: z.number().min(0.5).max(2).nullable().default(null),
   output: DaemonVoiceInferenceAudioOutputSchema.default({ codec: 'wav', mimeType: 'audio/wav' }),
   prefetchDepth: z.number().int().min(1).max(2).optional(),
+  diagnostics: VoiceSpeechDiagnosticsCaptureContextV1Schema.optional(),
 }).strict();
 export type DaemonVoiceInferenceTtsStreamStartRequest = z.infer<typeof DaemonVoiceInferenceTtsStreamStartRequestSchema>;
 
@@ -538,6 +581,7 @@ export const DaemonVoiceInferenceSttTranscribeRequestSchema = z.object({
   packId: z.string().min(1).nullable().default(null),
   language: z.string().min(1).nullable().default(null),
   normalization: DaemonVoiceInferenceNormalizationDecisionSchema,
+  diagnostics: VoiceSpeechDiagnosticsCaptureContextV1Schema.optional(),
 }).strict();
 export type DaemonVoiceInferenceSttTranscribeRequest = z.infer<typeof DaemonVoiceInferenceSttTranscribeRequestSchema>;
 
@@ -570,6 +614,8 @@ export const DaemonVoiceInferenceSttStreamStartRequestSchema = z.object({
   language: z.string().min(1).nullable().default(null),
   streamingMode: z.enum(['runtime', 'upload_bridge']).optional(),
   format: DaemonVoiceInferenceSttStreamPcmFormatSchema.default(DAEMON_VOICE_INFERENCE_STT_STREAM_PCM_FORMAT),
+  diagnostics: VoiceSpeechDiagnosticsCaptureContextV1Schema.optional(),
+  peerApplicationEncryption: PeerApplicationEncryptionAuthorityBindingV1Schema.optional(),
 }).strict();
 export type DaemonVoiceInferenceSttStreamStartRequest = z.infer<typeof DaemonVoiceInferenceSttStreamStartRequestSchema>;
 
@@ -581,6 +627,7 @@ export const DaemonVoiceInferenceSttStreamStartResponseSchema = z.union([
     generation: DaemonVoiceInferenceStreamGenerationSchema,
     ackSeq: DaemonVoiceInferenceStreamAckSeqSchema,
     format: DaemonVoiceInferenceSttStreamPcmFormatSchema,
+    peerApplicationEncryption: PeerApplicationEncryptionStartResponseV1Schema.optional(),
   }).passthrough(),
   DaemonVoiceInferenceErrorSchema,
 ]);

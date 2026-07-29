@@ -64,6 +64,22 @@ describe('inferAgentIdFromSessionMetadata', () => {
     })).toBe('codex');
   });
 
+  it('imports structured Oh My Pi runtime identity before stale flavor for resume and fork routing', () => {
+    expect(inferAgentIdFromSessionMetadata({
+      flavor: 'claude',
+      runtimeDescriptorV1: {
+        v: 1,
+        agentIdentity: {
+          pluginId: 'happier.agent.ohmypi',
+          localId: 'ohmypi',
+        },
+        agent: {
+          providerSessionId: 'omp_1',
+        },
+      },
+    })).toBe('ohMyPi');
+  });
+
   it('falls back to vendor resume id fields when flavor is missing', () => {
     expect(inferAgentIdFromSessionMetadata({ opencodeSessionId: 'o1' })).toBe('opencode');
     expect(inferAgentIdFromSessionMetadata({ claudeSessionId: 'c1' })).toBe('claude');
@@ -91,7 +107,7 @@ describe('inferAgentIdFromSessionMetadata', () => {
     })).toBe('ohMyPi');
   });
 
-  it('prefers direct session provider ids when flavor and runtime descriptor are missing', () => {
+  it('prefers linked external-session Agent ids when flavor and runtime descriptor are missing', () => {
     expect(inferAgentIdFromSessionMetadata({
       directSessionV1: {
         v: 1,
@@ -105,7 +121,7 @@ describe('inferAgentIdFromSessionMetadata', () => {
     expect(inferAgentIdFromSessionMetadata({
       externalSessionV1: {
         v: 1,
-        providerId: 'codex',
+        agentId: 'codex',
         machineId: 'm1',
         remoteSessionId: 'codex-1',
         source: { kind: 'codexHome', home: 'user' },
@@ -113,7 +129,7 @@ describe('inferAgentIdFromSessionMetadata', () => {
     })).toBe('codex');
   });
 
-  it('prefers direct session provider ids over stale metadata.flavor', () => {
+  it('prefers linked external-session Agent ids over stale metadata.flavor', () => {
     expect(inferAgentIdFromSessionMetadata({
       flavor: 'claude',
       directSessionV1: {
@@ -125,6 +141,36 @@ describe('inferAgentIdFromSessionMetadata', () => {
         linkedAtMs: 1,
       },
     })).toBe('opencode');
+  });
+
+  it('uses the canonical linked-session reader for conflict and malformed fail-closed behavior', () => {
+    const conflictingLinkedSessionMetadata = {
+      externalSessionV1: {
+        v: 1,
+        agentId: 'codex',
+        machineId: 'm1',
+        remoteSessionId: 'codex-current',
+        source: { kind: 'codexHome', home: 'user' },
+      },
+      directSessionV1: {
+        v: 1,
+        providerId: 'opencode',
+        machineId: 'm1',
+        remoteSessionId: 'opencode-legacy',
+        source: { kind: 'opencodeServer', directory: '/repo' },
+      },
+    };
+
+    expect(resolveDeclaredAgentIdFromSessionMetadata(conflictingLinkedSessionMetadata)).toBeNull();
+    expect(inferAgentIdFromSessionMetadata(conflictingLinkedSessionMetadata)).toBe(DEFAULT_AGENT_ID);
+
+    expect(resolveDeclaredAgentIdFromSessionMetadata({
+      externalSessionV1: {
+        v: 1,
+        agentId: 'codex',
+        source: { kind: 'codexHome', home: 'user' },
+      },
+    })).toBeNull();
   });
 
   it('does not let legacy customAcp flavor carriers override canonical runtime metadata', () => {

@@ -15,15 +15,15 @@ export type ClaudeUnifiedDialogQuestionInput = Readonly<{
 type ClaudeUnifiedDialogNoticeTranslationKey =
   | 'tools.askUserQuestion.claudeDialogNotice.header'
   | 'tools.askUserQuestion.claudeDialogNotice.question'
-  | 'tools.askUserQuestion.claudeDialogNotice.openTerminal'
-  | 'tools.askUserQuestion.claudeDialogNotice.description';
+  | 'tools.askUserQuestion.claudeDialogNotice.openTerminal';
 
 function isOpenTerminalNotice(value: unknown): boolean {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const dialog = value as Record<string, unknown>;
   return dialog.kind === 'unrecognized'
     && dialog.dialogId === 'unrecognized_confirmation'
-    && dialog.notice === 'open_terminal';
+    && dialog.mode === 'notice'
+    && dialog.action === 'open_terminal';
 }
 
 export function resolveClaudeUnifiedDialogQuestionPresentation<T extends ClaudeUnifiedDialogQuestionInput>(
@@ -33,8 +33,7 @@ export function resolveClaudeUnifiedDialogQuestionPresentation<T extends ClaudeU
   if (!isOpenTerminalNotice(input.happierDialog)) return input;
   const firstQuestion = input.questions[0];
   if (!firstQuestion) return input;
-  const firstOption = firstQuestion.options[0];
-  if (!firstOption || firstOption.choice !== 'open_terminal') return input;
+  if (firstQuestion.options.length !== 0) return input;
 
   return {
     ...input,
@@ -42,11 +41,7 @@ export function resolveClaudeUnifiedDialogQuestionPresentation<T extends ClaudeU
       ...firstQuestion,
       header: translate('tools.askUserQuestion.claudeDialogNotice.header'),
       question: translate('tools.askUserQuestion.claudeDialogNotice.question'),
-      options: [{
-        ...firstOption,
-        label: translate('tools.askUserQuestion.claudeDialogNotice.openTerminal'),
-        description: translate('tools.askUserQuestion.claudeDialogNotice.description'),
-      }],
+      options: [],
     }],
   };
 }

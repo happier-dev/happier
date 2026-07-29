@@ -1,9 +1,10 @@
-import { mkdir, writeFile } from 'node:fs/promises';
-import { dirname, join, sep } from 'node:path';
+import { mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
+import { dirname, join, resolve, sep } from 'node:path';
 
 import {
     PluginUiArtifactsManifestV1Schema,
     computePluginUiArtifactFileSetSha256DigestV1,
+    computePluginUiArtifactSha256DigestV1,
     type PluginUiArtifactsManifestEntryV1,
     type PluginUiArtifactsManifestV1,
 } from '@happier-dev/protocol/plugins/ui';
@@ -11,16 +12,17 @@ import {
 import { readRelativeBuildPath } from '../buildPaths.js';
 import {
     defineHostedWebViteBuildArtifact,
-    type HostedWebViteBuildPresetV1,
+    type HostedWebViteBuildPreset,
 } from '../hostedWebBuild.js';
 import {
     defineReactNativeBundleBuildArtifact,
-    type ReactNativeRepackBuildPresetV1,
+    type ReactNativeRepackBuildPreset,
 } from '../reactNativeBuild.js';
 import {
     defineReactNativeWebViteBuildArtifact,
-    type ReactNativeWebViteBuildPresetV1,
+    type ReactNativeWebViteBuildPreset,
 } from '../reactNativeWebBuild.js';
+import { applyStrictSafeGuardedRequireTransform } from '../reactNativeRepackStrictSafety.js';
 
 /**
  * Canonical on-disk artifact root the daemon static-asset source reads
@@ -52,7 +54,7 @@ export type PluginUiBundlerRunnerV1 = (
 
 export type PluginUiHostedWebBuildSurfaceV1 = Readonly<{
     kind: 'hostedWeb';
-    preset: HostedWebViteBuildPresetV1;
+    preset: HostedWebViteBuildPreset;
     hostUiApiVersion: string;
     reactVersion: string;
 }>;
@@ -67,7 +69,7 @@ export type PluginUiReactNativeBuildSurfaceV1 = Readonly<{
      * presets share the `reactNative` build-surface `kind`; `buildManifestEntry`
      * dispatches on `preset.bundler` to call the matching artifact helper.
      */
-    preset: ReactNativeRepackBuildPresetV1 | ReactNativeWebViteBuildPresetV1;
+    preset: ReactNativeRepackBuildPreset | ReactNativeWebViteBuildPreset;
     hostUiApiVersion: string;
     compatibility: Readonly<{
         reactVersion: string;
@@ -143,7 +145,14 @@ function normalizeEmittedFiles(
             );
         }
         seen.add(relativePath);
-        normalized.push(Object.freeze({ relativePath, bytes: file.bytes }));
+        const bytes = surface.kind === 'reactNative'
+            && surface.preset.bundler === 'repack'
+            && relativePath.endsWith('.js')
+            ? new TextEncoder().encode(
+                applyStrictSafeGuardedRequireTransform(new TextDecoder().decode(file.bytes)).source,
+            )
+            : file.bytes;
+        normalized.push(Object.freeze({ relativePath, bytes }));
     }
     return Object.freeze(normalized);
 }
@@ -168,7 +177,11 @@ function buildManifestEntry(
     files: readonly PluginUiBuiltFileV1[],
 ): PluginUiArtifactsManifestEntryV1 {
     const entry = assertEntryEmitted(surface, files);
-    const relativeFiles = files.map((file) => file.relativePath);
+    const manifestFiles = files.map((file) => Object.freeze({
+        relativePath: file.relativePath,
+        digest: computePluginUiArtifactSha256DigestV1(file.bytes),
+        byteSize: file.bytes.byteLength,
+    }));
     const digest = computePluginUiArtifactFileSetSha256DigestV1(files);
 
     if (surface.kind === 'reactNative') {
@@ -176,7 +189,7 @@ function buildManifestEntry(
             return defineReactNativeWebViteBuildArtifact({
                 contributionId: surface.preset.contributionId,
                 entry,
-                files: relativeFiles,
+                files: manifestFiles,
                 digest,
                 viteVersion: surface.preset.vite.version,
                 hostUiApiVersion: surface.hostUiApiVersion,
@@ -187,10 +200,11 @@ function buildManifestEntry(
             contributionId: surface.preset.contributionId,
             platform: surface.preset.platform,
             entry,
-            files: relativeFiles,
+            files: manifestFiles,
             digest,
             repackVersion: surface.preset.repack.version,
             hostUiApiVersion: surface.hostUiApiVersion,
+            module: surface.preset.module,
             compatibility: surface.compatibility,
         });
     }
@@ -198,7 +212,7 @@ function buildManifestEntry(
     return defineHostedWebViteBuildArtifact({
         contributionId: surface.preset.contributionId,
         entry,
-        files: relativeFiles,
+        files: manifestFiles,
         digest,
         viteVersion: surface.preset.vite.version,
         hostUiApiVersion: surface.hostUiApiVersion,
@@ -231,7 +245,13 @@ export async function buildUiArtifacts(
         throw new PluginUiBuildError('no_surfaces', 'No plugin UI build surfaces were declared');
     }
 
-    const artifactsRoot = join(input.projectRoot, ...PLUGIN_UI_ARTIFACTS_ROOT_RELATIVE_PATH.split('/'));
+    // The repository workspace builder publishes `dist` atomically. Keep the
+    // generated UI graph inside that same staged tree so its final swap cannot
+    // replace a just-generated live graph with TypeScript-only output.
+    const workspaceDistOutputDir = process.env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR?.trim();
+    const artifactsRoot = workspaceDistOutputDir
+        ? join(resolve(workspaceDistOutputDir), 'happier-plugin-ui')
+        : join(input.projectRoot, ...PLUGIN_UI_ARTIFACTS_ROOT_RELATIVE_PATH.split('/'));
     const entries: PluginUiArtifactsManifestEntryV1[] = [];
     const filesToWrite: PluginUiBuiltFileV1[] = [];
     const claimedPaths = new Set<string>();
@@ -271,14 +291,45 @@ export async function buildUiArtifacts(
     // schema-invalid or digest-inconsistent build never leaves a partial tree.
     const manifest = PluginUiArtifactsManifestV1Schema.parse({ version: 1, entries });
 
-    for (const file of filesToWrite) {
-        await writeArtifactFile(artifactsRoot, file);
+    const artifactsParent = dirname(artifactsRoot);
+    await mkdir(artifactsParent, { recursive: true });
+    const stagedRoot = await mkdtemp(join(artifactsParent, '.happier-plugin-ui-stage-'));
+    const previousRoot = `${stagedRoot}.previous`;
+    let previousMoved = false;
+    try {
+        for (const file of filesToWrite) {
+            await writeArtifactFile(stagedRoot, file);
+        }
+        await writeFile(
+            join(stagedRoot, PLUGIN_UI_ARTIFACTS_MANIFEST_FILE),
+            `${JSON.stringify(manifest, null, 2)}\n`,
+        );
+
+        try {
+            await rename(artifactsRoot, previousRoot);
+            previousMoved = true;
+        } catch (cause) {
+            if ((cause as NodeJS.ErrnoException).code !== 'ENOENT') {
+                throw cause;
+            }
+        }
+
+        try {
+            await rename(stagedRoot, artifactsRoot);
+        } catch (cause) {
+            if (previousMoved) {
+                await rename(previousRoot, artifactsRoot);
+                previousMoved = false;
+            }
+            throw cause;
+        }
+        if (previousMoved) {
+            await rm(previousRoot, { recursive: true, force: true });
+            previousMoved = false;
+        }
+    } finally {
+        await rm(stagedRoot, { recursive: true, force: true });
     }
-    await mkdir(artifactsRoot, { recursive: true });
-    await writeFile(
-        join(artifactsRoot, PLUGIN_UI_ARTIFACTS_MANIFEST_FILE),
-        `${JSON.stringify(manifest, null, 2)}\n`,
-    );
 
     return Object.freeze({ artifactsRoot, manifest });
 }

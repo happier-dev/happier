@@ -46,7 +46,7 @@ describe('CLAUDE_UI_DESCRIPTOR', () => {
         subtitleKey: 'profiles.aiBackend.claudeSubtitle',
         connectedService: {
           serviceId: 'anthropic',
-          labelKey: 'agentInput.agent.claude',
+          labelKey: 'agentInput.connectedServiceLabel.claude',
           connectRoute: '/(app)/settings/connect/claude',
         },
         permissions: {
@@ -74,29 +74,6 @@ describe('CLAUDE_UI_DESCRIPTOR', () => {
           iconScale: 1.1,
         }),
         icon: { assetId: 'claude' },
-      }),
-      settings: expect.objectContaining({
-        kind: 'agentSettings.v1',
-        descriptorId: 'claude.agentSettings.v1',
-        agentId: 'claude',
-        settings: expect.objectContaining({
-          claudeRemoteAgentSdkEnabled: expect.objectContaining({
-            schema: { kind: 'boolean' },
-            default: true,
-          }),
-          claudeUnifiedTerminalHost: expect.objectContaining({
-            schema: { kind: 'enum', values: ['auto', 'tmux', 'zellij'] },
-            default: 'auto',
-          }),
-          claudeRemoteSettingSourcesV2: expect.objectContaining({
-            schema: { kind: 'array', element: { kind: 'enum', values: ['user', 'project', 'local'] }, max: 3 },
-            default: ['user', 'project', 'local'],
-          }),
-          claudeRemoteMaxThinkingTokens: expect.objectContaining({
-            schema: { kind: 'number', int: true, min: 1, nullable: true },
-            default: null,
-          }),
-        }),
       }),
       behavior: expect.objectContaining({
         descriptorId: 'claude.uiBehavior.v1',
@@ -176,6 +153,7 @@ describe('CLAUDE_UI_DESCRIPTOR', () => {
         svgIcon: { assetId: 'claude' },
       },
     }));
+    expect(CLAUDE_UI_DESCRIPTOR).not.toHaveProperty('settings');
   });
 
   it('is a data-only no-execute descriptor', () => {

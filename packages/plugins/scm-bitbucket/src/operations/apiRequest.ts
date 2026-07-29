@@ -4,12 +4,13 @@ import type {
   ScmForgeHttpResponse,
   ScmHostingProviderRef,
   ScmPullRequestSummary,
-} from '@happier-dev/plugin-sdk/scm';
-import { requestScmForgeJson } from '@happier-dev/plugin-sdk/scm';
-import type { ScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/experimental/scm';
+import { requestScmForgeJson } from '@happier-dev/plugin-sdk/experimental/scm';
+import type { ScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/experimental/scm';
 import { isRecord, readTrimmedString as readString } from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
 
 import { readBitbucketRepositoryCoordinates } from '../parsing/bitbucketCoordinates.js';
+import { encodeBitbucketBasicAuthorization } from '../auth/basicCredentials.js';
 import {
   createBitbucketAlreadyExistsError,
   createBitbucketAuthRequiredError,
@@ -41,17 +42,13 @@ function readNestedString(source: unknown, ...keys: readonly string[]): string |
   return readString(current);
 }
 
-function encodeBasicCredential(username: string, password: string): string {
-  const bytes = new TextEncoder().encode(`${username}:${password}`);
-  let binary = '';
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return `Basic ${btoa(binary)}`;
-}
-
 function headersFor(auth: BitbucketBasicAuthMaterialization): Record<string, string> {
   return {
     Accept: 'application/json',
-    Authorization: encodeBasicCredential(auth.username, auth.password),
+    Authorization: encodeBitbucketBasicAuthorization({
+      username: auth.username,
+      password: auth.password,
+    }),
     'Content-Type': 'application/json',
   };
 }
@@ -133,11 +130,13 @@ export async function requestBitbucketJson(input: Readonly<{
   auth: BitbucketBasicAuthMaterialization;
   url: string;
   init?: Omit<RequestInit, 'headers'>;
+  signal?: AbortSignal;
 }>): Promise<unknown> {
   return requestScmForgeJson({
     url: input.url,
     init: {
       ...input.init,
+      ...(input.signal ? { signal: input.signal } : {}),
       headers: headersFor(input.auth),
     },
     fetcher: input.fetcher,

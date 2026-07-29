@@ -1,7 +1,11 @@
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-import type { ConnectedServiceCredentialRecordV1, ConnectedServiceId } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+import {
+  ConnectedServiceCredentialRevisionV1Schema,
+  type ConnectedServiceCredentialRecordV1,
+  type ConnectedServiceId,
+} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
 import { writeAtomicJsonFile } from '@happier-dev/plugin-sdk/experimental/fs';
 import { expandHomePath, readTrimmedString as readString } from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
 
@@ -14,9 +18,9 @@ import {
 import { codexCloudConnectDescriptor } from '../auth/services/openai/cloud/connect.js';
 import {
   CodexChatGptAuthTokensRefreshSelectionSchema,
+  CodexChatGptAuthTokensRefreshResponseSchema,
   type CodexChatGptAuthTokensRefreshSelection,
 } from '../auth/services/openai/cloud/refreshBridge.js';
-import { createCodexAcpBackendSpec } from '../acp/backend.js';
 import { buildCodexCloudAuthFile } from '../auth/services/openai/cloud/authFile.js';
 import {
   codexCliSessionCommandConfig,
@@ -38,37 +42,21 @@ import {
 } from '../auth/services/home/sync/stateEntries.js';
 import { readCodexSessionMetadataRuntimeDescriptor } from '../identity/runtimeDescriptor.js';
 import { CODEX_SESSION_CONTROL_ADAPTER } from '../surfaces/sessions/controls/adapter.js';
+import { codexHandoffSurface } from '../surfaces/sessions/handoff/providerOps.js';
 import {
   buildCodexAgentRuntimeDescriptorV1,
   readCanonicalCodexAgentRuntimeDescriptorV1,
 } from '../../protocol/runtimeDescriptorV1.js';
-import { codexAppServerRuntimeControl } from '../runtime/appServer/control/client.js';
-import {
-  clearCodexGoal,
-  getCodexGoal,
-  setCodexGoal,
-} from '../runtime/appServer/control/goal.js';
-import {
-  listCodexRuntimeSkills,
-  listCodexRuntimeVendorPlugins,
-} from '../runtime/appServer/control/catalog.js';
-import {
-  checkCodexUsageLimitRecoveryNow,
-  consumeCodexUsageLimitResetCredit,
-} from '../runtime/appServer/control/usageLimitRecovery.js';
 import { openAiCodexQuotaFetcherDescriptor } from '../auth/services/quota/openaiFetcher.js';
 import { createCodexConnectedServiceRuntimeAuthAdapter } from '../auth/services/runtime/control/runtimeAuthAdapter.js';
-import { materializeCodexConnectedServiceRuntimeAuthSelection } from '../auth/services/runtime/control/selection.js';
-import { resolveCodexConnectedServiceSwitchContinuity } from '../auth/services/runtime/control/switchContinuity.js';
 import { verifyResumeReachableCodex } from '../auth/services/runtime/control/verifyResumeReachable.js';
 import {
   resolveCodexConnectedServiceCandidatePersistedSessionFile,
 } from '../auth/services/runtime/control/candidateSessionFile.js';
-import {
-  createCodexExternalSessionCandidateHostAdapter,
-  createCodexExternalSessionTranscriptStoreAdapter,
-} from '../surfaces/sessions/external/hostAdapters.js';
 import { resolveCodexCodingPromptBehaviorBlocks } from '../prompting/behavior.js';
+import {
+  resolveCodexLegacyRuntimeAuthFailureSourceRevision,
+} from '../auth/services/runtime/auth/legacyFailureSource.js';
 
 const CODEX_SUPPORTED_AUTH_SERVICE_IDS = Object.freeze([
   'openai-codex',
@@ -163,7 +151,7 @@ function requireCodexOauthRecord(value: unknown): Extract<ConnectedServiceCreden
 function requireOpenAiTokenRecord(value: unknown): Extract<ConnectedServiceCredentialRecordV1, { kind: 'token' }> {
   const record = readCredentialRecord(value);
   if (!record || record.kind !== 'token' || record.serviceId !== 'openai') {
-    throw new Error('Codex OpenAI fallback materialization requires an openai token credential');
+    throw new Error('Codex API-key materialization requires an openai token credential');
   }
   return record;
 }
@@ -175,8 +163,13 @@ async function writeJson(path: string, value: unknown): Promise<void> {
 export async function materializeCodexAuthEnvironment(input: Readonly<Record<string, unknown>>): Promise<Readonly<{
   env: Readonly<Record<string, string>>;
 }>> {
+  const env: Record<string, string> = {};
+  const qualifiedPurposeMaterialization =
+    input.qualifiedPurposeMaterialization === true;
   const openaiCodex = readCredentialRecord(input.openaiCodex);
-  if (openaiCodex) {
+  if (qualifiedPurposeMaterialization) {
+    env.CODEX_HOME = readRootDir(input);
+  } else if (openaiCodex) {
     const record = requireCodexOauthRecord(openaiCodex);
     const codexHome = readRootDir(input);
     await writeJson(join(codexHome, 'auth.json'), buildCodexCloudAuthFile({
@@ -186,15 +179,15 @@ export async function materializeCodexAuthEnvironment(input: Readonly<Record<str
       accountId: record.oauth.providerAccountId,
       lastRefreshIso: new Date().toISOString(),
     }));
-    return { env: { CODEX_HOME: codexHome } };
+    env.CODEX_HOME = codexHome;
   }
 
   const openai = readCredentialRecord(input.openai);
-  if (openai) {
-    return { env: { OPENAI_API_KEY: requireOpenAiTokenRecord(openai).token.token } };
+  if (openai && !openaiCodex && !qualifiedPurposeMaterialization) {
+    env.OPENAI_API_KEY = requireOpenAiTokenRecord(openai).token.token;
   }
 
-  return { env: {} };
+  return { env };
 }
 
 async function resolveCodexStateSharingStateEntryNames(params: Readonly<{
@@ -231,14 +224,8 @@ function resolveCodexStateSharingStateSourceRoot(params: Readonly<{
 export const CODEX_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
   agentId: 'codex',
   builtInAcpCatalog: true,
-  acpBackend: {
-    createSpec: (params: Readonly<{
-      cwd: string;
-      env: NodeJS.ProcessEnv;
-    }>) => createCodexAcpBackendSpec({
-      env: params.env,
-      projectDir: params.cwd,
-    }),
+  agentCliSystemTool: {
+    toolId: 'codex-cli',
   },
   cloudConnect: codexCloudConnectDescriptor,
   cliAuth: {
@@ -257,6 +244,35 @@ export const CODEX_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
   },
   sessionRuntimePreferences: {
     resolve: resolveCodexSessionRuntimePreferences,
+  },
+  sessionStartup: {
+    releasedOverridesCacheV1: true,
+    shouldUseDeferredBootstrap: (params: Readonly<{
+      startedBy: 'terminal' | 'daemon';
+      startingMode: 'terminal' | 'remote' | 'local' | null;
+      existingSessionId: string | null;
+      sessionAttachFilePath: string | null;
+      providerResumeId: string | null;
+      hasExplicitPermissionMode: boolean;
+      permissionModeSeedSource: 'explicit' | 'inferred' | 'account_default' | 'fallback' | 'released_cache_v1';
+      hasTerminalTty: boolean;
+    }>) => {
+      const terminalLocal = params.startingMode === null
+        || params.startingMode === 'terminal'
+        || params.startingMode === 'local';
+      return params.startedBy === 'terminal'
+        && params.hasTerminalTty
+        && terminalLocal
+        && !params.existingSessionId
+        && (
+          !params.providerResumeId
+          || params.hasExplicitPermissionMode
+          || params.permissionModeSeedSource === 'released_cache_v1'
+        );
+    },
+  },
+  sessionHandoff: {
+    surface: () => codexHandoffSurface,
   },
   codingPromptBehavior: {
     resolve: resolveCodexCodingPromptBehaviorBlocks,
@@ -298,8 +314,20 @@ export const CODEX_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
     createAuthMaterializationInput: createCodexAuthMaterializationInput,
     materializeAuthEnvironment: materializeCodexAuthEnvironment,
     stateSharingDescriptor: codexStateSharingDescriptor,
-    materializeRuntimeAuthSelection: false,
-    runtimeAuthAdapter: false,
+    runtimeAuthAdapter: createCodexConnectedServiceRuntimeAuthAdapter(),
+    shouldRestartForServiceSwitch: (selection: unknown) =>
+      readCodexConnectedServiceId(selection) !== null,
+    unsupportedSwitchReason: (selection: unknown) =>
+      readCodexConnectedServiceId(selection) === null
+        ? 'unsupported_service'
+        : 'codex_process_auth_restart_required',
+    exactSameSelectionRequiresResumeReachability: false,
+    sameAuthGroupRequiresResumeReachability: true,
+    connectedSwitchSharedStateRequiredReason: 'codex_shared_state_required',
+    nativeSwitchSharedStateRequiredReason: 'codex_shared_state_required',
+    verifyResumeReachable: verifyResumeReachableCodex,
+    resolveCandidatePersistedSessionFile: ({ metadata }: Readonly<{ metadata: unknown }>) =>
+      resolveCodexConnectedServiceCandidatePersistedSessionFile({ metadata }),
     quotaFetcherDescriptor: openAiCodexQuotaFetcherDescriptor,
     daemonAuthBridge: {
       refresh: async (input: Readonly<{
@@ -307,27 +335,52 @@ export const CODEX_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
         request: Readonly<Record<string, unknown>>;
         refreshCoordinator: Readonly<{
           refreshOpenAiCodexChatGptTokensForBridge(params: Readonly<{
+            refreshAttemptId: string;
             selection: CodexChatGptAuthTokensRefreshSelection;
             chatgptPlanType: string | null;
             forceRefresh: boolean;
+            failingAccessTokenFingerprint?: string | null;
+            expectedCredentialRevision: string;
           }>): Promise<unknown>;
         }>;
       }>) => {
         if (input.serviceId !== 'openai-codex') {
           throw new Error(`Codex daemon auth bridge cannot refresh unsupported service '${input.serviceId}'`);
         }
-        return await input.refreshCoordinator.refreshOpenAiCodexChatGptTokensForBridge({
+        const result = await input.refreshCoordinator.refreshOpenAiCodexChatGptTokensForBridge({
+          refreshAttemptId: typeof input.request.refreshAttemptId === 'string'
+            && input.request.refreshAttemptId.trim().length > 0
+            ? input.request.refreshAttemptId.trim()
+            : (() => { throw new Error('connected_service_refresh_attempt_identity_unavailable'); })(),
           selection: CodexChatGptAuthTokensRefreshSelectionSchema.parse(input.request.selection),
           chatgptPlanType: typeof input.request.chatgptPlanType === 'string'
             ? input.request.chatgptPlanType
-            : null,
+            : typeof input.request.planType === 'string'
+              ? input.request.planType
+              : null,
           forceRefresh: input.request.forceRefresh === true,
+          ...(typeof input.request.failingAccessTokenFingerprint === 'string'
+            ? { failingAccessTokenFingerprint: input.request.failingAccessTokenFingerprint }
+            : {}),
+          expectedCredentialRevision: ConnectedServiceCredentialRevisionV1Schema.parse(
+            input.request.expectedCredentialRevision,
+          ),
         });
+        return {
+          status: 'refreshed' as const,
+          result: {
+            ...CodexChatGptAuthTokensRefreshResponseSchema.parse(result),
+            credentialRevision: ConnectedServiceCredentialRevisionV1Schema.parse(
+              (result as Readonly<Record<string, unknown>>).credentialRevision,
+            ),
+          },
+        };
       },
     },
     recoveryCapabilities: {
       predictiveSoftSwitch: { mode: 'supported' },
       sameAccountFanoutStrategy: 'provider_account_id',
+      generationApplicationScope: 'per_session_runtime',
       runtimeAuthApply: {
         directLiveHotAuth: {
           supportsInTurnApply: true,
@@ -340,34 +393,8 @@ export const CODEX_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
         },
       },
     },
-  },
-  externalSessions: {
-    createCandidateHostAdapter: createCodexExternalSessionCandidateHostAdapter,
-    createTranscriptStoreAdapter: createCodexExternalSessionTranscriptStoreAdapter,
-  },
-  runtimeControl: {
-    appServer: codexAppServerRuntimeControl,
-    connectedServices: {
-      createRuntimeAuthAdapter: createCodexConnectedServiceRuntimeAuthAdapter,
-      materializeRuntimeAuthSelection: materializeCodexConnectedServiceRuntimeAuthSelection,
-      resolveSwitchContinuity: resolveCodexConnectedServiceSwitchContinuity,
-      verifyResumeReachable: verifyResumeReachableCodex,
-      resolveCandidatePersistedSessionFile: ({ metadata }: Readonly<{ metadata: unknown }>) =>
-        resolveCodexConnectedServiceCandidatePersistedSessionFile({ metadata }),
-    },
-    goal: {
-      getGoal: getCodexGoal,
-      setGoal: setCodexGoal,
-      clearGoal: clearCodexGoal,
-    },
-    catalog: {
-      listVendorPlugins: listCodexRuntimeVendorPlugins,
-      listSkills: listCodexRuntimeSkills,
-    },
-    usageLimitRecovery: {
-      checkNow: checkCodexUsageLimitRecoveryNow,
-      consumeResetCredit: consumeCodexUsageLimitResetCredit,
-    },
+    resolveLegacyRuntimeAuthFailureSourceRevision:
+      resolveCodexLegacyRuntimeAuthFailureSourceRevision,
   },
 } as const);
 

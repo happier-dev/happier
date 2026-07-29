@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { buildBackendTargetKeyV2, readBackendTargetRefV2 } from '../../backends/targets/backendTargetRefV2.js';
 import { AIBackendProfileSchema, type AIBackendProfile } from '../../profiles/backendProfileSchema.js';
 import { LEGACY_AI_LAUNCH_RESERVED_ENV_NAMES_V1, LaunchProfileV2Schema, type LaunchProfileV2 } from '../../profiles/v2/schema.js';
 import { SessionModelSelectionV1Schema, type SessionModelSelectionV1 } from '../selection/v1.js';
@@ -7,7 +8,9 @@ import { createProviderFingerprintV1 } from '../fingerprints.js';
 import { ProviderConnectionV1Schema } from '../connections/v1.js';
 import { ProviderAgentTargetKeySchema, ProviderLocalIdSchema, ProviderModelIdSchema } from '../ids.js';
 import { isCanonicalProviderSavedSecretIdV1 } from '../settings/v1.js';
+import { canonicalizeProviderContributionKeyV1 } from '../contributionIdentityV1.js';
 import {
+  classifyProviderSettingsSubtreeV1,
   migrateProviderAccountSettingsV1,
   type ProviderAccountSettingsMigrationCandidateV1,
   type ProviderAccountSettingsMigrationContextV1,
@@ -28,7 +31,7 @@ function candidateContributionKey(candidate: ProviderAccountSettingsMigrationCan
   return candidate.kind === 'connection'
     && candidate.connection.source.kind === 'contribution'
     && candidate.connection.role === 'default'
-    ? candidate.connection.source.contributionKey
+    ? canonicalizeProviderContributionKeyV1(candidate.connection.source.contributionKey)
     : null;
 }
 
@@ -76,6 +79,64 @@ function toSelection(
     },
     updatedAt,
   });
+}
+
+function hasSameAgentTargetIdentity(left: string, right: string): boolean {
+  try {
+    return buildBackendTargetKeyV2(readBackendTargetRefV2(left))
+      === buildBackendTargetKeyV2(readBackendTargetRefV2(right));
+  } catch {
+    return false;
+  }
+}
+
+function repairSelectionForKnownMigration(
+  value: unknown,
+  canonical: SessionModelSelectionV1,
+): SessionModelSelectionV1 | null {
+  const parsed = SessionModelSelectionV1Schema.safeParse(value);
+  if (!parsed.success
+    || parsed.data.ref.providerConnectionId !== canonical.ref.providerConnectionId
+    || parsed.data.ref.modelId !== canonical.ref.modelId
+    || !hasSameAgentTargetIdentity(parsed.data.ref.agentTargetKey, canonical.ref.agentTargetKey)) {
+    return null;
+  }
+  return SessionModelSelectionV1Schema.parse({
+    ...parsed.data,
+    ref: { ...parsed.data.ref, agentTargetKey: canonical.ref.agentTargetKey },
+  });
+}
+
+type LegacySourceDispositionV1 = 'migrate_legacy_state' | 'repair_provider_outputs_only';
+
+function readCompletedConnectionOutcome(
+  raw: RecordValue,
+  sourceProfileId: string,
+) {
+  const classified = classifyProviderSettingsSubtreeV1(raw);
+  if (classified.kind !== 'current') return null;
+  for (const outcome of classified.settings.migration?.completedSources ?? []) {
+    if (outcome.sourceProfileId === sourceProfileId && outcome.kind === 'connection') return outcome;
+  }
+  return null;
+}
+
+function legacySourceDisposition(
+  raw: RecordValue,
+  candidate: ProviderAccountSettingsMigrationCandidateV1,
+): LegacySourceDispositionV1 {
+  if (candidate.kind !== 'connection' || !candidate.selectedModel) return 'migrate_legacy_state';
+  const completed = readCompletedConnectionOutcome(raw, candidate.sourceProfileId);
+  if (completed?.connectionId !== candidate.connection.id
+    || !completed.modelSelection
+    || completed.modelSelection.modelId !== candidate.selectedModel.modelId
+    || !hasSameAgentTargetIdentity(
+      completed.modelSelection.agentTargetKey,
+      candidate.selectedModel.agentTargetKey,
+    )) {
+    return 'migrate_legacy_state';
+  }
+  return 'repair_provider_outputs_only';
 }
 
 function slimLegacyProfile(
@@ -138,6 +199,10 @@ export function migrateLegacyAiLaunchProfilesV1(
 
   const outcomeBySource = new Map(migrated.outcomes.map((outcome) => [outcome.sourceProfileId, outcome]));
   const candidateBySource = new Map(context.candidates.map((candidate) => [candidate.sourceProfileId, candidate]));
+  const dispositionBySource = new Map(context.candidates.map((candidate) => [
+    candidate.sourceProfileId,
+    legacySourceDisposition(raw, candidate),
+  ] as const));
   const selectionsBySource = new Map<string, SessionModelSelectionV1>();
   for (const outcome of migrated.outcomes) {
     const candidate = candidateBySource.get(outcome.sourceProfileId);
@@ -152,9 +217,31 @@ export function migrateLegacyAiLaunchProfilesV1(
   for (const entry of rawProfiles) {
     const id = isRecord(entry) && typeof entry.id === 'string' ? entry.id : null;
     const outcome = id ? outcomeBySource.get(id) : undefined;
-    if (!id || !outcome || outcome.kind === 'skipped_disabled') {
+    const disposition = id ? dispositionBySource.get(id) : undefined;
+    if (!id || !outcome || !disposition || outcome.kind === 'skipped_disabled') {
       retainedProfiles.push(entry);
       if (id) retainedProfileIds.add(id);
+      continue;
+    }
+    const parsedSlim = LaunchProfileV2Schema.safeParse(entry);
+    if (parsedSlim.success) {
+      const canonical = selectionsBySource.get(id) ?? null;
+      const repairedSelection = canonical
+        ? repairSelectionForKnownMigration(parsedSlim.data.preferredModelSelection, canonical)
+        : null;
+      retainedProfiles.push(repairedSelection
+        ? LaunchProfileV2Schema.parse({
+            ...parsedSlim.data,
+            preferredAgentTargetKey: undefined,
+            preferredModelSelection: repairedSelection,
+          })
+        : parsedSlim.data);
+      retainedProfileIds.add(id);
+      continue;
+    }
+    if (disposition === 'repair_provider_outputs_only') {
+      retainedProfiles.push(entry);
+      retainedProfileIds.add(id);
       continue;
     }
     const parsedLegacy = AIBackendProfileSchema.safeParse(entry);
@@ -178,6 +265,7 @@ export function migrateLegacyAiLaunchProfilesV1(
   }
   for (const outcome of migrated.outcomes) {
     if (outcome.kind !== 'connection' || retainedProfileIds.has(outcome.sourceProfileId)) continue;
+    if (dispositionBySource.get(outcome.sourceProfileId) !== 'migrate_legacy_state') continue;
     const candidate = candidateBySource.get(outcome.sourceProfileId);
     if (candidate?.kind !== 'connection' || !candidate.retainedLaunchProfile) continue;
     const selection = selectionsBySource.get(outcome.sourceProfileId);
@@ -194,9 +282,17 @@ export function migrateLegacyAiLaunchProfilesV1(
     ? raw.favoriteProfiles.filter((id): id is string => typeof id === 'string')
     : [];
   const favoriteModelSelections = Array.isArray(raw.favoriteModelSelectionsV1)
-    ? [...raw.favoriteModelSelectionsV1]
+    ? raw.favoriteModelSelectionsV1.map((entry) => {
+        if (!isRecord(entry)) return entry;
+        for (const canonical of selectionsBySource.values()) {
+          const repaired = repairSelectionForKnownMigration(entry.selection, canonical);
+          if (repaired) return { ...entry, selection: repaired };
+        }
+        return entry;
+      })
     : [];
   for (const sourceId of favoriteProfiles) {
+    if (dispositionBySource.get(sourceId) !== 'migrate_legacy_state') continue;
     const selection = selectionsBySource.get(sourceId);
     const favorite = selection ? { selection, addedAtMs: context.migratedAt } : null;
     if (favorite && !favoriteModelSelections.some((entry) =>
@@ -209,7 +305,9 @@ export function migrateLegacyAiLaunchProfilesV1(
   if (isRecord(raw.secretBindingsByProfileId)) {
     for (const [profileId, bindings] of Object.entries(raw.secretBindingsByProfileId)) {
       const outcome = outcomeBySource.get(profileId);
-      if (!outcome || outcome.kind === 'skipped_disabled') {
+      if (!outcome
+        || dispositionBySource.get(profileId) !== 'migrate_legacy_state'
+        || outcome.kind === 'skipped_disabled') {
         nextBindings[profileId] = bindings;
         continue;
       }
@@ -230,7 +328,9 @@ export function migrateLegacyAiLaunchProfilesV1(
   const nextEnabled: Record<string, unknown> = Object.create(null);
   if (isRecord(raw.profileEnabledById)) {
     for (const [profileId, value] of Object.entries(raw.profileEnabledById)) {
-      if (!outcomeBySource.has(profileId) || outcomeBySource.get(profileId)?.kind === 'skipped_disabled') {
+      if (!outcomeBySource.has(profileId)
+        || dispositionBySource.get(profileId) !== 'migrate_legacy_state'
+        || outcomeBySource.get(profileId)?.kind === 'skipped_disabled') {
         nextEnabled[profileId] = value;
       }
     }
@@ -238,19 +338,23 @@ export function migrateLegacyAiLaunchProfilesV1(
 
   const settings: RecordValue = {
     ...migrated.settings,
-    ...(rawProfiles.length > 0 ? { profiles: retainedProfiles } : {}),
+    ...(retainedProfiles.length > 0 || raw.profiles !== undefined ? { profiles: retainedProfiles } : {}),
     ...(raw.secretBindingsByProfileId !== undefined ? { secretBindingsByProfileId: nextBindings } : {}),
     ...(raw.profileEnabledById !== undefined ? { profileEnabledById: nextEnabled } : {}),
     ...(raw.favoriteProfiles !== undefined
       ? {
           favoriteProfiles: favoriteProfiles.filter((id) => {
             const outcome = outcomeBySource.get(id);
-            return outcome === undefined || outcome.kind === 'skipped_disabled';
+            return outcome === undefined
+              || dispositionBySource.get(id) !== 'migrate_legacy_state'
+              || outcome.kind === 'skipped_disabled';
           }),
         }
       : {}),
     ...(favoriteModelSelections.length > 0 ? { favoriteModelSelectionsV1: favoriteModelSelections } : {}),
-    ...(lastUsedProfile !== null && outcomeBySource.has(lastUsedProfile)
+    ...(lastUsedProfile !== null
+      && outcomeBySource.has(lastUsedProfile)
+      && dispositionBySource.get(lastUsedProfile) === 'migrate_legacy_state'
       ? { lastUsedProfile: retainedProfileIds.has(lastUsedProfile) ? lastUsedProfile : null }
       : {}),
   };

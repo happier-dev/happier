@@ -1,12 +1,12 @@
 /**
  * RN-WEB-LOADER item 1 (shared externals-resolution fix): the canonical
  * well-known global key + specifier list a web-target plugin UI bundle's
- * `react` / `react-native-web` / host-API-client imports are aliased to at
- * build time, and read back from at host-runtime install time.
+ * exact React runtime / `react-native-web` / host-API-client imports are
+ * aliased to at build time, and read back from at host-runtime install time.
  *
  * Both `packages/plugin-sdk` (build-time: aliases these bare specifiers to a
  * virtual module that reads off this global) and `apps/ui` (host-runtime:
- * installs the real `react`/`react-native-web`/hostApiClient module
+ * installs the real React runtime/`react-native-web`/hostApiClient module
  * namespaces onto this global before `import()`-ing any web-target plugin
  * bundle) depend on `@happier-dev/protocol`, so this constant lives here as
  * the single owner both sides import — never duplicated/hand-rolled at
@@ -21,10 +21,24 @@
 
 export const PLUGIN_UI_HOST_RUNTIME_GLOBAL_KEY = '__happierPluginHostRuntime__' as const;
 
-export const PLUGIN_UI_HOST_RUNTIME_EXTERNAL_SPECIFIERS = Object.freeze([
+/**
+ * The exact React namespace closure plugin UI artifacts may consume from the
+ * host. JSX compilers import the two subpaths directly, so sharing only the
+ * `react` package root does not preserve one React closure.
+ */
+export const PLUGIN_UI_HOST_REACT_RUNTIME_EXTERNAL_SPECIFIERS = Object.freeze([
     'react',
+    'react/jsx-runtime',
+    'react/jsx-dev-runtime',
+] as const);
+
+export type PluginUiHostReactRuntimeExternalSpecifierV1 =
+    typeof PLUGIN_UI_HOST_REACT_RUNTIME_EXTERNAL_SPECIFIERS[number];
+
+export const PLUGIN_UI_HOST_RUNTIME_EXTERNAL_SPECIFIERS = Object.freeze([
+    ...PLUGIN_UI_HOST_REACT_RUNTIME_EXTERNAL_SPECIFIERS,
     'react-native-web',
-    '@happier-dev/plugin-sdk/ui/hostApiClient',
+    '@happier-dev/plugin-sdk/ui/client',
 ] as const);
 
 export type PluginUiHostRuntimeExternalSpecifierV1 =
@@ -38,8 +52,10 @@ export type PluginUiHostRuntimeExternalSpecifierV1 =
  */
 export type PluginUiHostRuntimeExternalGlobalV1 = Readonly<{
     react: unknown;
+    'react/jsx-runtime': unknown;
+    'react/jsx-dev-runtime': unknown;
     'react-native-web': unknown;
-    '@happier-dev/plugin-sdk/ui/hostApiClient': unknown;
+    '@happier-dev/plugin-sdk/ui/client': unknown;
 }>;
 
 export function isPluginUiHostRuntimeExternalGlobalInstalled(

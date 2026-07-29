@@ -9,33 +9,21 @@ import {
   requireConnectedServiceOauthCredentialRecordWithExpiry,
   requireConnectedServiceTokenCredentialRecord,
   resolveConnectedServicesProviderStateSharingPolicyV1,
-  type ConnectedServiceOauthCredentialRecordWithExpiryV1,
 } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
 import { writeAtomicJsonFile } from '@happier-dev/plugin-sdk/experimental/fs';
-import {
-  buildConnectedServiceBrokerSelectionIdentity,
-  writeConnectedServiceBrokerCapabilityFile,
-  type ConnectedServiceBrokerSelectionIdentityMember,
-} from '@happier-dev/plugin-sdk/experimental/cloud/broker';
 import { isRecord, readTrimmedString as readString } from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
 
 import { formatPiSessionDirectoryForCwd } from '../../sessionFiles.js';
+import { PI_DIRECT_AUTH_ENV_KEYS } from '../../launchEnvironment.js';
 import {
-  PI_BROKER_DAEMON_STATE_PATH_ENV,
-  PI_BROKER_EXTENSION_VERSION,
-  PI_BROKER_EXTENSION_VERSION_ENV,
-  PI_BROKER_SELECTIONS_ENV,
-  PI_BROKER_SELECTION_IDENTITY_ENV,
-  PI_BROKER_REFRESH_TOKEN_PATH_ENV,
-  buildPiBrokerMarker,
-  ensurePiBrokerExtensionAsset,
-  piBrokerServiceId,
-  piRegisterProviderId,
-  serializePiBrokerSelections,
-  type PiBrokerProvider,
-  type PiBrokerProviderSelection,
-  type PiRegisterProviderId,
-} from './broker/index.js';
+  ensurePiRequestAuthExtensionAsset,
+  PI_REQUEST_AUTH_CAPABILITY_PATH_ENV,
+  readPiRequestAuthMaterialization,
+  retireLegacyPiRequestAuthAssets,
+  type PiRequestAuthMaterialization,
+  type PiRequestAuthProviderId,
+  type PiRequestAuthPurposeMap,
+} from './requestAuth/index.js';
 
 const piAuthMaterialization = defineConnectedServiceAuthMaterialization([
   { serviceId: 'openai-codex', inputKey: 'openaiCodex' },
@@ -49,6 +37,20 @@ type PiConnectedServiceId = typeof PI_SUPPORTED_CONNECTED_SERVICE_IDS[number];
 
 export const PI_MATERIALIZED_HOME_CREDENTIAL_ENTRIES = Object.freeze([
   'pi-agent-dir/auth.json',
+] as const);
+
+// Exact retired Pi broker generations plus the current request-auth path whose
+// inherited value must be cleared before an inactive/direct launch.
+export const PI_AUTH_ENV_KEYS_TO_NEUTRALIZE = Object.freeze([
+  'HAPPIER_PI_BROKER_SELECTIONS',
+  'HAPPIER_PI_BROKER_DAEMON_STATE_PATH',
+  'HAPPIER_PI_BROKER_STATE_PATH',
+  'HAPPIER_PI_BROKER_EXTENSION_VERSION',
+  'HAPPIER_PI_CONNECTED_SERVICE_SELECTION_IDENTITY',
+  'HAPPIER_PI_BROKER_LOAD_NONCE',
+  'HAPPIER_CONNECTED_SERVICE_BROKER_REFRESH_TOKEN_PATH',
+  'HAPPIER_CONNECTED_SERVICE_BROKER_REFRESH_TOKEN',
+  PI_REQUEST_AUTH_CAPABILITY_PATH_ENV,
 ] as const);
 
 function resolvePiStateSharingMode(settingsLike: unknown): 'isolated' | 'shared' {
@@ -190,46 +192,6 @@ export const readPiConnectedServiceId:
   (selection: unknown) => PiConnectedServiceId | null = piAuthMaterialization.readConnectedServiceId;
 export const createPiAuthMaterializationInput = piAuthMaterialization.createAuthMaterializationInput;
 
-/**
- * Build the BROKERED Pi OAuth credential entry written to `auth.json`.
- *
- * CRITICAL (no-leak / dual-refresher fix): unlike the legacy path (which embedded the real
- * `{access, refresh, expires}` via `buildConnectedServiceOauthAuthEntry`, letting Pi self-refresh
- * against the provider and race the daemon), this writes a credential whose `refresh` is a NON-secret
- * Happier marker — never the provider's single-use refresh token. Pi's broker extension overrides the
- * provider's OAuth so `refreshToken` hits the Happier daemon bridge instead of the provider. The daemon
- * is therefore the SOLE refresher; Pi never holds (and never can rotate) a usable refresh token. Pi's
- * current provider API can call `getApiKey` synchronously on first use, so the materialized credential
- * includes the current short-lived access token and its real expiry. Subsequent refreshes still flow
- * through the broker marker + daemon bridge.
- */
-function buildPiBrokeredOauthAuthEntry(
-  registerProviderId: PiRegisterProviderId,
-  record: ConnectedServiceOauthCredentialRecordWithExpiryV1,
-): Record<string, unknown> {
-  return {
-    type: 'oauth',
-    // NON-secret marker, NOT the provider refresh token. The broker recognises it and re-brokers.
-    refresh: buildPiBrokerMarker(registerProviderId, PI_BROKER_EXTENSION_VERSION),
-    // Short-lived access only. This lets Pi's synchronous getApiKey path satisfy the first request while
-    // keeping provider refresh authority exclusively in the daemon.
-    access: record.oauth.accessToken,
-    expires: record.expiresAt,
-    ...(record.oauth.providerAccountId ? { accountId: record.oauth.providerAccountId } : {}),
-  };
-}
-
-function readGroupIdsByServiceId(value: unknown): Readonly<Record<string, string>> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
-  const entries: Record<string, string> = {};
-  for (const [serviceId, groupId] of Object.entries(value as Record<string, unknown>)) {
-    if (typeof groupId === 'string' && groupId.trim().length > 0) {
-      entries[serviceId] = groupId.trim();
-    }
-  }
-  return entries;
-}
-
 export async function materializePiAuthEnvironment(input: Readonly<Record<string, unknown>>): Promise<Readonly<{
   env: Readonly<Record<string, string>>;
 }>> {
@@ -244,44 +206,27 @@ export async function materializePiAuthEnvironment(input: Readonly<Record<string
   const openai = readConnectedServiceCredentialRecord(input.openai);
   const claudeSubscription = readConnectedServiceCredentialRecord(input.claudeSubscription);
   const anthropic = readConnectedServiceCredentialRecord(input.anthropic);
+  const projectedRequestAuth = readPiRequestAuthMaterialization(input.requestAuth);
+  const requestAuthPurposes: {
+    -readonly [K in PiRequestAuthProviderId]?: NonNullable<PiRequestAuthPurposeMap[K]>;
+  } = {};
 
-  // Brokered OAuth providers (NO real refresh token reaches Pi). Each present here both writes a marker
-  // OAuth cred to auth.json AND contributes a broker selection + identity fragment. `provider` is the
-  // SHARED bridge tag (openai/anthropic), keying the selections + identity to match the OpenCode broker
-  // + shared bridge-call source; the `auth.json` entry + marker use Pi's own provider id.
-  const brokerSelections: { -readonly [K in PiBrokerProvider]?: PiBrokerProviderSelection } = {};
-  const brokeredProviders: PiBrokerProvider[] = [];
-  const identityMembers: ConnectedServiceBrokerSelectionIdentityMember[] = [];
-  // R4-4/F3: serviceId → groupId for GROUP-bound selections (host-provided). Scopes the identity by
-  // pool WITHOUT generation: two pools sharing one active profile never collapse to one identity,
-  // while a generation-only bump keeps the identity stable (consumers treat it as an opaque key).
-  const groupIdsByServiceId = readGroupIdsByServiceId(input.connectedServiceGroupIdsByServiceId);
-
-  const brokerProvider = (
-    provider: PiBrokerProvider,
-    record: ConnectedServiceOauthCredentialRecordWithExpiryV1,
-  ): void => {
-    const registerProviderId = piRegisterProviderId(provider);
-    auth[registerProviderId] = buildPiBrokeredOauthAuthEntry(registerProviderId, record);
-    brokerSelections[provider] = {
-      serviceId: piBrokerServiceId(provider),
-      profileId: record.profileId,
-      accountId: record.oauth.providerAccountId ?? null,
-      planType: null,
-    };
-    brokeredProviders.push(provider);
-    const groupId = groupIdsByServiceId[piBrokerServiceId(provider)];
-    identityMembers.push({
-      serviceId: piBrokerServiceId(provider),
-      profileId: record.profileId,
-      providerAccountId: record.oauth.providerAccountId ?? null,
-      groupId: groupId ?? null,
-    });
+  const requireRequestAuthProvider = (providerId: PiRequestAuthProviderId): void => {
+    const purpose = projectedRequestAuth?.purposesByProviderId[providerId];
+    if (!purpose) {
+      throw new Error(`Pi request-auth materialization requires the exact declared ${providerId} purpose`);
+    }
+    requestAuthPurposes[providerId] = purpose;
   };
 
-  // OpenAI: Codex subscription is OAuth-only ⇒ always brokered. A platform API key is direct.
+  // OAuth credentials never enter Pi. The host projects a scoped child request-auth capability and
+  // the extension performs a fresh lookup immediately before each independently submitted request.
+  if (projectedRequestAuth?.purposesByProviderId['openai-codex']) {
+    requireRequestAuthProvider('openai-codex');
+  }
   if (openaiCodex) {
-    brokerProvider('openai', requireConnectedServiceOauthCredentialRecordWithExpiry(openaiCodex));
+    requireConnectedServiceOauthCredentialRecordWithExpiry(openaiCodex);
+    requireRequestAuthProvider('openai-codex');
   }
 
   if (openai) {
@@ -294,11 +239,18 @@ export async function materializePiAuthEnvironment(input: Readonly<Record<string
     };
   }
 
-  // Anthropic: Claude subscription OAuth ⇒ brokered; setup-token ⇒ direct api_key. A Console API key
-  // (anthropic service) ⇒ direct api_key. Anthropic-service OAuth remains rejected.
-  if (claudeSubscription) {
+  // Claude subscription OAuth uses request-auth; setup-token and Console API keys remain direct.
+  if (projectedRequestAuth?.purposesByProviderId.anthropic) {
+    if (claudeSubscription) {
+      requireConnectedServiceOauthCredentialRecordWithExpiry(
+        claudeSubscription,
+      );
+    }
+    requireRequestAuthProvider('anthropic');
+  } else if (claudeSubscription) {
     if (claudeSubscription.kind === 'oauth') {
-      brokerProvider('anthropic', requireConnectedServiceOauthCredentialRecordWithExpiry(claudeSubscription));
+      requireConnectedServiceOauthCredentialRecordWithExpiry(claudeSubscription);
+      requireRequestAuthProvider('anthropic');
     } else {
       const record = requireConnectedServiceTokenCredentialRecord(claudeSubscription, {
         message: 'Claude subscription OAuth credentials are not supported. Reconnect using an API key or setup-token.',
@@ -318,40 +270,30 @@ export async function materializePiAuthEnvironment(input: Readonly<Record<string
     };
   }
 
+  const requestAuthEnabled = Object.keys(requestAuthPurposes).length > 0;
+  await retireLegacyPiRequestAuthAssets({
+    rootDir,
+    agentDir,
+    retainCurrent: requestAuthEnabled,
+  });
   await writeAtomicJsonFile({ path: join(agentDir, 'auth.json'), value: auth, mode: 0o600 });
 
   const env: Record<string, string> = {
     PI_CODING_AGENT_DIR: agentDir,
   };
-  let brokerCapability: Awaited<ReturnType<typeof writeConnectedServiceBrokerCapabilityFile>> | undefined;
+  // Empty child overlays replace obsolete/inactive values inherited by a retained
+  // runner without restoring them as a current launch contract.
+  for (const key of PI_AUTH_ENV_KEYS_TO_NEUTRALIZE) env[key] = '';
 
-  // Brokered sessions: write the broker extension + emit the broker env (selections, daemon-state path,
-  // version, stable selection identity, and the SCOPED refresh token). Direct-API-key / native Pi
-  // sessions skip all of this, so their agent dirs + env stay free of the broker.
-  if (brokeredProviders.length > 0) {
-    await ensurePiBrokerExtensionAsset(agentDir);
-    env[PI_BROKER_SELECTIONS_ENV] = serializePiBrokerSelections(brokerSelections);
-    const daemonStateFilePath = readString(input.daemonStateFilePath);
-    if (daemonStateFilePath) {
-      env[PI_BROKER_DAEMON_STATE_PATH_ENV] = daemonStateFilePath;
+  if (requestAuthEnabled) {
+    if (!projectedRequestAuth) {
+      throw new Error('Pi request-auth materialization requires a child capability');
     }
-    env[PI_BROKER_EXTENSION_VERSION_ENV] = PI_BROKER_EXTENSION_VERSION;
-    // Stable selection identity (keys the broker load handshake + preflight match).
-    env[PI_BROKER_SELECTION_IDENTITY_ENV] = buildConnectedServiceBrokerSelectionIdentity({
-      brokerId: 'pi',
-      brokerVersion: PI_BROKER_EXTENSION_VERSION,
-      members: identityMembers,
-    });
-    const materializationId = readString(input.materializationId);
-    if (materializationId) {
-      const capability = await writeConnectedServiceBrokerCapabilityFile({
-        rootDir,
-        materializationId,
-        selectionIdentity: env[PI_BROKER_SELECTION_IDENTITY_ENV],
-      });
-      env[PI_BROKER_REFRESH_TOKEN_PATH_ENV] = capability.path;
-      brokerCapability = capability;
-    }
+    await ensurePiRequestAuthExtensionAsset(agentDir, requestAuthPurposes);
+    env[PI_REQUEST_AUTH_CAPABILITY_PATH_ENV] = projectedRequestAuth.capabilityPath;
+    // Connected OAuth must not inherit a shell/profile API key as a second credential authority.
+    // Empty explicit overlays replace any inherited values in the host's child-environment merge.
+    for (const key of PI_DIRECT_AUTH_ENV_KEYS) env[key] = '';
   }
 
   const requestedStateMode = resolvePiStateSharingMode(input.accountSettings);
@@ -372,8 +314,5 @@ export async function materializePiAuthEnvironment(input: Readonly<Record<string
     }));
   }
 
-  return {
-    env,
-    ...(brokerCapability ? { brokerCapability } : {}),
-  };
+  return { env };
 }

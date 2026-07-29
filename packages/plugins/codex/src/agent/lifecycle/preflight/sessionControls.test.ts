@@ -4,12 +4,11 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 import type {
-  ExecClientHandleV1,
-  ExecClientSpecV1,
-  ExecProcessHandleV1,
-  ExecRuntimeServiceV1,
-  JsonRpcClientV1,
-} from '@happier-dev/plugin-sdk';
+  PluginExecService,
+  PluginJsonRpcClient,
+  PluginProtocolClientHandle,
+  PluginProtocolClientSpec,
+} from '@happier-dev/plugin-sdk/runtime';
 
 import * as sessionControls from './sessionControls';
 
@@ -32,9 +31,9 @@ describe('resolveCodexPreflightSessionControlsPolicy', () => {
   }
 
   function createPreflightExecFixture() {
-    const specs: ExecClientSpecV1[] = [];
+    const specs: PluginProtocolClientSpec[] = [];
     let disposeCount = 0;
-    const client: JsonRpcClientV1 = {
+    const client: PluginJsonRpcClient = {
       request: async (method) => {
         if (method === 'initialize') {
           return {};
@@ -60,42 +59,40 @@ describe('resolveCodexPreflightSessionControlsPolicy', () => {
         throw new Error(`Unexpected method: ${method}`);
       },
       notify: async () => {},
-      registerRequestHandler: () => () => {},
-      registerNotificationHandler: () => () => {},
-    };
-    const processHandle: ExecProcessHandleV1 = {
-      pid: 1,
-      exit: Promise.resolve({ exitCode: 0, signal: null, stdout: '', stderr: '' }),
-      writeStdin: async () => {},
-      kill: () => {},
+      onRequest: () => ({ dispose: () => {} }),
+      onNotification: () => ({ dispose: () => {} }),
       dispose: async () => {},
     };
-    const handle: ExecClientHandleV1<JsonRpcClientV1> = {
+    const never = new Promise<never>(() => undefined);
+    const handle: PluginProtocolClientHandle<'jsonRpc'> = {
       client,
-      process: processHandle,
-      status: 'running',
-      onExit: () => () => {},
+      process: {
+      pid: 1,
+      write: async () => {},
+      closeStdin: async () => {},
+      wait: () => never,
+      onOutput: () => ({ dispose: () => {} }),
+      dispose: async () => {},
+      },
+      wait: () => never,
       dispose: async () => {
         disposeCount += 1;
       },
     };
-    const exec: ExecRuntimeServiceV1 = {
+    const exec = {
       systemTools: {
-        resolve: async () => {
-          throw new Error('system tools should not be used for Codex preflight');
+        resolve: async () => ({
+          executable: { kind: 'systemTool' as const, id: 'codex-cli' },
+          executablePath: '/fixture/codex',
+        }),
+      },
+      clients: {
+        spawn: async (spec: PluginProtocolClientSpec) => {
+          specs.push(spec);
+          return handle;
         },
       },
-      run: async () => {
-        throw new Error('run should not be used for Codex preflight');
-      },
-      spawn: async () => {
-        throw new Error('spawn should not be used for Codex preflight');
-      },
-      spawnClient: (async (spec: ExecClientSpecV1) => {
-        specs.push(spec);
-        return handle;
-      }) as ExecRuntimeServiceV1['spawnClient'],
-    };
+    } as unknown as PluginExecService;
 
     return {
       exec,
@@ -183,16 +180,14 @@ describe('resolveCodexPreflightSessionControlsPolicy', () => {
       },
     ]);
     expect(fixture.specs[0]).toMatchObject({
+      kind: 'jsonRpc',
       launch: {
-        kind: 'agent-cli',
-        agentId: 'codex',
-        cwd: '/workspace',
+        executable: { kind: 'systemTool', id: 'codex-cli' },
+        cwd: { root: 'workspace', relativePath: '' },
         args: ['app-server', '--listen', 'stdio://'],
       },
-      protocol: { kind: 'json-rpc-2.0' },
-      lifecycle: {
-        requestTimeoutMs: 2_000,
-      },
+      framing: 'jsonLines',
+      requestTimeoutMs: 2_000,
     });
     expect(fixture.readDisposeCount()).toBe(1);
   });
@@ -215,7 +210,7 @@ describe('resolveCodexPreflightSessionControlsPolicy', () => {
     });
 
     expect(models).toHaveLength(1);
-    expect(fixture.specs[0]?.lifecycle?.diagnostics).toBeUndefined();
+    expect(fixture.specs[0]).not.toHaveProperty('lifecycle');
     expect(fixture.readDisposeCount()).toBe(1);
   });
 });

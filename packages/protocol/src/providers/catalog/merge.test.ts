@@ -52,6 +52,63 @@ describe('provider catalog merge', () => {
     expect(failed.staleProbeModels).toEqual([]);
   });
 
+  it('projects probe capability evidence into the canonical model descriptor', () => {
+    const state = applyProviderCatalogRefreshV1({ snapshot: null, staleProbeModels: [] }, {
+      status: 'success',
+      observedAt: 20,
+      models: [{
+        id: 'probe-model',
+        capabilities: {
+          toolRoundTrips: 'supported',
+          reasoningControls: 'unsupported',
+        },
+      }],
+    });
+
+    expect(mergeProviderCatalogV1({
+      staticModels: [],
+      manualModels: [],
+      probeState: state,
+    }).rows[0]?.descriptor).toEqual({
+      id: 'probe-model',
+      name: 'probe-model',
+      capabilities: {
+        toolRoundTrips: 'supported',
+        reasoningControls: 'unsupported',
+      },
+    });
+  });
+
+  it('marks wrapper-supported managed rows as account-unverified without changing source precedence', () => {
+    const merged = mergeProviderCatalogV1({
+      staticModels: [{ id: 'static-model', name: 'Static' }],
+      manualModels: [],
+      probeState: {
+        snapshot: {
+          models: [
+            { id: 'static-model', name: 'Probe must not override' },
+            { id: 'wrapper-model', name: 'Wrapper model' },
+          ],
+          observedAt: 20,
+          stale: false,
+        },
+        staleProbeModels: [],
+      },
+      probeConfidence: 'account_unverified',
+    });
+
+    expect(merged.rows).toEqual([
+      expect.objectContaining({
+        descriptor: { id: 'static-model', name: 'Static' },
+        confidence: 'verified_static',
+      }),
+      expect.objectContaining({
+        descriptor: { id: 'wrapper-model', name: 'Wrapper model' },
+        confidence: 'account_unverified',
+      }),
+    ]);
+  });
+
   it('removes disappeared probe-only models from normal rows while retaining stale rendering data', () => {
     const previous = applyProviderCatalogRefreshV1({ snapshot: null, staleProbeModels: [] }, {
       status: 'success', observedAt: 20,
@@ -77,14 +134,16 @@ describe('provider catalog merge', () => {
     })).toThrow(ProviderCatalogLimitError);
   });
 
-  it('retains arbitrary vendor model ids that coincide with object prototype keys', () => {
+  it('preserves reserved-looking vendor model ids because catalog rows are not record keys', () => {
     const merged = mergeProviderCatalogV1({
       staticModels: [], manualModels: [], probeState: {
         snapshot: { models: [], observedAt: 2, stale: false },
         staleProbeModels: [{ id: '__proto__', name: 'Vendor prototype model' }],
       },
     });
-    expect(merged.staleRows.map((row) => row.descriptor.id)).toEqual(['__proto__']);
+    expect(merged.staleRows).toEqual([
+      expect.objectContaining({ descriptor: { id: '__proto__', name: 'Vendor prototype model' } }),
+    ]);
   });
 
   it('rejects every over-bound source before reading any model element', () => {

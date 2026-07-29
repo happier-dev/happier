@@ -1,13 +1,23 @@
 import { z } from 'zod';
 
 import { RuntimeDescriptorV1Schema } from '../metadata/runtimeDescriptorV1.js';
-import { CODEX_BACKEND_MODES } from '../../agents/generated/runtime/descriptors/codex.js';
+import { SessionMessageRoleSchema } from '../messages/sessionMessageRole.js';
+import { PluginAgentExternalSessionLinkDataSchema } from '../../plugins/contributions/agentExternalSessions.js';
 import {
   ExternalSessionsAgentIdSchema,
   ExternalSessionsSourceSchema,
   type ExternalSessionsAgentId,
   type ExternalSessionsSource,
 } from './sourceCatalog.js';
+import { ExternalSessionsRpcErrorCodeSchema } from './rpcErrorCodes.js';
+import { ExternalAgentObservationSnapshotV1Schema } from './externalAgentObservationV1.js';
+import {
+  ExternalSessionsAutoLinkSourcePolicyIdV1Schema,
+} from './followLifecycleV1.js';
+import {
+  LinkedExternalSessionQualifiedIdentityV1Schema,
+} from './linkedSessionMetadata.js';
+import { ExternalSessionRefreshCursorV1Schema } from './secureRefreshV1.js';
 
 export {
   ExternalSessionsAgentIdSchema,
@@ -21,8 +31,73 @@ export type {
 export const ExternalSessionsSearchModeSchema = z.enum(['fast', 'full']);
 export type ExternalSessionsSearchMode = z.infer<typeof ExternalSessionsSearchModeSchema>;
 
-export const ExternalSessionsCandidatesListRequestSchema = z
-  .object({
+function asRequestRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function jsonValuesEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left)
+      && Array.isArray(right)
+      && left.length === right.length
+      && left.every((entry, index) => jsonValuesEqual(entry, right[index]));
+  }
+  const leftRecord = asRequestRecord(left);
+  const rightRecord = asRequestRecord(right);
+  if (!leftRecord || !rightRecord) return false;
+  const leftKeys = Object.keys(leftRecord).sort();
+  const rightKeys = Object.keys(rightRecord).sort();
+  return leftKeys.length === rightKeys.length
+    && leftKeys.every((key, index) =>
+      key === rightKeys[index]
+      && jsonValuesEqual(leftRecord[key], rightRecord[key]),
+    );
+}
+
+function normalizeReleasedExternalSessionRequest(
+  value: unknown,
+  options: Readonly<{ runtimeDescriptor?: boolean }> = {},
+): unknown {
+  const record = asRequestRecord(value);
+  if (!record) return value;
+  const hasProviderId = Object.hasOwn(record, 'providerId');
+  const hasAgentId = Object.hasOwn(record, 'agentId');
+  const providerId = typeof record.providerId === 'string' && record.providerId.trim()
+    ? record.providerId.trim()
+    : null;
+  const agentId = typeof record.agentId === 'string' && record.agentId.trim()
+    ? record.agentId.trim()
+    : null;
+  if (hasProviderId && (!providerId || (hasAgentId && agentId !== providerId))) return undefined;
+
+  const {
+    providerId: _releasedProviderId,
+    runtimeDescriptor: _releasedRuntimeDescriptor,
+    ...canonical
+  } = record;
+  const normalized: Record<string, unknown> = {
+    ...canonical,
+    ...(hasProviderId ? { agentId: providerId } : {}),
+  };
+  if (!options.runtimeDescriptor || !Object.hasOwn(record, 'runtimeDescriptor')) return normalized;
+
+  const releasedDescriptor = RuntimeDescriptorV1Schema.safeParse(record.runtimeDescriptor);
+  if (!releasedDescriptor.success) return undefined;
+  if (Object.hasOwn(record, 'runtimeDescriptorV1')) {
+    const canonicalDescriptor = RuntimeDescriptorV1Schema.safeParse(record.runtimeDescriptorV1);
+    if (!canonicalDescriptor.success
+      || !jsonValuesEqual(canonicalDescriptor.data, releasedDescriptor.data)) return undefined;
+  }
+  normalized.runtimeDescriptorV1 = releasedDescriptor.data;
+  return normalized;
+}
+
+export const ExternalSessionsCandidatesListRequestSchema = z.preprocess(
+  (value) => normalizeReleasedExternalSessionRequest(value),
+  z.object({
     machineId: z.string().min(1),
     agentId: ExternalSessionsAgentIdSchema,
     source: ExternalSessionsSourceSchema,
@@ -30,9 +105,29 @@ export const ExternalSessionsCandidatesListRequestSchema = z
     limit: z.number().int().min(1).max(500).optional(),
     searchTerm: z.string().min(1).max(2000).optional(),
     searchMode: ExternalSessionsSearchModeSchema.optional(),
-  })
-  .passthrough();
+  }).passthrough(),
+);
 export type ExternalSessionsCandidatesListRequest = z.infer<typeof ExternalSessionsCandidatesListRequestSchema>;
+
+export const ExternalSessionsCandidatePreparationSchema = z
+  .object({
+    kind: z.literal('building_candidate_index'),
+    scanned: z.number().int().min(0),
+    total: z.number().int().min(0).optional(),
+  })
+  .strict()
+  .refine((value) => value.total === undefined || value.total >= value.scanned, {
+    message: 'Candidate-index preparation total must be at least scanned',
+  });
+export type ExternalSessionsCandidatePreparation = z.infer<typeof ExternalSessionsCandidatePreparationSchema>;
+
+export const ExternalSessionsAutoLinkPolicyScopeV1Schema = z.object({
+  qualifiedIdentity: LinkedExternalSessionQualifiedIdentityV1Schema,
+  sourcePolicyId: ExternalSessionsAutoLinkSourcePolicyIdV1Schema,
+}).strict();
+export type ExternalSessionsAutoLinkPolicyScopeV1 = z.infer<
+  typeof ExternalSessionsAutoLinkPolicyScopeV1Schema
+>;
 
 export const ExternalSessionsCandidatesListResponseSchema = z.union([
   z
@@ -41,30 +136,39 @@ export const ExternalSessionsCandidatesListResponseSchema = z.union([
       candidates: z.array(z.lazy(() => ExternalSessionCandidateV1Schema)),
       nextCursor: z.string().min(1).nullish(),
       searchIncomplete: z.boolean().optional(),
+      preparation: ExternalSessionsCandidatePreparationSchema.optional(),
+      autoLinkPolicyScopeV1: ExternalSessionsAutoLinkPolicyScopeV1Schema.optional(),
     })
     .passthrough(),
   z
     .object({
       ok: z.literal(false),
-      errorCode: z.enum(['invalid_request', 'machine_offline', 'agent_unavailable', 'internal_error']),
+      errorCode: ExternalSessionsRpcErrorCodeSchema,
       error: z.string().min(1),
     })
-    .passthrough(),
+    .passthrough()
+    .refine((value) => !Object.hasOwn(value, 'autoLinkPolicyScopeV1'), {
+      message: 'Auto-link policy scope is available only on successful candidate-list responses.',
+      path: ['autoLinkPolicyScopeV1'],
+    }),
 ]);
 export type ExternalSessionsCandidatesListResponse = z.infer<typeof ExternalSessionsCandidatesListResponseSchema>;
 
-export const ExternalSessionLinkEnsureRequestSchema = z
-  .object({
+export const ExternalSessionLinkEnsureRequestSchema = z.preprocess(
+  (value) => normalizeReleasedExternalSessionRequest(value, { runtimeDescriptor: true }),
+  z.object({
     machineId: z.string().min(1),
     agentId: ExternalSessionsAgentIdSchema,
     remoteSessionId: z.string().min(1).max(2000),
     titleHint: z.string().min(1).max(10_000).optional(),
     directoryHint: z.string().min(1).max(10_000).optional(),
-    codexBackendMode: z.enum(CODEX_BACKEND_MODES).optional(),
+    // Shared wire parsing stays forward-compatible; the Codex plugin validates this in resolveLinkIdentity.
+    codexBackendMode: z.string().optional(),
     runtimeDescriptorV1: RuntimeDescriptorV1Schema.optional(),
+    linkData: PluginAgentExternalSessionLinkDataSchema.optional(),
     source: ExternalSessionsSourceSchema,
-  })
-  .passthrough();
+  }).passthrough(),
+);
 export type ExternalSessionLinkEnsureRequest = z.infer<typeof ExternalSessionLinkEnsureRequestSchema>;
 
 
@@ -79,7 +183,7 @@ export const ExternalSessionLinkEnsureResponseSchema = z.union([
   z
     .object({
       ok: z.literal(false),
-      errorCode: z.enum(['invalid_request', 'machine_offline', 'agent_unavailable', 'internal_error']),
+      errorCode: ExternalSessionsRpcErrorCodeSchema,
       error: z.string().min(1),
     })
     .passthrough(),
@@ -92,29 +196,37 @@ export type ExternalSessionActivityV1 = z.infer<typeof ExternalSessionActivityV1
 export const ExternalSessionCandidateV1Schema = z
   .object({
     remoteSessionId: z.string().min(1).max(2000),
+    candidateKey: z.string().min(1).max(128).optional(),
     title: z.string().min(1).max(10_000).optional(),
     updatedAtMs: z.number().int().min(0),
     createdAtMs: z.number().int().min(0).optional(),
     activity: ExternalSessionActivityV1Schema.optional(),
     archived: z.boolean().optional(),
     details: z.object({}).passthrough().optional(),
+    linkData: PluginAgentExternalSessionLinkDataSchema.optional(),
+    linkedSessionId: z.string().min(1).max(2000).optional(),
+    imported: z.boolean().optional(),
+    materializedThrough: z.number().int().min(0).optional(),
   })
   .passthrough();
 export type ExternalSessionCandidateV1 = z.infer<typeof ExternalSessionCandidateV1Schema>;
 
-export const ExternalSessionStatusGetRequestSchema = z
-  .object({
+export const ExternalSessionStatusGetRequestSchema = z.preprocess(
+  (value) => normalizeReleasedExternalSessionRequest(value),
+  z.object({
     machineId: z.string().min(1),
     sessionId: z.string().min(1),
     agentId: ExternalSessionsAgentIdSchema,
     remoteSessionId: z.string().min(1).max(2000),
     source: ExternalSessionsSourceSchema,
-  })
-  .passthrough();
+    takeoverReadiness: z.literal('fresh').optional(),
+  }).passthrough(),
+);
 export type ExternalSessionStatusGetRequest = z.infer<typeof ExternalSessionStatusGetRequestSchema>;
 
-export const ExternalSessionAttachRequestSchema = z
-  .object({
+export const ExternalSessionAttachRequestSchema = z.preprocess(
+  (value) => normalizeReleasedExternalSessionRequest(value),
+  z.object({
     machineId: z.string().min(1),
     sessionId: z.string().min(1),
     agentId: ExternalSessionsAgentIdSchema,
@@ -122,8 +234,9 @@ export const ExternalSessionAttachRequestSchema = z
     source: ExternalSessionsSourceSchema,
     leaseId: z.string().min(1).max(2000).optional(),
     ttlMs: z.number().int().min(1_000).max(15 * 60_000).optional(),
-  })
-  .passthrough();
+    acceptedTailCursor: ExternalSessionRefreshCursorV1Schema.optional(),
+  }).passthrough(),
+);
 export type ExternalSessionAttachRequest = z.infer<typeof ExternalSessionAttachRequestSchema>;
 
 export const ExternalSessionAttachResponseSchema = z.union([
@@ -133,12 +246,13 @@ export const ExternalSessionAttachResponseSchema = z.union([
       leaseId: z.string().min(1),
       expiresAtMs: z.number().int().min(0),
       renewed: z.boolean().optional(),
+      acceptedTailCursor: ExternalSessionRefreshCursorV1Schema.optional(),
     })
     .passthrough(),
   z
     .object({
       ok: z.literal(false),
-      errorCode: z.enum(['invalid_request', 'machine_offline', 'agent_unavailable', 'internal_error']),
+      errorCode: ExternalSessionsRpcErrorCodeSchema,
       error: z.string().min(1),
     })
     .passthrough(),
@@ -164,23 +278,24 @@ export const ExternalSessionDetachResponseSchema = z.union([
   z
     .object({
       ok: z.literal(false),
-      errorCode: z.enum(['invalid_request', 'machine_offline', 'agent_unavailable', 'internal_error']),
+      errorCode: ExternalSessionsRpcErrorCodeSchema,
       error: z.string().min(1),
     })
     .passthrough(),
 ]);
 export type ExternalSessionDetachResponse = z.infer<typeof ExternalSessionDetachResponseSchema>;
 
-export const ExternalSessionFollowPolicySetRequestSchema = z
-  .object({
+export const ExternalSessionFollowPolicySetRequestSchema = z.preprocess(
+  (value) => normalizeReleasedExternalSessionRequest(value),
+  z.object({
     machineId: z.string().min(1),
     sessionId: z.string().min(1),
     agentId: ExternalSessionsAgentIdSchema,
     remoteSessionId: z.string().min(1).max(2000),
     source: ExternalSessionsSourceSchema,
     enabled: z.boolean(),
-  })
-  .passthrough();
+  }).passthrough(),
+);
 export type ExternalSessionFollowPolicySetRequest = z.infer<typeof ExternalSessionFollowPolicySetRequestSchema>;
 
 export const ExternalSessionFollowPolicySetResponseSchema = z.union([
@@ -195,7 +310,7 @@ export const ExternalSessionFollowPolicySetResponseSchema = z.union([
   z
     .object({
       ok: z.literal(false),
-      errorCode: z.enum(['invalid_request', 'machine_offline', 'agent_unavailable', 'internal_error']),
+      errorCode: ExternalSessionsRpcErrorCodeSchema,
       error: z.string().min(1),
     })
     .passthrough(),
@@ -214,12 +329,13 @@ export const ExternalSessionStatusGetResponseSchema = z.union([
       canForceStop: z.boolean(),
       trustedPid: z.number().int().min(1).nullish(),
       lastKnownActivityAtMs: z.number().int().min(0).optional(),
+      externalAgent: ExternalAgentObservationSnapshotV1Schema.nullable().optional(),
     })
     .passthrough(),
   z
     .object({
       ok: z.literal(false),
-      errorCode: z.enum(['invalid_request', 'machine_offline', 'agent_unavailable', 'internal_error']),
+      errorCode: ExternalSessionsRpcErrorCodeSchema,
       error: z.string().min(1),
     })
     .passthrough(),
@@ -231,13 +347,15 @@ export const ExternalSessionTranscriptRawMessageV1Schema = z
     id: z.string().min(1),
     createdAtMs: z.number().int().min(0),
     localId: z.string().min(1).nullable().optional(),
+    messageRole: SessionMessageRoleSchema.nullable().optional(),
     raw: z.object({}).passthrough(),
   })
   .passthrough();
 export type ExternalSessionTranscriptRawMessageV1 = z.infer<typeof ExternalSessionTranscriptRawMessageV1Schema>;
 
-export const ExternalSessionTranscriptPageRequestSchema = z
-  .object({
+export const ExternalSessionTranscriptPageRequestSchema = z.preprocess(
+  (value) => normalizeReleasedExternalSessionRequest(value),
+  z.object({
     machineId: z.string().min(1),
     agentId: ExternalSessionsAgentIdSchema,
     remoteSessionId: z.string().min(1).max(2000),
@@ -246,8 +364,8 @@ export const ExternalSessionTranscriptPageRequestSchema = z
     cursor: z.string().min(1).optional(),
     maxBytes: z.number().int().min(1).max(10 * 1024 * 1024).optional(),
     maxItems: z.number().int().min(1).max(5000).optional(),
-  })
-  .passthrough();
+  }).passthrough(),
+);
 export type ExternalSessionTranscriptPageRequest = z.infer<typeof ExternalSessionTranscriptPageRequestSchema>;
 
 export const ExternalSessionTranscriptPageResponseSchema = z.union([
@@ -264,15 +382,16 @@ export const ExternalSessionTranscriptPageResponseSchema = z.union([
   z
     .object({
       ok: z.literal(false),
-      errorCode: z.enum(['invalid_request', 'machine_offline', 'agent_unavailable', 'internal_error']),
+      errorCode: ExternalSessionsRpcErrorCodeSchema,
       error: z.string().min(1),
     })
     .passthrough(),
 ]);
 export type ExternalSessionTranscriptPageResponse = z.infer<typeof ExternalSessionTranscriptPageResponseSchema>;
 
-export const ExternalSessionTranscriptReadAfterRequestSchema = z
-  .object({
+export const ExternalSessionTranscriptReadAfterRequestSchema = z.preprocess(
+  (value) => normalizeReleasedExternalSessionRequest(value),
+  z.object({
     machineId: z.string().min(1),
     agentId: ExternalSessionsAgentIdSchema,
     remoteSessionId: z.string().min(1).max(2000),
@@ -280,8 +399,8 @@ export const ExternalSessionTranscriptReadAfterRequestSchema = z
     cursor: z.string().min(1),
     maxBytes: z.number().int().min(1).max(10 * 1024 * 1024).optional(),
     maxItems: z.number().int().min(1).max(5000).optional(),
-  })
-  .passthrough();
+  }).passthrough(),
+);
 export type ExternalSessionTranscriptReadAfterRequest = z.infer<typeof ExternalSessionTranscriptReadAfterRequestSchema>;
 
 export const ExternalSessionTranscriptReadAfterResponseSchema = z.union([
@@ -296,51 +415,9 @@ export const ExternalSessionTranscriptReadAfterResponseSchema = z.union([
   z
     .object({
       ok: z.literal(false),
-      errorCode: z.enum(['invalid_request', 'machine_offline', 'agent_unavailable', 'internal_error']),
+      errorCode: ExternalSessionsRpcErrorCodeSchema,
       error: z.string().min(1),
     })
     .passthrough(),
 ]);
 export type ExternalSessionTranscriptReadAfterResponse = z.infer<typeof ExternalSessionTranscriptReadAfterResponseSchema>;
-
-export const ExternalSessionTakeoverRequestSchema = z
-  .object({
-    machineId: z.string().min(1),
-    sessionId: z.string().min(1),
-    forceStop: z.boolean().optional(),
-  })
-  .passthrough();
-export type ExternalSessionTakeoverRequest = z.infer<typeof ExternalSessionTakeoverRequestSchema>;
-
-export const ExternalSessionTakeoverResponseSchema = z.union([
-  z.object({ ok: z.literal(true) }).passthrough(),
-  z
-    .object({
-      ok: z.literal(false),
-      errorCode: z.enum(['invalid_request', 'machine_offline', 'agent_unavailable', 'internal_error']),
-      error: z.string().min(1),
-    })
-    .passthrough(),
-]);
-export type ExternalSessionTakeoverResponse = z.infer<typeof ExternalSessionTakeoverResponseSchema>;
-
-export const ExternalSessionTakeoverPersistRequestSchema = z
-  .object({
-    machineId: z.string().min(1),
-    sessionId: z.string().min(1),
-    forceStop: z.boolean().optional(),
-  })
-  .passthrough();
-export type ExternalSessionTakeoverPersistRequest = z.infer<typeof ExternalSessionTakeoverPersistRequestSchema>;
-
-export const ExternalSessionTakeoverPersistResponseSchema = z.union([
-  z.object({ ok: z.literal(true), converted: z.boolean().optional() }).passthrough(),
-  z
-    .object({
-      ok: z.literal(false),
-      errorCode: z.enum(['invalid_request', 'machine_offline', 'agent_unavailable', 'internal_error']),
-      error: z.string().min(1),
-    })
-    .passthrough(),
-]);
-export type ExternalSessionTakeoverPersistResponse = z.infer<typeof ExternalSessionTakeoverPersistResponseSchema>;

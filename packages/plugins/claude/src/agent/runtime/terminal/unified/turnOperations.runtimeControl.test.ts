@@ -10,7 +10,8 @@ import {
   createTerminalHostFixture,
   expectRuntimeEnvelope,
 } from '../../engine.testkit.js';
-import { createClaudeUnifiedTerminalTurnOperations } from './turnOperations.js';
+import { createClaudeLegacyActiveInputStatusPublisher } from './bindSession.testkit.js';
+import { createClaudeUnifiedTerminalTurnOperations } from './turnOperations.testkit.js';
 import { createFakeControlPort } from './tuiControls/fakeControlPort.js';
 import { CLAUDE_UNIFIED_TUI_RUNTIME_CONTROL_FEATURE_ID } from './tuiControls/index.js';
 
@@ -45,6 +46,20 @@ async function makeConfigDir(): Promise<string> {
   return dir;
 }
 
+function captureAgentState() {
+  let state: Readonly<Record<string, unknown>> = {};
+  const writeAgentState = vi.fn(async (request: {
+    kind: string;
+    handler?: (current: Readonly<Record<string, unknown>>) => Readonly<Record<string, unknown>>;
+  }) => {
+    if (request.kind === 'update' && request.handler) state = request.handler(state);
+  });
+  return {
+    writeAgentState,
+    capabilities: () => (state.capabilities ?? {}) as Readonly<Record<string, unknown>>,
+  };
+}
+
 function buildRuntime(params: Readonly<{
   featureEnabled: boolean;
   controlPortCaptures?: readonly string[] | null;
@@ -68,6 +83,7 @@ function buildRuntime(params: Readonly<{
   });
   const envelope = expectRuntimeEnvelope(createClaudeUnifiedTerminalTurnOperations({
     ctx,
+    activeInput: createClaudeLegacyActiveInputStatusPublisher(ctx),
     directory: '/tmp/claude-project',
     happierSessionId: 'happy-session-1',
     hostPreference: 'zellij',
@@ -79,10 +95,14 @@ function buildRuntime(params: Readonly<{
 }
 
 type ComposerClearNativeRuntime = Readonly<{
-  clearTerminalComposer?: (request?: Readonly<{ sessionId?: string }>) => Promise<Readonly<{
+  clearTerminalComposer?: (request?: Readonly<{
+    sessionId?: string;
+    expectedStateAtMs?: number;
+  }>) => Promise<Readonly<{
     ok: boolean;
     status: string;
     sessionId?: string;
+    error?: string;
   }>>;
 }>;
 
@@ -95,7 +115,7 @@ describe('Claude Unified TUI runtime control integration (updateSessionRuntimeCo
       configDir,
     });
     try {
-      await runtime.startOrLoadSession();
+      await runtime.startProviderSession();
       const outcome = await runtime.updateSessionRuntimeConfig({
         configOption: { id: 'reasoning_effort', value: 'high' },
       });
@@ -114,7 +134,7 @@ describe('Claude Unified TUI runtime control integration (updateSessionRuntimeCo
       configDir,
     });
     try {
-      await runtime.startOrLoadSession();
+      await runtime.startProviderSession();
       const outcome = await runtime.updateSessionRuntimeConfig({
         permissionMode: 'acceptEdits',
       });
@@ -152,7 +172,7 @@ describe('Claude Unified TUI runtime control integration (updateSessionRuntimeCo
     }> = [];
     nativeRuntime.setOnPromptTerminallyRejectedBeforeProvider((info) => rejected.push({ ...info }));
     try {
-      await runtime.startOrLoadSession();
+      await runtime.startProviderSession();
       await runtime.updateSessionRuntimeConfig({ permissionMode: 'acceptEdits' });
 
       await runtime.sendTurnPrompt('prompt requiring acceptEdits', {
@@ -195,7 +215,7 @@ describe('Claude Unified TUI runtime control integration (updateSessionRuntimeCo
     }> = [];
     nativeRuntime.setOnPromptTerminallyRejectedBeforeProvider((info) => rejected.push({ ...info }));
     try {
-      await runtime.startOrLoadSession();
+      await runtime.startProviderSession();
       await runtime.updateSessionRuntimeConfig({ modelId: 'claude-sonnet-4-6' });
 
       await runtime.sendTurnPrompt('prompt must not wait for ambient model config', {
@@ -235,7 +255,7 @@ describe('Claude Unified TUI runtime control integration (updateSessionRuntimeCo
     }> = [];
     nativeRuntime.setOnPromptTerminallyRejectedBeforeProvider((info) => rejected.push({ ...info }));
     try {
-      await runtime.startOrLoadSession();
+      await runtime.startProviderSession();
       await runtime.sendTurnPrompt('first prompt');
       await nativeRuntime.observeTerminalLifecycle({
         agentId: 'claude',
@@ -269,7 +289,7 @@ describe('Claude Unified TUI runtime control integration (updateSessionRuntimeCo
       sessionSend,
     });
     try {
-      await runtime.startOrLoadSession();
+      await runtime.startProviderSession();
       const outcome = await runtime.updateSessionRuntimeConfig({
         configOption: { id: 'reasoning_effort', value: 'high' },
       });
@@ -300,7 +320,7 @@ describe('Claude Unified TUI runtime control integration (updateSessionRuntimeCo
       sessionSend,
     });
     try {
-      await runtime.startOrLoadSession();
+      await runtime.startProviderSession();
       const outcome = await runtime.updateSessionRuntimeConfig({
         permissionMode: 'acceptEdits',
       });
@@ -332,7 +352,7 @@ describe('Claude Unified TUI runtime control integration (updateSessionRuntimeCo
       sessionSend,
     });
     try {
-      await runtime.startOrLoadSession();
+      await runtime.startProviderSession();
       const outcome = await runtime.updateSessionRuntimeConfig({
         permissionMode: 'acceptEdits',
       });
@@ -361,7 +381,7 @@ describe('Claude Unified TUI runtime control integration (updateSessionRuntimeCo
       configDir,
     });
     try {
-      await runtime.startOrLoadSession();
+      await runtime.startProviderSession();
       const outcome = await runtime.updateSessionRuntimeConfig({
         permissionMode: 'read-only',
       });
@@ -383,7 +403,7 @@ describe('Claude Unified TUI runtime control integration (updateSessionRuntimeCo
       configDir,
     });
     try {
-      await runtime.startOrLoadSession();
+      await runtime.startProviderSession();
       const outcome = await runtime.updateSessionRuntimeConfig({
         configOptions: { reasoning_effort: 'high' },
       });
@@ -406,7 +426,7 @@ describe('Claude Unified TUI runtime control integration (updateSessionRuntimeCo
       configDir,
     });
     try {
-      await runtime.startOrLoadSession();
+      await runtime.startProviderSession();
       const outcome = await runtime.updateSessionRuntimeConfig({
         configOption: { id: 'reasoning_effort', value: 'high' },
       });
@@ -424,7 +444,7 @@ describe('Claude Unified TUI runtime control integration (updateSessionRuntimeCo
       configDir,
     });
     try {
-      await runtime.startOrLoadSession();
+      await runtime.startProviderSession();
       const outcome = await runtime.updateSessionRuntimeConfig({ fallbackModel: 'claude-haiku-4-5' });
       expect(outcome).toMatchObject({ status: 'requires_interactive_control' });
       expect(fakePort?.sentLiteral).toHaveLength(0);
@@ -443,7 +463,7 @@ describe('Claude Unified terminal composer clear runtime control', () => {
       configDir,
     });
     try {
-      await runtime.startOrLoadSession();
+      await runtime.startProviderSession();
       const nativeRuntime = envelope.nativeRuntime as ComposerClearNativeRuntime;
 
       const result = await nativeRuntime.clearTerminalComposer?.({ sessionId: 'happy-session-1' });
@@ -463,12 +483,44 @@ describe('Claude Unified terminal composer clear runtime control', () => {
       configDir,
     });
     try {
-      await runtime.startOrLoadSession();
+      await runtime.startProviderSession();
       const nativeRuntime = envelope.nativeRuntime as ComposerClearNativeRuntime;
 
       const result = await nativeRuntime.clearTerminalComposer?.({ sessionId: 'happy-session-1' });
 
       expect(result).toMatchObject({ ok: false, status: 'unsupported' });
+      expect(terminalHost.service.controlPort).not.toHaveBeenCalled();
+    } finally {
+      await runtime.resetOrDisposeRuntime().catch(() => undefined);
+    }
+  });
+
+  it('rejects a composer clear when the caller observed an older active-input state', async () => {
+    const configDir = await makeConfigDir();
+    const captured = captureAgentState();
+    const { envelope, runtime, terminalHost } = buildRuntime({
+      featureEnabled: true,
+      controlPortCaptures: [USER_DRAFT, IDLE],
+      configDir,
+      sessionWriteAgentState: captured.writeAgentState,
+    });
+    try {
+      await runtime.startProviderSession();
+      const publishedStateAt = captured.capabilities().inFlightSteerStateAt;
+      expect(typeof publishedStateAt).toBe('number');
+
+      const nativeRuntime = envelope.nativeRuntime as ComposerClearNativeRuntime;
+      const result = await nativeRuntime.clearTerminalComposer?.({
+        sessionId: 'happy-session-1',
+        expectedStateAtMs: (publishedStateAt as number) - 1,
+      });
+
+      expect(result).toEqual({
+        ok: false,
+        status: 'stale_state',
+        sessionId: 'happy-session-1',
+        error: 'stale_terminal_input_state',
+      });
       expect(terminalHost.service.controlPort).not.toHaveBeenCalled();
     } finally {
       await runtime.resetOrDisposeRuntime().catch(() => undefined);
@@ -507,14 +559,6 @@ describe('Claude Unified terminal composer clear runtime control', () => {
 });
 
 describe('Claude Unified static inFlightConfigApplySupported capability (lane Q)', () => {
-  function captureAgentState() {
-    let state: Readonly<Record<string, unknown>> = {};
-    const writeAgentState = vi.fn(async (request: { kind: string; handler?: (current: Readonly<Record<string, unknown>>) => Readonly<Record<string, unknown>> }) => {
-      if (request.kind === 'update' && request.handler) state = request.handler(state);
-    });
-    return { writeAgentState, capabilities: () => (state.capabilities ?? {}) as Readonly<Record<string, unknown>> };
-  }
-
   it('publishes the capability into agentState when the feature is ON so the UI gate can open', async () => {
     const configDir = await makeConfigDir();
     const captured = captureAgentState();
@@ -557,7 +601,7 @@ describe('Claude Unified in-flight mode delta seam (applyConfigDeltaInFlight)', 
       configDir,
     });
     try {
-      await runtime.startOrLoadSession();
+      await runtime.startProviderSession();
       const nativeRuntime = envelope.nativeRuntime as {
         applyConfigDeltaInFlight?: (delta: { permissionMode: string }) => Promise<{ status: string }>;
       };
@@ -578,7 +622,7 @@ describe('Claude Unified in-flight mode delta seam (applyConfigDeltaInFlight)', 
       configDir,
     });
     try {
-      await runtime.startOrLoadSession();
+      await runtime.startProviderSession();
       const nativeRuntime = envelope.nativeRuntime as {
         applyConfigDeltaInFlight?: (delta: { permissionMode: string }) => Promise<{ status: string }>;
       };

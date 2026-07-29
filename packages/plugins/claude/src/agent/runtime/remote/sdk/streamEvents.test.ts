@@ -2,8 +2,6 @@ import { describe, expect, it } from 'vitest';
 
 import {
     hasClaudeAgentSdkRuntimeAuthFailureEvidence,
-    isClaudeAgentSdkStopHookWithNoBackgroundTasks,
-    readClaudeAgentSdkBackgroundTaskId,
     readClaudeAgentSdkResultFailure,
     readClaudeAgentSdkResultText,
 } from './index.js';
@@ -29,49 +27,6 @@ describe('Claude remote SDK stream event helpers', () => {
             subtype: 'success',
             errors: ['ignored'],
         })).toBeNull();
-    });
-
-    it('reads background task and stop-hook state from Claude SDK messages', () => {
-        expect(readClaudeAgentSdkBackgroundTaskId({
-            type: 'user',
-            tool_use_result: {
-                assistantAutoBackgrounded: true,
-                background_task_id: ' task-1 ',
-            },
-        })).toBe('task-1');
-
-        expect(readClaudeAgentSdkBackgroundTaskId({
-            type: 'user',
-            toolUseResult: {
-                status: 'async_launched',
-                taskId: 'task-2',
-            },
-        })).toBe('task-2');
-
-        expect(readClaudeAgentSdkBackgroundTaskId({
-            type: 'user',
-            tool_use_result: {
-                status: 'async_launched',
-                agentId: ' agent-3 ',
-            },
-        })).toBe('agent-3');
-
-        expect(readClaudeAgentSdkBackgroundTaskId({
-            type: 'user',
-            tool_use_result: {
-                assistantAutoBackgrounded: false,
-                background_task_id: 'task-1',
-            },
-        })).toBeNull();
-
-        expect(isClaudeAgentSdkStopHookWithNoBackgroundTasks({
-            hook_event_name: 'Stop',
-            background_tasks: [],
-        })).toBe(true);
-        expect(isClaudeAgentSdkStopHookWithNoBackgroundTasks({
-            hook_event_name: 'Stop',
-            background_tasks: ['task-1'],
-        })).toBe(false);
     });
 
     it('never treats sidechain/subagent-scoped auth failures as parent runtime-auth evidence', () => {

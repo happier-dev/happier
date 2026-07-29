@@ -3,7 +3,7 @@ import {
   type ScmRepositoryInitRequest,
   type ScmRepositoryInitResponse,
   type ScmWorkingSnapshot,
-} from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm';
 
 import { runScmCommand } from '../runtime.js';
 import type { ScmBackendContext, ScmRepoDetection } from '../types.js';

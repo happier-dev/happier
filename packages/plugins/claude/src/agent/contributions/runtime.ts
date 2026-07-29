@@ -1,12 +1,14 @@
-import { mkdir, open, readFile, readdir, stat } from 'node:fs/promises';
+import { open, readFile, readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 
-import type { ExecRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
+import type { PluginExecService } from '@happier-dev/plugin-sdk/runtime';
 import { AGENTS_CORE } from '@happier-dev/plugin-sdk/experimental/agents';
-import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+import {
+  ConnectedServiceCredentialRevisionV1Schema,
+  type ConnectedServiceCredentialRecordV1,
+} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
 import { HAPPIER_CLAUDE_CONFIG_DIR_ENV } from '@happier-dev/plugin-sdk/experimental/envConstants';
-
 import {
   diagnoseClaudeCodeNativeAuthMaterialization,
   materializeClaudeCodeNativeAuth,
@@ -18,6 +20,7 @@ import { materializeClaudeApiKeyAuth } from '../auth/services/apiKey.js';
 import { createClaudeConnectedServiceRuntimeAuthAdapter } from '../auth/services/runtime/failure.js';
 import {
   ClaudeSubscriptionAuthTokensRefreshSelectionSchema,
+  ClaudeSubscriptionAuthTokensRefreshResponseSchema,
   computeClaudeSubscriptionAccessTokenFingerprint,
   type ClaudeSubscriptionAuthTokensRefreshSelection,
 } from '../auth/services/cloud/refreshBridge.js';
@@ -26,18 +29,28 @@ import {
   resolveClaudeCodeCredentialsFilePath,
 } from '../auth/services/native/credentials.js';
 import { claudeAuthStateSharingDescriptor } from '../auth/services/stateSharing.js';
-import { projectClaudeWorkspaceTrust } from '../auth/services/workspaceTrust.js';
 import {
   claudeCliSessionCommandConfig,
   resolveClaudeCliSessionOptions,
 } from '../cli/command.js';
 import { resolveClaudeSessionRuntimePreferences } from '../preferences/session.js';
-import { clearClaudeGoal, getClaudeGoal, setClaudeGoal } from '../runtime/goalControl/control.js';
 import { probeClaudePreflightModelsRaw } from '../preflight/models.js';
 import { mapClaudeProviderFailureToUsageDetails } from '../runtime/issues/runtimeIssues.js';
 import { resolveClaudeCodingPromptBehaviorBlocks } from '../prompting/behavior.js';
 import { createClaudePromptSubmitVerificationPolicy } from '../runtime/terminal/unified/promptSubmitVerification.js';
 import { claudeSubscriptionQuotaFetcherDescriptor } from '../auth/services/quota/subscriptionFetcher.js';
+import {
+  buildClaudeRuntimeLocalHandoffMetadata,
+  type ClaudeRuntimeLocalHandoffSession,
+} from '../surfaces/sessions/handoff/runtimeLocalMetadata.js';
+import { prepareClaudeQualifiedPurposeRoot } from '../auth/services/qualifiedPurposeRoot.js';
+import { claudeHandoffSurface } from '../surfaces/sessions/handoff/providerOps.js';
+import {
+  CLAUDE_SUBSCRIPTION_OAUTH_AUTHORIZATION_URL,
+  CLAUDE_SUBSCRIPTION_OAUTH_CALLBACK_URL,
+  CLAUDE_SUBSCRIPTION_OAUTH_CLIENT_ID,
+  CLAUDE_SUBSCRIPTION_OAUTH_TOKEN_URL,
+} from '../../connectedAccounts/claudeSubscriptionRuntime.js';
 
 export const CLAUDE_SUPPORTED_AUTH_SERVICE_IDS = Object.freeze([
   'claude-subscription',
@@ -53,7 +66,6 @@ const CLAUDE_MATERIALIZED_HOME_CREDENTIAL_ENTRIES = Object.freeze([
 ] as const);
 
 const CLAUDE_TRANSCRIPT_PROOF_MAX_BYTES = 64 * 1024;
-
 type ClaudeSupportedAuthServiceId = typeof CLAUDE_SUPPORTED_AUTH_SERVICE_IDS[number];
 
 function isClaudeSupportedAuthServiceId(value: unknown): value is ClaudeSupportedAuthServiceId {
@@ -142,12 +154,12 @@ function readCredentialRecord(value: unknown): ConnectedServiceCredentialRecordV
     : null;
 }
 
-function readExecRuntimeService(value: unknown): ExecRuntimeServiceV1 | null {
+function readExecRuntimeService(value: unknown): PluginExecService | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const candidate = value as Partial<ExecRuntimeServiceV1>;
+  const candidate = value as Partial<PluginExecService>;
   return typeof candidate.run === 'function'
     && typeof candidate.systemTools?.resolve === 'function'
-    ? candidate as ExecRuntimeServiceV1
+    ? candidate as PluginExecService
     : null;
 }
 
@@ -186,15 +198,14 @@ export async function materializeClaudeAuthEnvironment(input: Readonly<Record<st
   diagnostics?: readonly unknown[];
 }>> {
   const claudeConfigDir = readRootDir(input);
-  await mkdir(claudeConfigDir, { recursive: true });
-  // Carry an already-accepted workspace-trust decision for the session directory
-  // into the materialized home so fresh homes never re-prompt the interactive
-  // trust dialog (which hangs remote/headless sessions).
-  await projectClaudeWorkspaceTrust({
-    sourceEnv: readProcessEnv(input.processEnv) ?? process.env,
-    targetDir: claudeConfigDir,
+  await prepareClaudeQualifiedPurposeRoot({
+    rootDir: claudeConfigDir,
+    processEnv: readProcessEnv(input.processEnv) ?? process.env,
     sessionDirectory: readString(input.sessionDirectory),
   });
+  if (input.qualifiedPurposeMaterialization === true) {
+    return { env: { CLAUDE_CONFIG_DIR: claudeConfigDir } };
+  }
 
   const claudeSubscription = readCredentialRecord(input.claudeSubscription);
   if (claudeSubscription) {
@@ -380,7 +391,11 @@ export async function verifyClaudeResumeReachability(input: Readonly<{
 
 export const CLAUDE_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
   agentId: 'claude',
+  runtimeActivityApplicability: 'supported',
   builtInAcpCatalog: true,
+  agentCliSystemTool: {
+    toolId: 'claude-cli',
+  },
   cliAuth: {
     detectAuthStatus: ({ env }: Readonly<{ env: NodeJS.ProcessEnv }>) =>
       detectClaudeCliAuthStatus({ env }),
@@ -391,30 +406,56 @@ export const CLAUDE_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
     vendorKey: AGENTS_CORE.claude.cloudConnect?.vendorKey,
     status: AGENTS_CORE.claude.cloudConnect?.status,
     oauthAuthorizationCode: {
-      clientId: '9d1c250a-e61b-44d9-88ed-5944d1962f5e',
-      authorizeUrl: 'https://claude.ai/oauth/authorize',
-      tokenUrl: 'https://console.anthropic.com/v1/oauth/token',
-      redirectUri: 'https://platform.claude.com/oauth/code/callback',
+      clientId: CLAUDE_SUBSCRIPTION_OAUTH_CLIENT_ID,
+      authorizeUrl: CLAUDE_SUBSCRIPTION_OAUTH_AUTHORIZATION_URL,
+      tokenUrl: CLAUDE_SUBSCRIPTION_OAUTH_TOKEN_URL,
+      redirectUri: CLAUDE_SUBSCRIPTION_OAUTH_CALLBACK_URL,
       scope: CLAUDE_CODE_RECOMMENDED_OAUTH_SCOPE,
     },
   },
   sessionControls: {
     normalizePermissionMode: normalizeClaudeSessionControlPermissionMode,
   },
-  // Native `/goal` effector. The host resolves these into the session goal-control
-  // adapter (`getSessionGoalControlAdapter`). For an ACTIVE session the goal router
-  // prefers the live RPC (the unified-terminal native runtime injects `/goal`); for
-  // an INACTIVE session these handlers seed/clear the goal item in metadata so it is
-  // pursued on resume. The `goal_status` attachment remains the source of truth.
-  runtimeControl: {
-    goal: {
-      getGoal: getClaudeGoal,
-      setGoal: setClaudeGoal,
-      clearGoal: clearClaudeGoal,
-    },
-  },
   sessionRuntimePreferences: {
     resolve: resolveClaudeSessionRuntimePreferences,
+  },
+  sessionStartup: {
+    shouldUseDeferredBootstrap: (params: Readonly<{
+      startedBy: 'terminal' | 'daemon';
+      startingMode: 'terminal' | 'remote' | 'local' | null;
+      existingSessionId: string | null;
+      sessionAttachFilePath: string | null;
+      providerResumeId: string | null;
+      hasExplicitPermissionMode: boolean;
+      permissionModeSeedSource: 'explicit' | 'inferred' | 'account_default' | 'fallback' | 'released_cache_v1';
+      hasTerminalTty: boolean;
+    }>) => {
+      const terminalLocal = params.startingMode === null
+        || params.startingMode === 'terminal'
+        || params.startingMode === 'local';
+      const eligibleAttach = Boolean(
+        params.existingSessionId
+        && params.sessionAttachFilePath
+        && params.hasExplicitPermissionMode,
+      );
+      return params.startedBy === 'terminal'
+        && terminalLocal
+        && (!params.existingSessionId || eligibleAttach);
+    },
+  },
+  sessionHandoff: {
+    surface: () => claudeHandoffSurface,
+    runtimeLocalMetadata: {
+      build: (params: Readonly<{
+        metadata: Readonly<Record<string, unknown>>;
+        trackedSession: ClaudeRuntimeLocalHandoffSession;
+        vendorResumeId: string;
+      }>) => buildClaudeRuntimeLocalHandoffMetadata({
+        metadata: params.metadata,
+        session: params.trackedSession,
+        vendorResumeId: params.vendorResumeId,
+      }),
+    },
   },
   codingPromptBehavior: {
     resolve: resolveClaudeCodingPromptBehaviorBlocks,
@@ -422,6 +463,7 @@ export const CLAUDE_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
   terminal: {
     transformHeadlessTmuxArgv: ensureClaudeHeadlessTmuxRemoteStartingModeArgs,
     promptSubmitVerification: createClaudePromptSubmitVerificationPolicy(),
+    retainsSessionHookArtifacts: true,
   },
   preflightSessionControls: {
     failureCacheStrategy: 'cooldown',
@@ -464,6 +506,7 @@ export const CLAUDE_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
             selection: ClaudeSubscriptionAuthTokensRefreshSelection;
             forceRefresh: boolean;
             shouldAdoptCurrentAccessToken?: (accessToken: string) => boolean;
+            expectedCredentialRevision?: string;
           }>): Promise<unknown>;
         }>;
       }>) => {
@@ -471,9 +514,17 @@ export const CLAUDE_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
           throw new Error(`Claude daemon auth bridge cannot refresh unsupported service '${input.serviceId}'`);
         }
         const failingAccessTokenFingerprint = readOptionalSafeString(input.request.failingAccessTokenFingerprint);
-        return await input.refreshCoordinator.refreshClaudeSubscriptionTokensForBridge({
+        const expectedCredentialRevision = ConnectedServiceCredentialRevisionV1Schema.safeParse(
+          input.request.expectedCredentialRevision,
+        );
+        const result = await input.refreshCoordinator.refreshClaudeSubscriptionTokensForBridge({
           selection: ClaudeSubscriptionAuthTokensRefreshSelectionSchema.parse(input.request.selection),
           forceRefresh: input.request.forceRefresh === true,
+          // Existing scoped broker clients predate revision forwarding. Session runtime-auth always
+          // supplies the revision; remove this optional branch once the broker request schema requires it.
+          ...(expectedCredentialRevision.success
+            ? { expectedCredentialRevision: expectedCredentialRevision.data }
+            : {}),
           ...(failingAccessTokenFingerprint
             ? {
                 shouldAdoptCurrentAccessToken: (accessToken: string) => {
@@ -483,6 +534,10 @@ export const CLAUDE_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
               }
             : {}),
         });
+        return {
+          status: 'refreshed' as const,
+          result: ClaudeSubscriptionAuthTokensRefreshResponseSchema.parse(result),
+        };
       },
     },
     shouldRestartForServiceSwitch: (value: unknown) => readClaudeConnectedServiceId(value) !== null,
@@ -513,6 +568,8 @@ export const CLAUDE_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
         },
       },
       sameAccountFanoutStrategy: 'shared_group_auth_surface',
+      generationApplicationScope: 'shared_group_auth_surface',
+      sharedGenerationApplicationServiceIds: ['claude-subscription'],
       runtimeAuthApply: {
         directLiveHotAuth: {
           supportsInTurnApply: false,

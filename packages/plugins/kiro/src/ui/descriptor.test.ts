@@ -61,8 +61,8 @@ describe('KIRO_UI_DESCRIPTOR', () => {
         modelSelection: 'experimental',
         resume: 'experimental',
       },
-      settings: { descriptorId: 'kiro.agentSettings.v1' },
     });
+    expect(module.KIRO_UI_DESCRIPTOR).not.toHaveProperty('settings');
     expect(collectNoExecuteViolations(module.KIRO_UI_DESCRIPTOR)).toEqual([]);
     expect(JSON.parse(JSON.stringify(module.KIRO_UI_DESCRIPTOR))).toEqual(module.KIRO_UI_DESCRIPTOR);
   });

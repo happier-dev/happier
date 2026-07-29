@@ -9,6 +9,12 @@ import { isSafeWindowForSlashControl, type ClaudeScreenState } from '../screenSt
 import type { SettingsGuard } from './settingsGuard.js';
 import type { ClaudeTuiControlTelemetrySink } from './telemetry.js';
 import type { ApplyRuntimeConfigReason } from './types.js';
+import { submitClaudeUnifiedDialogOption } from './dialogAnswer.js';
+import {
+  getClaudeUnifiedRecognizedDialogRegistryEntry,
+  resolveClaudeUnifiedRegisteredDialogOption,
+  type ClaudeUnifiedRecognizedDialogRegistryEntry,
+} from './dialogRegistry.js';
 
 /**
  * `/model` and `/effort` controls. These are next-idle/before-next-prompt controls: a live probe
@@ -54,6 +60,9 @@ const MAX_DIALOG_ANSWER_ATTEMPTS = 2;
  * not always enough to reach an empty composer.
  */
 const MAX_LEFTOVER_SLASH_DRAFT_CLEAR_ATTEMPTS = 2;
+
+const SWITCH_MODEL_DIALOG = getClaudeUnifiedRecognizedDialogRegistryEntry('switch_model');
+const EFFORT_CHANGE_DIALOG = getClaudeUnifiedRecognizedDialogRegistryEntry('effort_change');
 
 /**
  * Precise failure reason when the pre-Enter recapture shows the composer holding something OTHER
@@ -104,6 +113,17 @@ export const UNRECOGNIZED_CONFIRMATION_DIALOG_REASON = 'unrecognized_confirmatio
 
 function unrecognizedDialogResult(): ControlAttemptResult {
   return { kind: 'unreachable', reason: UNRECOGNIZED_CONFIRMATION_DIALOG_REASON };
+}
+
+async function submitOwnedDialogChoice(params: Readonly<{
+  port: ControlRuntime['port'];
+  state: ClaudeScreenState;
+  entry: ClaudeUnifiedRecognizedDialogRegistryEntry;
+  choice: string;
+}>): Promise<boolean> {
+  const option = resolveClaudeUnifiedRegisteredDialogOption(params.state, params.entry, params.choice);
+  if (!option) return false;
+  return (await submitClaudeUnifiedDialogOption({ port: params.port, option })).status === 'submitted';
 }
 
 type LeftoverDialogResolution = Readonly<{
@@ -415,8 +435,12 @@ export async function applyModelControl(ctx: SlashControlContext, model: string)
     resolveFinalState: async (state) => {
       if (!state.switchModelDialogVisible) return state;
       // Answer the `Switch model?` dialog deliberately: option 1 = "Yes, switch".
-      await port.sendLiteralText('1');
-      await port.sendSpecialKey('Enter');
+      await submitOwnedDialogChoice({
+        port,
+        state,
+        entry: SWITCH_MODEL_DIALOG,
+        choice: 'confirm',
+      });
       await wait(timings.commandSettleMs);
       const after = await captureScreenState(port);
       return after.kind === 'state' ? after.state : state;
@@ -439,14 +463,18 @@ export async function applyEffortControl(ctx: SlashControlContext, effort: strin
   const targetMatches = (state: ClaudeScreenState): boolean =>
     state.effortChangeDialogTarget === null || acceptableTargets.includes(state.effortChangeDialogTarget);
 
-  const answerDialog = async (state: ClaudeScreenState, option: '1' | '2'): Promise<ClaudeScreenState> => {
-    if (option === '1') {
+  const answerDialog = async (state: ClaudeScreenState, choice: 'confirm' | 'cancel'): Promise<ClaudeScreenState> => {
+    if (choice === 'confirm') {
       confirmAnswers += 1;
       answeredConfirm = true;
       keptCountAtConfirm = state.keptEffortNoticeCount;
     }
-    await port.sendLiteralText(option);
-    await port.sendSpecialKey('Enter');
+    await submitOwnedDialogChoice({
+      port,
+      state,
+      entry: EFFORT_CHANGE_DIALOG,
+      choice,
+    });
     await wait(timings.commandSettleMs);
     const after = await captureScreenState(port);
     return after.kind === 'state' ? after.state : state;
@@ -460,11 +488,11 @@ export async function applyEffortControl(ctx: SlashControlContext, effort: strin
       if (targetMatches(state)) {
         // The leftover dialog (queued command executed at turn end) asks exactly for the requested
         // level: confirm it instead of typing a duplicate command.
-        return { action: 'confirmed', state: await answerDialog(state, '1') };
+        return { action: 'confirmed', state: await answerDialog(state, 'confirm') };
       }
       // Stale dialog for a DIFFERENT level: dismiss it ("No, go back" keeps the current effort —
       // an expected kept-notice, not a decline of THIS request) and type the fresh command.
-      return { action: 'dismissed', state: await answerDialog(state, '2') };
+      return { action: 'dismissed', state: await answerDialog(state, 'cancel') };
     },
     resolveFinalState: async (state) => {
       if (!state.effortChangeDialogVisible) return state;
@@ -473,7 +501,7 @@ export async function applyEffortControl(ctx: SlashControlContext, effort: strin
       // <level>" (incident cmq8y3nlx L6 — a blind Enter resolved the dialog to its default and
       // Claude kept the old level). An unknown target after OUR command is ours; a mismatched one
       // is stale and dismissed so the queued command behind it can run.
-      return answerDialog(state, targetMatches(state) ? '1' : '2');
+      return answerDialog(state, targetMatches(state) ? 'confirm' : 'cancel');
     },
     verify: (state) => (state.effortChangeDialogVisible ? null : state.visibleEffort),
     detectAlreadyEffective: (state) => {

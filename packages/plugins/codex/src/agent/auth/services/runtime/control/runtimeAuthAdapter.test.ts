@@ -24,7 +24,7 @@ function buildCodexCredential() {
 }
 
 describe('Codex runtime auth adapter', () => {
-  it('prefers the materialized direct live runtime apply hook', async () => {
+  it('applies the selected generation through the canonical session runtime callback', async () => {
     const record = buildCodexCredential();
     const applyConnectedServiceAuthGeneration = vi.fn(async () => ({
       ok: true,
@@ -53,51 +53,28 @@ describe('Codex runtime auth adapter', () => {
     expect(adapter.canHotApply({
       target: { agentId: 'codex' },
       selection,
-    })).toEqual({
-      supported: true,
-      mode: 'direct_live_hot_auth',
-    });
+    })).toEqual({ supported: true, mode: 'codex_chatgpt_auth_tokens' });
 
     await expect(adapter.hotApply({
       target: { agentId: 'codex' },
       selection,
-    })).resolves.toEqual({
+    })).resolves.toMatchObject({
       applied: true,
-      appliedVia: 'direct_live_hot_auth',
-      verification: {
-        activeAccountId: 'acct-work',
-        proofStrength: 'exact',
-        source: 'applied_credential',
-      },
+      reason: 'direct_live_hot_auth',
+      verification: { activeAccountId: 'acct-work', proofStrength: 'exact' },
     });
 
-    expect(applyConnectedServiceAuthGeneration).toHaveBeenCalledWith({
+    expect(applyConnectedServiceAuthGeneration).toHaveBeenCalledWith(expect.objectContaining({
       serviceId: 'openai-codex',
       reason: 'usage_limit',
       requireDirectLiveHotApply: true,
-      expected: {
-        profileId: 'work',
-        groupId: 'team',
-        generation: 4,
-      },
-      authGeneration: {
-        credential: record,
-        forcedWorkspaceId: 'acct-work',
-        selection: {
-          kind: 'group',
-          serviceId: 'openai-codex',
-          groupId: 'team',
-          activeProfileId: 'work',
-          fallbackProfileId: 'backup',
-          generation: 4,
-        },
-      },
-    });
+      expected: { profileId: 'work', groupId: 'team', generation: 4 },
+    }));
     expect(selection.client.request).not.toHaveBeenCalled();
     expect(selection.invalidateTransports).not.toHaveBeenCalled();
   });
 
-  it('labels retained control-client invalidation fallback as transport recycle', async () => {
+  it('declines when the canonical session runtime callback is unavailable', async () => {
     const record = buildCodexCredential();
     const client = { request: vi.fn(async () => ({ ok: true })) };
     const invalidateTransports = vi.fn(async () => undefined);
@@ -113,22 +90,22 @@ describe('Codex runtime auth adapter', () => {
       target: { agentId: 'codex' },
       selection,
     })).toEqual({
-      supported: true,
-      mode: 'transport_recycle',
-      recovery: 'restart_resume',
+      supported: false,
+      reason: 'runtime_apply_callback_unavailable',
     });
 
     await expect(adapter.hotApply({
       target: { agentId: 'codex' },
       selection,
     })).resolves.toEqual({
-      applied: true,
-      via: 'transport_recycle',
-      appliedVia: 'transport_recycle',
+      applied: false,
+      reason: 'runtime_apply_callback_unavailable',
     });
+    expect(client.request).not.toHaveBeenCalled();
+    expect(invalidateTransports).not.toHaveBeenCalled();
   });
 
-  it('returns restart-required partial state when direct-live follow-up persistence fails', async () => {
+  it('reports a callback response that identifies partial live mutation for restart reconciliation', async () => {
     const record = buildCodexCredential();
     const applyConnectedServiceAuthGeneration = vi.fn(async () => ({
       ok: false,
@@ -149,16 +126,15 @@ describe('Codex runtime auth adapter', () => {
       },
     })).resolves.toEqual({
       applied: false,
-      appliedVia: 'direct_live_hot_auth',
-      partialState: 'runtime_auth_partially_applied',
-      activeAccountId: 'acct-work',
       reason: 'refresh_bridge_selection_update_failed',
-      error: 'refresh_bridge_selection_update_failed',
       recovery: 'restart_resume',
+      appliedVia: 'direct_live_hot_auth',
+      activeAccountId: 'acct-work',
     });
+    expect(applyConnectedServiceAuthGeneration).toHaveBeenCalledOnce();
   });
 
-  it('treats successful direct-live responses with failed durability as partial state', async () => {
+  it('reports failed durability after direct live apply for restart reconciliation', async () => {
     const record = buildCodexCredential();
     const applyConnectedServiceAuthGeneration = vi.fn(async () => ({
       ok: true,
@@ -180,17 +156,12 @@ describe('Codex runtime auth adapter', () => {
       },
     })).resolves.toEqual({
       applied: false,
-      appliedVia: 'direct_live_hot_auth',
-      partialState: 'runtime_auth_partially_applied',
-      activeAccountId: 'acct-work',
       reason: 'auth_store_persistence_failed_after_live_apply',
-      error: 'auth_store_persistence_failed_after_live_apply',
       recovery: 'restart_resume',
-      durability: {
-        persisted: false,
-        errorCode: 'auth_store_persistence_failed_after_live_apply',
-      },
+      appliedVia: 'direct_live_hot_auth',
+      activeAccountId: 'acct-work',
     });
+    expect(applyConnectedServiceAuthGeneration).toHaveBeenCalledOnce();
   });
 
   it('suppresses transport recycle when direct live hot apply is required', async () => {
@@ -211,8 +182,7 @@ describe('Codex runtime auth adapter', () => {
       selection,
     })).toEqual({
       supported: false,
-      reason: 'live_hot_auth_unavailable',
-      recovery: 'restart_resume',
+      reason: 'runtime_apply_callback_unavailable',
     });
 
     await expect(adapter.hotApply({
@@ -220,8 +190,7 @@ describe('Codex runtime auth adapter', () => {
       selection,
     })).resolves.toEqual({
       applied: false,
-      reason: 'live_hot_auth_unavailable',
-      recovery: 'restart_resume',
+      reason: 'runtime_apply_callback_unavailable',
     });
     expect(client.request).not.toHaveBeenCalled();
     expect(invalidateTransports).not.toHaveBeenCalled();

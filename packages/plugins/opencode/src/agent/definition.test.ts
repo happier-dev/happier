@@ -1,12 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import { AGENT_DEFINITION } from './definition.js';
+import { PLUGIN_MANIFEST } from '../manifest.js';
 
 describe('OpenCode AGENT_DEFINITION', () => {
-  it('advertises Claude subscription OAuth and setup-token via the broker while the Anthropic Console key stays token-only', () => {
-    // Both Claude Pro/Max browser-login OAuth and setup-token are accepted through the Happier broker
-    // (materializer + broker wire path); the Anthropic Console API key (`anthropic`) stays token-only
-    // (direct x-api-key).
+  it('advertises Claude subscription OAuth plus native setup-token while the Anthropic Console key stays token-only', () => {
     expect(AGENT_DEFINITION.core.connectedServices.supportedKindsByServiceId['claude-subscription'])
       .toEqual(['oauth', 'token']);
     expect(AGENT_DEFINITION.core.connectedServices.supportedKindsByServiceId.anthropic)
@@ -26,24 +24,25 @@ describe('OpenCode AGENT_DEFINITION', () => {
         },
         tools: { delivery: 'native_mcp', support: 'supported' },
       },
-      authProbeConfig: {
-        statusCommand: ['auth', 'list'],
-        parser: 'opencodeAuthList',
-      },
-      localCli: {
-        supportKind: 'login_terminal',
-      },
-      agentCliRuntime: {
-        sourcePreferenceDefault: 'system-first',
-        managedInstall: {
+    });
+  });
+
+  it('projects CLI/install/auth facts from the strict manifest without changing runtime ownership', () => {
+    expect(PLUGIN_MANIFEST.contributes.agents[0]?.cli).toMatchObject({
+      displayName: 'OpenCode CLI',
+      executable: { binaryName: 'opencode', sourcePreference: 'system-first' },
+      install: {
+        managed: {
           kind: 'managed_package',
-          packageName: 'opencode-ai',
-          binaryName: 'opencode',
-          packageBinarySetup: { kind: 'opencode_platform_binary' },
         },
-        manualInstallKind: 'command',
+        manual: { kind: 'command' },
+      },
+      auth: {
+        support: 'login_terminal',
+        probe: { statusArgs: ['auth', 'list'], parser: 'opencodeAuthList' },
       },
     });
+    expect(AGENT_DEFINITION).not.toHaveProperty('agentCliRuntime');
   });
 
   it('declares plugin-owned A.16y.3 runtime projection contributions', () => {

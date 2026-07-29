@@ -1,19 +1,17 @@
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 
+import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type {
-    ExecClientHandleV1,
-    ExecClientLifecycleV1,
-    ExecClientSpecV1,
-    ExecJsonRpcClientSpecV1,
-    ExecRuntimeServiceV1,
-    JsonRpcClientV1,
-    JsonRpcNotificationHandlerV1,
-    JsonRpcRequestHandlerV1,
-} from '@happier-dev/plugin-sdk';
+    ManagedExecutableRef,
+    PluginExecService,
+    PluginProcessResult,
+    PluginProtocolClientHandle,
+} from '@happier-dev/plugin-sdk/runtime';
 import { expandHomePath, readTrimmedString as readString } from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
 
+import { parseCodexCliStableVersion } from '../../cli/detect.js';
 import { readCodexAppServerRequestTimeoutMs, readCodexAppServerRpcTimeoutMs } from './client/timeout.js';
 
 type CodexAppServerEnv = Readonly<Record<string, string | undefined>>;
@@ -33,6 +31,15 @@ export type CodexAppServerClient = Readonly<{
 }>;
 
 export type DisposableCodexAppServerClient = CodexAppServerClient & Readonly<{
+    launchFeatures: Readonly<{
+        realtimeConversationAdvertised: boolean;
+        codexCliVersion: string | null;
+        realtimeConversationVersionSupported: boolean;
+    }>;
+    onExit: (listener: (result: Readonly<{
+        exitCode: number | null;
+        signal: string | null;
+    }>) => void) => () => void;
     dispose: () => Promise<void>;
 }>;
 
@@ -45,15 +52,36 @@ export function isCodexAppServerOversizedJsonFrameError(error: unknown): boolean
 }
 
 const CODEX_APP_SERVER_ARGS = ['app-server', '--listen', 'stdio://'] as const;
+const CODEX_REALTIME_CONVERSATION_FEATURE = 'realtime_conversation';
+const CODEX_REALTIME_CONVERSATION_SUPPORTED_CLI_VERSION = '0.145.0';
+const CODEX_REALTIME_ENABLED_LAUNCH_UNAVAILABLE =
+    'CODEX_REALTIME_ENABLED_LAUNCH_UNAVAILABLE';
 const DEFAULT_JSON_LINE_MAX_CHARS = 32 * 1024 * 1024;
-const DEFAULT_RPC_LOG_MAX_BYTES = 10 * 1024 * 1024;
-const DEFAULT_RPC_LOG_ROTATE_COUNT = 2;
-const MAX_RPC_LOG_ROTATE_COUNT = 10;
 const CODEX_APP_SERVER_CLIENT_INFO = Object.freeze({
     name: 'happier_cli',
     title: 'Happier',
     version: '0.1.0',
 });
+
+export function isCodexRealtimeEnabledAppServerLaunchUnavailableError(
+    error: unknown,
+): boolean {
+    return Boolean(
+        error
+        && typeof error === 'object'
+        && (error as Readonly<{ code?: unknown }>).code
+            === CODEX_REALTIME_ENABLED_LAUNCH_UNAVAILABLE,
+    );
+}
+
+function createCodexRealtimeEnabledAppServerLaunchUnavailableError(): Error {
+    const error = new Error('The realtime-enabled Codex app-server launch was unavailable.');
+    Object.defineProperty(error, 'code', {
+        value: CODEX_REALTIME_ENABLED_LAUNCH_UNAVAILABLE,
+        enumerable: true,
+    });
+    return error;
+}
 
 const CODEX_APP_SERVER_BINARY_OVERRIDE_ENV_KEYS = [
     'HAPPIER_CODEX_APP_SERVER_BIN',
@@ -64,6 +92,7 @@ const CODEX_APP_SERVER_BINARY_OVERRIDE_ENV_KEYS = [
 const CODEX_APP_SERVER_RUNTIME_ONLY_ENV_KEYS = new Set([
     'CODEX_THREAD_ID',
     'CODEX_INTERNAL_ORIGINATOR_OVERRIDE',
+    'HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS',
     'HAPPIER_CODEX_APP_SERVER_RPC_LOG_PATH',
     'HAPPIER_CODEX_APP_SERVER_RPC_LOG_MAX_BYTES',
     'HAPPIER_CODEX_APP_SERVER_RPC_LOG_ROTATE_COUNT',
@@ -79,17 +108,6 @@ function readPositiveInteger(value: unknown, fallback: number): number {
 
 function readJsonLineMaxChars(env: CodexAppServerEnv): number {
     return readPositiveInteger(env.HAPPIER_CODEX_APP_SERVER_MAX_JSON_LINE_CHARS, DEFAULT_JSON_LINE_MAX_CHARS);
-}
-
-function readRpcLogMaxBytes(env: CodexAppServerEnv): number {
-    return readPositiveInteger(env.HAPPIER_CODEX_APP_SERVER_RPC_LOG_MAX_BYTES, DEFAULT_RPC_LOG_MAX_BYTES);
-}
-
-function readRpcLogRotateCount(env: CodexAppServerEnv): number {
-    return Math.min(
-        readPositiveInteger(env.HAPPIER_CODEX_APP_SERVER_RPC_LOG_ROTATE_COUNT, DEFAULT_RPC_LOG_ROTATE_COUNT),
-        MAX_RPC_LOG_ROTATE_COUNT,
-    );
 }
 
 function resolveHomeDirFromEnvironment(env: CodexAppServerEnv): string {
@@ -178,48 +196,101 @@ function buildCodexAppServerEnv(env: CodexAppServerEnv): Record<string, string> 
     return output;
 }
 
-function resolveRpcLogPath(env: CodexAppServerEnv): string | null {
-    const raw = typeof env.HAPPIER_CODEX_APP_SERVER_RPC_LOG_PATH === 'string'
-        ? env.HAPPIER_CODEX_APP_SERVER_RPC_LOG_PATH.trim()
-        : '';
-    return raw ? resolve(expandHomeDirPath(raw, env)) : null;
-}
-
 function buildCodexAppServerArgs(params: Readonly<{
     env: CodexAppServerEnv;
     configOverrides?: readonly string[];
     disableUserMcpServers?: boolean;
+    enableRealtimeConversation?: boolean;
 }>): string[] {
     const userMcpOverrides = params.disableUserMcpServers === true
         ? readCodexMcpServerKeysFromConfigToml(params.env).map((key) => `mcp_servers.${key}.enabled=false`)
         : [];
-    return appendConfigOverrides(CODEX_APP_SERVER_ARGS, [
+    return appendConfigOverrides([
+        ...CODEX_APP_SERVER_ARGS,
+        ...(params.enableRealtimeConversation
+            ? ['--enable', CODEX_REALTIME_CONVERSATION_FEATURE]
+            : []),
+    ], [
         ...userMcpOverrides,
         ...(params.configOverrides ?? []),
     ]);
 }
 
-function buildCodexAppServerDiagnostics(env: CodexAppServerEnv): ExecClientLifecycleV1 {
-    const rpcLogPath = resolveRpcLogPath(env);
-    return {
-        requestTimeoutMs: readCodexAppServerRpcTimeoutMs(env),
-        maxStderrBytes: 8_000,
-        ...(rpcLogPath
-            ? {
-                diagnostics: {
-                    rpcLog: {
-                        kind: 'file' as const,
-                        path: rpcLogPath,
-                        maxBytes: readRpcLogMaxBytes(env),
-                        rotateCount: readRpcLogRotateCount(env),
-                    },
-                    sanitizer: {
-                        sensitiveKeys: ['id'],
-                    },
-                },
-            }
-            : {}),
-    };
+function processExitedSuccessfully(result: PluginProcessResult): boolean {
+    return result.termination.requestedBy.kind === 'none'
+        && result.termination.observed.kind === 'exit'
+        && result.termination.observed.exitCode === 0;
+}
+
+function advertisesRealtimeConversation(result: PluginProcessResult): boolean {
+    if (
+        !processExitedSuccessfully(result)
+        || result.stdoutTruncated
+        || result.stderrTruncated
+    ) return false;
+    const stdout = new TextDecoder().decode(result.stdout);
+    return stdout
+        .split(/\r?\n/u)
+        .some((line) => line.trimStart().startsWith(`${CODEX_REALTIME_CONVERSATION_FEATURE} `));
+}
+
+function readCodexCliVersion(result: PluginProcessResult): string | null {
+    if (
+        !processExitedSuccessfully(result)
+        || result.stdoutTruncated
+        || result.stderrTruncated
+    ) return null;
+    const output = new TextDecoder().decode(result.stdout).trim();
+    const parsed = parseCodexCliStableVersion(output);
+    return parsed && output === `codex-cli ${parsed.value}` ? parsed.value : null;
+}
+
+async function probeCodexCliVersion(params: Readonly<{
+    exec: PluginExecService;
+    executable: ManagedExecutableRef;
+    env: CodexAppServerEnv;
+    signal?: AbortSignal;
+}>): Promise<string | null> {
+    try {
+        const request = {
+            executable: params.executable,
+            args: ['--version'],
+            cwd: { root: 'workspace', relativePath: '' },
+            env: buildCodexAppServerEnv(params.env),
+            timeoutMs: readCodexAppServerRpcTimeoutMs(params.env),
+        } as const;
+        const result = params.signal
+            ? await params.exec.run(request, { signal: params.signal })
+            : await params.exec.run(request);
+        return readCodexCliVersion(result);
+    } catch (error) {
+        if (params.signal?.aborted) throw error;
+        return null;
+    }
+}
+
+async function probeCodexRealtimeConversationFeature(params: Readonly<{
+    exec: PluginExecService;
+    executable: ManagedExecutableRef;
+    env: CodexAppServerEnv;
+    signal?: AbortSignal;
+}>): Promise<boolean> {
+    try {
+        const request = {
+            executable: params.executable,
+            args: ['features', 'list'],
+            cwd: { root: 'workspace', relativePath: '' },
+            env: buildCodexAppServerEnv(params.env),
+            timeoutMs: readCodexAppServerRpcTimeoutMs(params.env),
+        } as const;
+        const result = params.signal
+            ? await params.exec.run(request, { signal: params.signal })
+            : await params.exec.run(request);
+        return advertisesRealtimeConversation(result);
+    } catch (error) {
+        if (params.signal?.aborted) throw error;
+        return false;
+    }
 }
 
 function createCircularSafeJsonClone(value: unknown): unknown {
@@ -233,111 +304,127 @@ function createCircularSafeJsonClone(value: unknown): unknown {
     })) as unknown;
 }
 
-function buildCodexAppServerClientSpec(params: Readonly<{
-    cwd?: string;
+function toJsonValue(value: unknown): JsonValue {
+    return createCircularSafeJsonClone(value) as JsonValue;
+}
+
+function toNativeExit(result: PluginProcessResult): Readonly<{
+    exitCode: number | null;
+    signal: string | null;
+}> {
+    if (result.termination.observed.kind === 'exit') {
+        return { exitCode: result.termination.observed.exitCode, signal: null };
+    }
+    if (result.termination.observed.kind === 'signal') {
+        return { exitCode: null, signal: result.termination.observed.signal };
+    }
+    return { exitCode: null, signal: null };
+}
+
+function wrapNativeCodexAppServerClient(
+    handle: PluginProtocolClientHandle<'jsonRpc'>,
+    env: CodexAppServerEnv,
+    launchFeatures: DisposableCodexAppServerClient['launchFeatures'],
+): DisposableCodexAppServerClient {
+    const requestHandlerDisposables = new Map<string, { dispose(): void }>();
+    const notificationHandlers = new Map<string, Set<JsonRpcNotificationHandler>>();
+    const exitListeners = new Set<(result: Readonly<{ exitCode: number | null; signal: string | null }>) => void>();
+    let settledExit: Readonly<{ exitCode: number | null; signal: string | null }> | null = null;
+
+    const notificationSubscription = handle.client.onNotification(async (message) => {
+        const handlers = notificationHandlers.get(message.method);
+        if (!handlers) return;
+        for (const handler of [...handlers]) await handler(message.params);
+    });
+    void handle.wait().then((result) => {
+        settledExit = toNativeExit(result);
+        for (const listener of [...exitListeners]) listener(settledExit);
+    }).catch(() => {
+        settledExit = { exitCode: null, signal: null };
+        for (const listener of [...exitListeners]) listener(settledExit);
+    });
+
+    return {
+        launchFeatures,
+        async request(method, requestParams, options) {
+            return await handle.client.request(
+                method,
+                toJsonValue(requestParams),
+                { timeoutMs: options?.timeoutMs ?? readCodexAppServerRequestTimeoutMs(method, env) },
+            );
+        },
+        async notify(method, notificationParams) {
+            if (notificationParams === undefined) {
+                await handle.client.notify(method);
+                return;
+            }
+            await handle.client.notify(method, toJsonValue(notificationParams));
+        },
+        registerRequestHandler(method, handler) {
+            requestHandlerDisposables.get(method)?.dispose();
+            const disposable = handle.client.onRequest(method, async (request) => {
+                const result = await handler(request.params, { id: request.id });
+                return result === undefined ? null : toJsonValue(result);
+            });
+            requestHandlerDisposables.set(method, disposable);
+            return () => {
+                if (requestHandlerDisposables.get(method) === disposable) {
+                    requestHandlerDisposables.delete(method);
+                    disposable.dispose();
+                }
+            };
+        },
+        registerNotificationHandler(method, handler) {
+            const handlers = notificationHandlers.get(method) ?? new Set<JsonRpcNotificationHandler>();
+            handlers.add(handler);
+            notificationHandlers.set(method, handlers);
+            return () => {
+                handlers.delete(handler);
+                if (handlers.size === 0) notificationHandlers.delete(method);
+            };
+        },
+        onExit(listener) {
+            if (settledExit) {
+                queueMicrotask(() => listener(settledExit!));
+                return () => undefined;
+            }
+            exitListeners.add(listener);
+            return () => exitListeners.delete(listener);
+        },
+        async dispose() {
+            for (const disposable of requestHandlerDisposables.values()) disposable.dispose();
+            requestHandlerDisposables.clear();
+            notificationHandlers.clear();
+            notificationSubscription.dispose();
+            exitListeners.clear();
+            await handle.dispose();
+        },
+    };
+}
+
+function buildNativeCodexAppServerClientSpec(params: Readonly<{
+    executable: ManagedExecutableRef;
     env: CodexAppServerEnv;
     configOverrides?: readonly string[];
     disableUserMcpServers?: boolean;
-}>): ExecJsonRpcClientSpecV1 {
+    enableRealtimeConversation?: boolean;
+}>) {
     return {
+        kind: 'jsonRpc' as const,
         launch: {
-            kind: 'agent-cli',
-            agentId: 'codex',
-            cwd: params.cwd,
+            executable: params.executable,
             args: buildCodexAppServerArgs(params),
+            cwd: { root: 'workspace' as const, relativePath: '' },
             env: buildCodexAppServerEnv(params.env),
         },
-        transport: {
-            kind: 'stdio',
-            framing: { kind: 'strict-lf-json' },
-            encoding: 'utf8',
-            maxFrameBytes: readJsonLineMaxChars(params.env),
-        },
-        protocol: { kind: 'json-rpc-2.0' },
-        lifecycle: buildCodexAppServerDiagnostics(params.env),
+        framing: 'jsonLines' as const,
+        maxFrameBytes: readJsonLineMaxChars(params.env),
+        requestTimeoutMs: readCodexAppServerRpcTimeoutMs(params.env),
     };
 }
 
-function wrapCodexAppServerClient(
-    handle: ExecClientHandleV1<JsonRpcClientV1>,
-    env: CodexAppServerEnv,
-): DisposableCodexAppServerClient {
-    const requestHandlerUnregisters = new Map<string, () => void>();
-    const notificationHandlerSets = new Map<string, {
-        handlers: Set<JsonRpcNotificationHandler>;
-        unregister: () => void;
-    }>();
-
-    const request = async (
-        method: string,
-        requestParams?: unknown,
-        options?: CodexAppServerRequestOptions,
-    ): Promise<unknown> => {
-        return await handle.client.request(
-            method,
-            createCircularSafeJsonClone(requestParams),
-            { timeoutMs: options?.timeoutMs ?? readCodexAppServerRequestTimeoutMs(method, env) },
-        );
-    };
-
-    const notify = async (method: string, notificationParams?: unknown): Promise<void> => {
-        await handle.client.notify(method, createCircularSafeJsonClone(notificationParams));
-    };
-
-    const registerRequestHandler = (method: string, handler: JsonRpcRequestHandler): (() => void) => {
-        requestHandlerUnregisters.get(method)?.();
-        const unregister = handle.client.registerRequestHandler(method, async (params, context) => {
-            const result = await handler(params, { id: context?.requestId });
-            return result === undefined ? null : result;
-        });
-        requestHandlerUnregisters.set(method, unregister);
-        return () => {
-            if (requestHandlerUnregisters.get(method) === unregister) {
-                requestHandlerUnregisters.delete(method);
-                unregister();
-            }
-        };
-    };
-
-    const registerNotificationHandler = (method: string, handler: JsonRpcNotificationHandler): (() => void) => {
-        const existing = notificationHandlerSets.get(method);
-        if (existing) {
-            existing.handlers.add(handler);
-        } else {
-            const handlers = new Set<JsonRpcNotificationHandler>([handler]);
-            const unregister = handle.client.registerNotificationHandler(method, async (params) => {
-                for (const current of [...handlers]) {
-                    await current(params);
-                }
-            });
-            notificationHandlerSets.set(method, { handlers, unregister });
-        }
-
-        return () => {
-            const entry = notificationHandlerSets.get(method);
-            if (!entry) return;
-            entry.handlers.delete(handler);
-            if (entry.handlers.size === 0) {
-                notificationHandlerSets.delete(method);
-                entry.unregister();
-            }
-        };
-    };
-
-    const dispose = async (): Promise<void> => {
-        requestHandlerUnregisters.clear();
-        notificationHandlerSets.clear();
-        await handle.dispose({
-            code: 'CODEX_APP_SERVER_CLIENT_DISPOSED',
-            message: 'Codex app-server client has been disposed',
-        });
-    };
-
-    return { request, notify, registerRequestHandler, registerNotificationHandler, dispose };
-}
-
-export async function createCodexAppServerClient(params: Readonly<{
-    exec: ExecRuntimeServiceV1;
+export async function createCodexNativeAppServerClient(params: Readonly<{
+    exec: PluginExecService;
     processEnv?: CodexAppServerEnv;
     cwd?: string;
     configOverrides?: readonly string[];
@@ -345,24 +432,54 @@ export async function createCodexAppServerClient(params: Readonly<{
     signal?: AbortSignal;
 }>): Promise<DisposableCodexAppServerClient> {
     const env = params.processEnv ?? process.env;
-    const handle = await params.exec.spawnClient(buildCodexAppServerClientSpec({
-        cwd: params.cwd,
+    const resolvedSystemTool = await params.exec.systemTools.resolve({
+        toolId: 'codex-cli',
+        purpose: 'Launch the Codex native app-server',
+    });
+    const codexCliVersion = await probeCodexCliVersion({
+        exec: params.exec,
+        executable: resolvedSystemTool.executable,
         env,
-        configOverrides: params.configOverrides,
-        disableUserMcpServers: params.disableUserMcpServers,
-    }), params.signal ? { signal: params.signal } : undefined);
-    const client = wrapCodexAppServerClient(handle, env);
+        ...(params.signal ? { signal: params.signal } : {}),
+    });
+    const realtimeConversationVersionSupported =
+        codexCliVersion === CODEX_REALTIME_CONVERSATION_SUPPORTED_CLI_VERSION;
+    const realtimeConversationAdvertised = await probeCodexRealtimeConversationFeature({
+        exec: params.exec,
+        executable: resolvedSystemTool.executable,
+        env,
+        ...(params.signal ? { signal: params.signal } : {}),
+    });
+    const enableRealtimeConversation =
+        realtimeConversationVersionSupported && realtimeConversationAdvertised;
+    let handle: PluginProtocolClientHandle<'jsonRpc'>;
+    try {
+        handle = await params.exec.clients.spawn(buildNativeCodexAppServerClientSpec({
+            executable: resolvedSystemTool.executable,
+            env,
+            configOverrides: params.configOverrides,
+            disableUserMcpServers: params.disableUserMcpServers,
+            enableRealtimeConversation,
+        }), params.signal ? { signal: params.signal } : undefined) as PluginProtocolClientHandle<'jsonRpc'>;
+    } catch (error) {
+        if (params.signal?.aborted || !enableRealtimeConversation) throw error;
+        throw createCodexRealtimeEnabledAppServerLaunchUnavailableError();
+    }
+    const client = wrapNativeCodexAppServerClient(handle, env, {
+        realtimeConversationAdvertised,
+        codexCliVersion,
+        realtimeConversationVersionSupported,
+    });
     try {
         await client.request('initialize', {
             clientInfo: CODEX_APP_SERVER_CLIENT_INFO,
-            capabilities: {
-                experimentalApi: true,
-            },
+            capabilities: { experimentalApi: true },
         });
         await client.notify('initialized');
         return client;
     } catch (error) {
         await client.dispose().catch(() => undefined);
-        throw error;
+        if (params.signal?.aborted || !enableRealtimeConversation) throw error;
+        throw createCodexRealtimeEnabledAppServerLaunchUnavailableError();
     }
 }

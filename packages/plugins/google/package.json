@@ -14,13 +14,13 @@
   },
   "exports": {
     ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+    "./manifest": { "types": "./dist/manifest.d.ts", "default": "./dist/manifest.js" },
     "./protocol/voice": { "types": "./dist/protocol/voice/index.d.ts", "default": "./dist/protocol/voice/index.js" },
-    "./ui/voice": { "types": "./dist/ui/voice/index.d.ts", "default": "./dist/ui/voice/index.js" },
-    "./agent/voice": { "types": "./dist/agent/voice/index.d.ts", "default": "./dist/agent/voice/index.js" }
+    "./ui/voice": { "types": "./dist/ui/voice/index.d.ts", "default": "./dist/ui/voice/index.js" }
   },
   "dependencies": {
+    "@happier-dev/plugin-sdk": "0.0.0",
     "@happier-dev/protocol": "0.0.0",
-    "react": "19.2.0",
     "zod": "4.3.6"
   },
   "devDependencies": {

@@ -5,8 +5,10 @@ import { readProviderSettingsFromAccountSettingsV1 } from '../settings/readFromA
 import type { ProviderAccountSettingsMigrationContextV1 } from './accountSettingsV1.js';
 import { migrateProviderAccountSettingsV1 } from './accountSettingsV1.js';
 import { migrateLegacyAiLaunchProfilesV1 } from './legacyProfilesV1.js';
-import { classifyLegacyProfileMigrationConflictsV1 } from './conflictsV1.js';
-import { resolveLegacyProfileMigrationConflictV1 } from './conflictsV1.js';
+import {
+  applyReviewedLegacyProfileMigrationConflictV1,
+  classifyLegacyProfileMigrationConflictsV1,
+} from './conflictsV1.js';
 
 function candidate(sourceProfileId: string, connectionId: string, secretId: string, modelName = 'Reasoner') {
   return {
@@ -15,7 +17,7 @@ function candidate(sourceProfileId: string, connectionId: string, secretId: stri
     connection: {
       v: 1 as const,
       id: connectionId,
-      source: { kind: 'contribution' as const, contributionKey: 'happier.provider.deepseek:providers:deepseek' },
+      source: { kind: 'contribution' as const, contributionKey: 'happier.provider.deepseek/deepseek' },
       role: 'default' as const,
       displayName: 'DeepSeek',
       displayNameMode: 'automatic' as const,
@@ -31,6 +33,19 @@ function candidate(sourceProfileId: string, connectionId: string, secretId: stri
 
 function context(candidates: ProviderAccountSettingsMigrationContextV1['candidates']): ProviderAccountSettingsMigrationContextV1 {
   return { migratedAt: 20, candidates, pendingCustomProfileIds: [] };
+}
+
+function applyProtocolPureReviewedConflict(
+  rawSettings: Readonly<Record<string, unknown>>,
+  baseContext: ProviderAccountSettingsMigrationContextV1,
+  resolution: Parameters<typeof applyReviewedLegacyProfileMigrationConflictV1>[3],
+) {
+  return applyReviewedLegacyProfileMigrationConflictV1(
+    rawSettings,
+    baseContext,
+    classifyLegacyProfileMigrationConflictsV1(rawSettings, baseContext),
+    resolution,
+  );
 }
 
 describe('classifyLegacyProfileMigrationConflictsV1', () => {
@@ -90,6 +105,48 @@ describe('classifyLegacyProfileMigrationConflictsV1', () => {
     ]));
     expect(result.pendingConflicts).toEqual([]);
     expect(result.candidates).toHaveLength(2);
+  });
+
+  it('converges a legacy source on a persisted winner when both bind the same saved-secret id', () => {
+    const rawSettings = {
+      providerSettingsV1: {
+        ...DEFAULT_PROVIDER_SETTINGS_V1,
+        connections: [{ ...candidate('winner', 'pc-existing', 'same-secret').connection, id: 'pc-existing' }],
+        secretBindingsByConnectionId: { 'pc-existing': { account: { apiKey: 'same-secret' } } },
+      },
+    };
+    const classified = classifyLegacyProfileMigrationConflictsV1(
+      rawSettings,
+      context([candidate('deepseek', 'pc-candidate', 'same-secret')]),
+    );
+
+    expect(classified.pendingConflicts).toEqual([]);
+    const migrated = migrateProviderAccountSettingsV1(rawSettings, classified);
+    expect(migrated.ok).toBe(true);
+    if (!migrated.ok) throw new Error('expected same-secret migration convergence');
+    expect(migrated.outcomes).toContainEqual(expect.objectContaining({
+      sourceProfileId: 'deepseek', kind: 'connection', connectionId: 'pc-existing',
+    }));
+    expect(readProviderSettingsFromAccountSettingsV1(migrated.settings).settings).toMatchObject({
+      connections: [{ id: 'pc-existing' }],
+      secretBindingsByConnectionId: { 'pc-existing': { account: { apiKey: 'same-secret' } } },
+    });
+  });
+
+  it('classifies conflicts across repeated canonical contribution identities', () => {
+    const first = candidate('source-a', 'pc-a', 'secret-a');
+    const canonicalBase = candidate('source-b', 'pc-b', 'secret-b');
+    const canonical = {
+      ...canonicalBase,
+      connection: {
+        ...canonicalBase.connection,
+        source: { kind: 'contribution' as const, contributionKey: 'happier.provider.deepseek/deepseek' },
+      },
+    };
+    const result = classifyLegacyProfileMigrationConflictsV1({}, context([first, canonical]));
+
+    expect(result.candidates).toEqual([]);
+    expect(result.pendingConflicts?.map((entry) => entry.sourceProfileId)).toEqual(['source-a', 'source-b']);
   });
 
   it('is stable across independent coordinator invocations with new losing ids and timestamps', () => {
@@ -153,7 +210,7 @@ describe('classifyLegacyProfileMigrationConflictsV1', () => {
     const classified = classifyLegacyProfileMigrationConflictsV1(rawSettings, base);
     const conflict = classified.pendingConflicts?.[0];
     expect(conflict).toBeDefined();
-    const resolved = resolveLegacyProfileMigrationConflictV1(rawSettings, base, {
+    const resolved = applyProtocolPureReviewedConflict(rawSettings, base, {
       sourceProfileId: 'deepseek',
       expectedCandidateFingerprint: conflict!.candidateFingerprint,
       decision: { kind: 'keep_existing', existingConnectionId: 'pc-existing' },
@@ -176,7 +233,7 @@ describe('classifyLegacyProfileMigrationConflictsV1', () => {
 
     const changedWinner = structuredClone(rawSettings);
     changedWinner.providerSettingsV1.secretBindingsByConnectionId['pc-existing']!.account.apiKey = 'third-secret';
-    expect(resolveLegacyProfileMigrationConflictV1(changedWinner, base, {
+    expect(applyProtocolPureReviewedConflict(changedWinner, base, {
       sourceProfileId: 'deepseek',
       expectedCandidateFingerprint: conflict!.candidateFingerprint,
       decision: { kind: 'keep_existing', existingConnectionId: 'pc-existing' },
@@ -214,11 +271,11 @@ describe('classifyLegacyProfileMigrationConflictsV1', () => {
         label: 'Legacy',
       },
     ]);
-    expect(resolveLegacyProfileMigrationConflictV1(rawSettings, base, {
+    expect(applyProtocolPureReviewedConflict(rawSettings, base, {
       sourceProfileId: 'deepseek', expectedCandidateFingerprint: conflict.candidateFingerprint,
       decision: { kind: 'keep_existing', existingConnectionId: 'pc-existing' },
     })).toMatchObject({ ok: false, reason: 'migration_conflict_resolution_invalid' });
-    const resolved = resolveLegacyProfileMigrationConflictV1(rawSettings, base, {
+    const resolved = applyProtocolPureReviewedConflict(rawSettings, base, {
       sourceProfileId: 'deepseek', expectedCandidateFingerprint: conflict.candidateFingerprint,
       decision: {
         kind: 'keep_existing', existingConnectionId: 'pc-existing',
@@ -228,7 +285,7 @@ describe('classifyLegacyProfileMigrationConflictsV1', () => {
     expect(resolved).toMatchObject({ ok: true, context: { candidates: [{
       selectedModel: { agentTargetKey: 'agent:claude', modelId: 'existing-model' },
     }] } });
-    expect(resolveLegacyProfileMigrationConflictV1(rawSettings, base, {
+    expect(applyProtocolPureReviewedConflict(rawSettings, base, {
       sourceProfileId: 'deepseek', expectedCandidateFingerprint: conflict.candidateFingerprint,
       decision: {
         kind: 'keep_existing', existingConnectionId: 'pc-existing',
@@ -241,7 +298,7 @@ describe('classifyLegacyProfileMigrationConflictsV1', () => {
       .toBe(conflict.candidateFingerprint);
     const changedWinner = structuredClone(rawSettings);
     changedWinner.providerSettingsV1.manualModelsByConnectionId['pc-existing']![0]!.name = 'Changed after review';
-    expect(resolveLegacyProfileMigrationConflictV1(changedWinner, base, {
+    expect(applyProtocolPureReviewedConflict(changedWinner, base, {
       sourceProfileId: 'deepseek', expectedCandidateFingerprint: conflict.candidateFingerprint,
       decision: {
         kind: 'keep_existing', existingConnectionId: 'pc-existing',
@@ -273,7 +330,7 @@ describe('classifyLegacyProfileMigrationConflictsV1', () => {
       movedSecretBindingEnvironmentVariableNames: ['DEEPSEEK_AUTH_TOKEN'],
     }]);
     const conflict = classifyLegacyProfileMigrationConflictsV1(rawSettings, base).pendingConflicts![0]!;
-    const reviewed = resolveLegacyProfileMigrationConflictV1(rawSettings, base, {
+    const reviewed = applyProtocolPureReviewedConflict(rawSettings, base, {
       sourceProfileId: 'deepseek', expectedCandidateFingerprint: conflict.candidateFingerprint,
       decision: { kind: 'keep_existing', existingConnectionId: 'pc-existing' },
     });
@@ -304,7 +361,7 @@ describe('classifyLegacyProfileMigrationConflictsV1', () => {
     ]);
     const classified = classifyLegacyProfileMigrationConflictsV1({}, base);
     const conflict = classified.pendingConflicts!.find((entry) => entry.sourceProfileId === 'source-a')!;
-    const resolved = resolveLegacyProfileMigrationConflictV1({}, base, {
+    const resolved = applyProtocolPureReviewedConflict({}, base, {
       sourceProfileId: 'source-a',
       expectedCandidateFingerprint: conflict.candidateFingerprint,
       decision: { kind: 'create_named', connectionId: 'pc-reviewed', displayName: 'Legacy DeepSeek' },
@@ -316,7 +373,7 @@ describe('classifyLegacyProfileMigrationConflictsV1', () => {
       connection: expect.objectContaining({ id: 'pc-reviewed', role: 'named', displayName: 'Legacy DeepSeek' }),
       secretBindings: { account: { apiKey: 'secret-a' } },
     }));
-    expect(resolveLegacyProfileMigrationConflictV1({}, base, {
+    expect(applyProtocolPureReviewedConflict({}, base, {
       sourceProfileId: 'source-a',
       expectedCandidateFingerprint: 'legacy-profile-migration-conflict:v1:stale',
       decision: { kind: 'create_named', connectionId: 'pc-reviewed', displayName: 'Legacy DeepSeek' },

@@ -1,58 +1,64 @@
-import {
-  definePluginManifest,
-  type PluginAgentContributionV2,
-  type PluginManifestV2,
-  type PluginAgentSettingsContributionV1,
-} from '@happier-dev/plugin-sdk';
+import type { PluginManifest } from '@happier-dev/plugin-sdk/manifest';
 
-import { AUGGIE_ACP_BACKEND_SPEC } from './agent/acp/definition.js';
 import { AUGGIE_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
 
-type AuggiePluginManifestV2 = Omit<PluginManifestV2, 'contributes'> & Readonly<{
-  contributes: Readonly<{
-    agents: ReadonlyArray<PluginAgentContributionV2>;
-    agentSettings: ReadonlyArray<PluginAgentSettingsContributionV1>;
-  }>;
-}>;
-
-export const PLUGIN_MANIFEST = definePluginManifest({
+export const PLUGIN_MANIFEST = {
   schemaVersion: 2,
   id: 'happier.agent.auggie',
   version: '0.0.0',
-  displayName: 'auggie',
-  description: undefined,
-  engines: { happier: '^0.0.0' },
-  activationEvents: ['onAgent:auggie'],
-  uses: ['agents'],
-  entrypoints: { main: './dist/index.js' },
-  permissions: { required: [], optional: [] },
+  displayName: 'Auggie',
+  engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
+  entrypoints: { daemon: './dist/index.js' },
+  hostAccess: {
+    required: [{
+      id: 'auggie-process',
+      capability: 'process',
+      reason: 'Run the declared Auggie CLI executable.',
+      scope: { executables: [{ kind: 'systemTool', id: 'auggie-cli' }] },
+    }],
+    optional: [],
+  },
   contributes: {
-    agents: [
-      {
-        kindVersion: 1,
-        id: 'auggie',
-        runtime: {
-          kind: 'acp',
-          transport: AUGGIE_ACP_BACKEND_SPEC.transport,
-          ux: AUGGIE_ACP_BACKEND_SPEC.ux,
-          capabilities: AUGGIE_ACP_BACKEND_SPEC.capabilities,
-          sessionIdHeaderName: AUGGIE_ACP_BACKEND_SPEC.sessionIdHeaderName,
-          toolNameInference: AUGGIE_ACP_BACKEND_SPEC.toolNameInference,
-          stderrRules: AUGGIE_ACP_BACKEND_SPEC.stderrRules,
-          mcp: AUGGIE_ACP_BACKEND_SPEC.mcp,
+    agents: [{
+      id: 'auggie',
+      title: 'Auggie',
+      runtime: { kind: 'custom' },
+      cli: {
+        displayName: 'Auggie CLI',
+        executable: {
+          binaryName: 'auggie',
+          knownUserBinDirSuffixes: null,
+          sourcePreference: 'system-first',
         },
-        capabilities: {
-          executionRun: { supported: true },
-          session: {
-            media: {
-              acceptsImageInput: { supported: false },
-              emitsSessionMedia: { supported: false },
-              nativeImageGeneration: { supported: false },
-            },
+        install: {
+          managed: {
+            kind: 'managed_package',
+            packageName: '@augmentcode/auggie',
+            binaryName: 'auggie',
           },
+          manual: { kind: 'command' },
+          docsUrl: 'https://augmentcode.com',
+        },
+        auth: {
+          support: 'login_terminal',
+          probe: { parser: 'unknown', backgroundChecks: 'safe', statusArgs: null },
+          loginLaunches: [{ kind: 'primary', args: ['login'] }],
         },
       },
-    ],
-    agentSettings: [AUGGIE_AGENT_SETTINGS_CONTRIBUTION],
+      primary: 'sessions',
+      capabilities: {
+        sessions: {
+          open: ['create', 'resume'],
+          delivery: ['newTurn', 'steer', 'followUp'],
+          cancel: true,
+        },
+      },
+    }],
+    systemTools: [{
+      id: 'auggie-cli',
+      title: 'Auggie CLI',
+      executableNames: ['auggie'],
+    }],
+    settings: [AUGGIE_AGENT_SETTINGS_CONTRIBUTION],
   },
-} satisfies AuggiePluginManifestV2);
+} satisfies PluginManifest;

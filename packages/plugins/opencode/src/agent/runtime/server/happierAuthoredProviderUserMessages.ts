@@ -1,8 +1,7 @@
 import { createHash } from 'node:crypto';
 
-import type { PluginContextV1 } from '@happier-dev/plugin-sdk';
-
 import { asRecord, normalizeString } from './openCodeParsing.js';
+import type { OpenCodeRuntimeContext } from './runtimeContext.js';
 
 const HAPPIER_AUTHORED_PROVIDER_USER_MESSAGE_IDS_STORAGE_PREFIX =
   'opencode.server.happierAuthoredProviderUserMessageIds.v1';
@@ -119,7 +118,7 @@ function matchPendingPromptAnchor(
 }
 
 export function createOpenCodeHappierAuthoredProviderUserMessageIds(params: Readonly<{
-  ctx: PluginContextV1;
+  ctx: OpenCodeRuntimeContext;
   readProviderSessionId: () => string | null | undefined;
 }>): Readonly<{
   has(messageId: string): boolean;

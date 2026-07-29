@@ -5,6 +5,148 @@ async function loadHandoffModule() {
 }
 
 describe('session handoff schemas', () => {
+  it('bounds typed native-import failures without changing the leaf import request', async () => {
+    const mod = await loadHandoffModule();
+    expect(mod).not.toHaveProperty('error');
+    if ('error' in mod) return;
+
+    const status = {
+      handoffId: 'handoff-import-conflict',
+      jobId: 'prepare_handoff-import-conflict',
+      status: 'reconciliation_required',
+      phase: 'staging_target',
+      recoveryActions: [],
+      failure: {
+        code: 'target_identity_conflict',
+        message: 'The native target differs from the exported session.',
+      },
+    } as const;
+    expect(mod.SessionHandoffStatusSchema.parse(status)).toEqual(status);
+    expect(mod.SessionHandoffStatusSchema.safeParse({
+      ...status,
+      failure: {
+        code: 'agent_version_unsupported',
+        message: 'x'.repeat(2_001),
+      },
+    }).success).toBe(false);
+    expect(mod.SessionHandoffStatusSchema.safeParse({
+      ...status,
+      failure: {
+        code: 'target_import_failed',
+      },
+    }).success).toBe(false);
+
+    const requestShape = mod.SessionHandoffPrepareTargetRequestSchema.parse({
+      handoffId: 'handoff-import-conflict',
+      sourceMachineId: 'source',
+      targetMachineId: 'target',
+      negotiatedTransportStrategy: 'direct_peer',
+      sourceSessionStorageMode: 'direct',
+      targetPath: '/repo',
+      endpointCandidates: [],
+    });
+    expect(requestShape).not.toHaveProperty('attemptId');
+  });
+
+  it('types prepare-target result-get as the existing success response or a bounded handler failure', async () => {
+    const mod = await loadHandoffModule();
+    expect(mod).not.toHaveProperty('error');
+    if ('error' in mod) return;
+
+    const conflict = {
+      ok: false,
+      errorCode: 'target_identity_conflict',
+      error: 'The native handoff target conflicts with the exported session identity',
+    } as const;
+    const unsupported = {
+      ok: false,
+      errorCode: 'agent_version_unsupported',
+      error: 'The installed Agent version cannot safely import this handoff',
+    } as const;
+    const notFound = {
+      ok: false,
+      errorCode: 'not_found',
+    } as const;
+    const awaitingRecovery = {
+      ok: false,
+      errorCode: 'awaiting_recovery',
+      error: 'Prepare-target job is awaiting_recovery',
+    } as const;
+
+    expect(mod.SessionHandoffPrepareTargetResultGetResponseSchema.parse(conflict)).toEqual(conflict);
+    expect(mod.SessionHandoffPrepareTargetResultGetResponseSchema.parse(unsupported)).toEqual(unsupported);
+    expect(mod.SessionHandoffPrepareTargetResultGetResponseSchema.parse(notFound)).toEqual(notFound);
+    expect(mod.SessionHandoffPrepareTargetResultGetResponseSchema.parse(awaitingRecovery)).toEqual(awaitingRecovery);
+    expect(mod.SessionHandoffPrepareTargetResultGetResponseSchema.safeParse({
+      ...notFound,
+      error: 'not_found does not carry terminal detail',
+    }).success).toBe(false);
+    expect(mod.SessionHandoffPrepareTargetResultGetResponseSchema.safeParse({
+      ok: false,
+      errorCode: 'awaiting_recovery',
+    }).success).toBe(false);
+    expect(mod.SessionHandoffPrepareTargetResultGetResponseSchema.safeParse({
+      ...conflict,
+      errorCode: 'target_import_failed',
+    }).success).toBe(false);
+    expect(mod.SessionHandoffPrepareTargetResultGetResponseSchema.safeParse({
+      ...conflict,
+      error: 'x'.repeat(2_001),
+    }).success).toBe(false);
+  });
+
+  it('keeps interrupted prepare-target Resume revision-bound and exact', async () => {
+    const mod = await loadHandoffModule();
+    expect(mod).not.toHaveProperty('error');
+    if ('error' in mod) return;
+    const input = {
+      handoffId: 'handoff-1',
+      jobId: 'prepare_handoff-1',
+      expectedRevision: 7,
+      attemptId: 'resume-attempt-1',
+    };
+
+    expect(mod.SessionHandoffPrepareTargetResumeRequestSchema.parse(input)).toEqual(input);
+    expect(mod.SessionHandoffPrepareTargetResumeRequestSchema.safeParse({
+      ...input,
+      sessionId: 'must-not-be-client-authority',
+    }).success).toBe(false);
+    expect(mod.SessionHandoffPrepareTargetResumeRequestSchema.safeParse({
+      ...input,
+      expectedRevision: -1,
+    }).success).toBe(false);
+    expect(mod.SessionHandoffPrepareTargetResumeRequestSchema.safeParse({
+      ...input,
+      jobId: '../prepare_handoff-1',
+    }).success).toBe(false);
+    expect(mod.SessionHandoffPrepareTargetResumeResponseSchema.parse({
+      ok: true,
+      handoffId: input.handoffId,
+      jobId: input.jobId,
+      transitionRevision: 8,
+      status: {
+        handoffId: input.handoffId,
+        jobId: input.jobId,
+        status: 'pending',
+        phase: 'staging_target',
+        recoveryActions: [],
+      },
+    })).toMatchObject({ ok: true, transitionRevision: 8 });
+    expect(mod.SessionHandoffPrepareTargetResumeResponseSchema.parse({
+      ok: false,
+      error: {
+        code: 'stale_revision',
+        message: 'The handoff changed.',
+      },
+    })).toEqual({
+      ok: false,
+      error: {
+        code: 'stale_revision',
+        message: 'The handoff changed.',
+      },
+    });
+  });
+
   it('preserves additive fields on prepare-target and status payloads', async () => {
     const mod = await loadHandoffModule();
     expect(mod).not.toHaveProperty('error');
@@ -573,6 +715,69 @@ describe('session handoff schemas', () => {
         recoveryActions: [],
       }).success,
     ).toBe(false);
+  });
+
+  it('normalizes the prospective predecessor bundle publication without admitting conflicting owners', async () => {
+    const mod = await loadHandoffModule();
+    expect(mod).not.toHaveProperty('error');
+    if ('error' in mod) return;
+
+    const publication = {
+      transferId: 'session-handoff:handoff_predecessor_1:provider-bundle',
+      sizeBytes: 123,
+      manifestHash: 'sha256:predecessor-manifest',
+      futurePublicationField: {
+        alpha: 1,
+        beta: 2,
+      },
+      endpointCandidates: [
+        {
+          kind: 'http',
+          url: 'http://127.0.0.1:46001/machine-transfers/direct/predecessor-bundle',
+          authorizationToken: 'predecessor-token',
+          expiresAt: 123_456,
+        },
+      ],
+    } as const;
+
+    const predecessorOnly = mod.SessionHandoffMetadataV2Schema.parse({
+      providerBundleTransferPublication: publication,
+      futureHandoffMetadataField: 'keep-me',
+    });
+    expect(predecessorOnly).toEqual({
+      agentBundleTransferPublication: publication,
+      futureHandoffMetadataField: 'keep-me',
+    });
+
+    const canonicalOnly = mod.SessionHandoffMetadataV2Schema.parse({
+      agentBundleTransferPublication: publication,
+    });
+    expect(canonicalOnly).toEqual({
+      agentBundleTransferPublication: publication,
+    });
+
+    const equalDual = mod.SessionHandoffMetadataV2Schema.parse({
+      providerBundleTransferPublication: {
+        manifestHash: publication.manifestHash,
+        sizeBytes: publication.sizeBytes,
+        transferId: publication.transferId,
+        futurePublicationField: {
+          beta: 2,
+          alpha: 1,
+        },
+        endpointCandidates: publication.endpointCandidates,
+      },
+      agentBundleTransferPublication: publication,
+    });
+    expect(equalDual).toEqual(canonicalOnly);
+
+    expect(mod.SessionHandoffMetadataV2Schema.safeParse({
+      providerBundleTransferPublication: publication,
+      agentBundleTransferPublication: {
+        ...publication,
+        transferId: 'session-handoff:handoff_predecessor_1:conflicting-agent-bundle',
+      },
+    }).success).toBe(false);
   });
 
   it('rejects oversized source controller metadata headers (no large JSON in handoffMetadataV2)', async () => {

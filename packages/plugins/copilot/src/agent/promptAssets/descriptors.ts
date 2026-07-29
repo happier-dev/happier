@@ -1,7 +1,4 @@
-import type {
-  PluginPromptAssetContributionV1,
-  PromptAssetCapabilitiesV1,
-} from '@happier-dev/plugin-sdk/manifest';
+import type { PromptAssetCapabilities } from '@happier-dev/plugin-sdk/manifest';
 
 export type CopilotPromptAssetConfig = Readonly<{
   assetTypeId: string;
@@ -12,7 +9,13 @@ export type CopilotPromptAssetConfig = Readonly<{
   projectRootDisplayPath: string;
   userRootPath: readonly string[];
   userRootDisplayPath: string;
-  capabilities?: PromptAssetCapabilitiesV1;
+  capabilities?: PromptAssetCapabilities;
+}>;
+
+// This is a generated first-party host adapter descriptor, not the public
+// data-only `contributes.promptAssets` contract (which references resources).
+export type CopilotPromptAssetAdapterDescriptor = CopilotPromptAssetConfig & Readonly<{
+  adapterKind: 'skillMd';
 }>;
 
 export const COPILOT_SKILL_PROMPT_ASSET_CONFIG = Object.freeze({
@@ -35,4 +38,4 @@ export const PLUGIN_PROMPT_ASSET_DESCRIPTORS = Object.freeze([
     adapterKind: 'skillMd',
     ...COPILOT_SKILL_PROMPT_ASSET_CONFIG,
   },
-] as const satisfies readonly PluginPromptAssetContributionV1[]);
+] as const satisfies readonly CopilotPromptAssetAdapterDescriptor[]);

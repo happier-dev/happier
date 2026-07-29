@@ -41,7 +41,7 @@ describe('GEMINI_UI_DESCRIPTOR', () => {
       version: 1,
       display: {
         nameKey: 'agentInput.agent.gemini',
-        connectedService: { serviceId: 'gemini', labelKey: 'agentInput.agent.gemini', connectRoute: null },
+        connectedService: { serviceId: 'gemini', labelKey: 'agentInput.connectedServiceLabel.gemini', connectRoute: null },
         icon: { assetId: 'gemini' },
       },
     });

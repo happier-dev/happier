@@ -1,11 +1,19 @@
+import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
 type FsModule = Readonly<{
+  withExclusiveFileLock<TResult>(
+    input: Readonly<{
+      lockPath: string;
+      timeoutMs: number;
+    }>,
+    effect: () => Promise<TResult>,
+  ): Promise<TResult>;
   writeAtomicJsonFile(input: Readonly<{
     path: string;
     value: unknown;
@@ -20,6 +28,58 @@ async function loadFs(): Promise<FsModule> {
   return loaded as FsModule;
 }
 
+async function waitForFile(path: string): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    if (await stat(path).then(() => true, () => false)) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Timed out waiting for ${path}`);
+}
+
+function spawnExclusiveLockWorker(input: Readonly<{
+  lockPath: string;
+  enteredPath: string;
+  releasePath?: string;
+  timeoutMs: number;
+}>): ReturnType<typeof spawn> {
+  const source = `
+import { stat, writeFile } from 'node:fs/promises';
+import { withExclusiveFileLock } from '@happier-dev/plugin-sdk/experimental/fs';
+await withExclusiveFileLock({
+  lockPath: process.env.HAPPIER_TEST_LOCK_PATH,
+  timeoutMs: Number(process.env.HAPPIER_TEST_TIMEOUT_MS),
+}, async () => {
+  await writeFile(process.env.HAPPIER_TEST_ENTERED_PATH, 'entered', 'utf8');
+  const releasePath = process.env.HAPPIER_TEST_RELEASE_PATH;
+  while (releasePath && !(await stat(releasePath).then(() => true, () => false))) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+});
+`;
+  return spawn(process.execPath, ['--input-type=module', '-e', source], {
+    cwd: new URL('..', import.meta.url),
+    env: {
+      ...process.env,
+      HAPPIER_TEST_LOCK_PATH: input.lockPath,
+      HAPPIER_TEST_ENTERED_PATH: input.enteredPath,
+      HAPPIER_TEST_TIMEOUT_MS: String(input.timeoutMs),
+      ...(input.releasePath === undefined ? {} : {
+        HAPPIER_TEST_RELEASE_PATH: input.releasePath,
+      }),
+    },
+    stdio: ['ignore', 'ignore', 'pipe'],
+  });
+}
+
+async function waitForChild(child: ReturnType<typeof spawn>): Promise<number | null> {
+  if (child.exitCode !== null) return child.exitCode;
+  return await new Promise<number | null>((resolve, reject) => {
+    child.once('exit', resolve);
+    child.once('error', reject);
+  });
+}
+
 describe('experimental fs helpers', () => {
   it('publishes the fs helper experimental subpath', () => {
     const packageJson = JSON.parse(
@@ -30,6 +90,13 @@ describe('experimental fs helpers', () => {
       types: './dist/fs.d.ts',
       default: './dist/fs.js',
     });
+  });
+
+  it('keeps exact-owner compatibility controls out of the author-facing fs module', async () => {
+    const fs = await loadFs();
+
+    expect(fs).not.toHaveProperty('withJsonOwnerFileLock');
+    expect(fs).not.toHaveProperty('reclaimJsonOwnerFileLockSnapshot');
   });
 
   it('atomically publishes JSON through a temporary sibling file', async () => {
@@ -47,6 +114,62 @@ describe('experimental fs helpers', () => {
     const entries = await import('node:fs/promises').then(({ readdir }) => readdir(dirname(path)));
     expect(entries).toEqual(['auth.json']);
   });
+
+  it('excludes a second process and preserves a successor lock during exact-owner release', async () => {
+    const fs = await loadFs();
+    expect(typeof fs.withExclusiveFileLock).toBe('function');
+    const root = await mkdtemp(join(tmpdir(), 'happier-plugin-sdk-exclusive-lock-'));
+    const lockPath = join(root, 'handoff.lock');
+    const ownerEnteredPath = join(root, 'owner-entered');
+    const ownerReleasePath = join(root, 'owner-release');
+    const successorEnteredPath = join(root, 'successor-entered');
+    const successorReleasePath = join(root, 'successor-release');
+    const probeEnteredPath = join(root, 'probe-entered');
+    let owner: ReturnType<typeof spawn> | null = null;
+    let successor: ReturnType<typeof spawn> | null = null;
+    let probe: ReturnType<typeof spawn> | null = null;
+    try {
+      owner = spawnExclusiveLockWorker({
+        lockPath,
+        enteredPath: ownerEnteredPath,
+        releasePath: ownerReleasePath,
+        timeoutMs: 5_000,
+      });
+      await waitForFile(ownerEnteredPath);
+
+      successor = spawnExclusiveLockWorker({
+        lockPath,
+        enteredPath: successorEnteredPath,
+        releasePath: successorReleasePath,
+        timeoutMs: 5_000,
+      });
+      await new Promise<void>((resolve) => setTimeout(resolve, 200));
+      expect(await stat(successorEnteredPath).then(() => true, () => false)).toBe(false);
+
+      // Simulate an external successor replacing the canonical path while the first owner is held.
+      // Exact-owner release must not unlink the successor's independently acquired lock.
+      await unlink(lockPath);
+      await waitForFile(successorEnteredPath);
+      await writeFile(ownerReleasePath, 'release', 'utf8');
+      expect(await waitForChild(owner)).toBe(0);
+
+      probe = spawnExclusiveLockWorker({
+        lockPath,
+        enteredPath: probeEnteredPath,
+        timeoutMs: 150,
+      });
+      expect(await waitForChild(probe)).not.toBe(0);
+      expect(await stat(probeEnteredPath).then(() => true, () => false)).toBe(false);
+
+      await writeFile(successorReleasePath, 'release', 'utf8');
+      expect(await waitForChild(successor)).toBe(0);
+    } finally {
+      owner?.kill('SIGKILL');
+      successor?.kill('SIGKILL');
+      probe?.kill('SIGKILL');
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 15_000);
 
   it('leaves an existing destination intact when the temp write cannot publish', async () => {
     const fs = await loadFs();

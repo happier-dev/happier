@@ -1,14 +1,31 @@
-import type { ExternalSessionsSource } from '@happier-dev/plugin-sdk/sessions';
+import type { ExternalSessionsSource } from '@happier-dev/plugin-sdk/experimental/sessions';
+
+import {
+  readOpenCodeManagedServerEndpointRegistration,
+} from '../../../runtime/server/endpoint.js';
+import type { OpenCodeServerTransport } from '../../../runtime/server/transport.js';
 
 export type OpenCodeExternalSessionSourceValidationResult =
   | Readonly<{ ok: true; source: ExternalSessionsSource }>
   | Readonly<{ ok: false; error: string }>;
 
 export type OpenCodeExternalSessionClient = Readonly<{
-  sessionList: () => Promise<unknown[]>;
-  sessionGet: (opts: Readonly<{ sessionId: string }>) => Promise<unknown>;
-  sessionStatusList: () => Promise<Record<string, { type?: string }>>;
-  sessionMessagesList: (opts: Readonly<{ sessionId: string }>) => Promise<unknown[]>;
+  sessionList: (opts: Readonly<{
+    limit: number;
+    search?: string;
+    signal?: AbortSignal;
+  }>) => Promise<unknown[]>;
+  sessionGet: (opts: Readonly<{ sessionId: string; signal?: AbortSignal }>) => Promise<unknown>;
+  sessionStatusList: (opts?: Readonly<{ signal?: AbortSignal }>) => Promise<Record<string, { type?: string }>>;
+  sessionMessagesList: (opts: Readonly<{
+    sessionId: string;
+    limit: number;
+    before?: string;
+    signal?: AbortSignal;
+  }>) => Promise<Readonly<{
+    items: unknown[];
+    nextCursor: string | null;
+  }>>;
   dispose: () => Promise<void>;
 }>;
 
@@ -75,18 +92,61 @@ function buildUrl(baseUrl: string, path: string, query?: Record<string, string |
   return url.toString();
 }
 
-async function fetchJson<T>(url: string, fetchFn: OpenCodeFetch): Promise<T> {
-  const response = await fetchFn(url, { method: 'GET' });
+async function fetchJsonResponse<T>(
+  url: string,
+  fetchFn: OpenCodeFetch,
+  signal?: AbortSignal,
+  headers?: Readonly<Record<string, string>>,
+): Promise<Readonly<{ value: T; response: Response }>> {
+  const response = await fetchFn(url, {
+    method: 'GET',
+    ...(headers ? { headers } : {}),
+    ...(signal ? { signal } : {}),
+  });
   if (!response.ok) {
     const text = await response.text().catch(() => '');
     throw new Error(`OpenCode HTTP GET ${url} failed: ${response.status} ${response.statusText}${text ? `\n${text}` : ''}`);
   }
-  return (await response.json()) as T;
+  return {
+    value: (await response.json()) as T,
+    response,
+  };
+}
+
+async function fetchJson<T>(
+  url: string,
+  fetchFn: OpenCodeFetch,
+  signal?: AbortSignal,
+  headers?: Readonly<Record<string, string>>,
+): Promise<T> {
+  return (await fetchJsonResponse<T>(url, fetchFn, signal, headers)).value;
+}
+
+export function parseOpenCodeSessionStatusMap(
+  raw: unknown,
+): Record<string, { type?: string }> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error('OpenCode /session/status returned an invalid status map');
+  }
+
+  const entries: Array<[string, { type?: string }]> = [];
+  for (const [sessionId, value] of Object.entries(raw)) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error('OpenCode /session/status returned an invalid status map');
+    }
+    const type = (value as Readonly<Record<string, unknown>>).type;
+    if (type !== undefined && typeof type !== 'string') {
+      throw new Error('OpenCode /session/status returned an invalid status map');
+    }
+    entries.push([sessionId, value as { type?: string }]);
+  }
+  return Object.fromEntries(entries);
 }
 
 export function validateOpenCodeExternalSessionsSource(params: Readonly<{
   source: ExternalSessionsSource;
   env?: Readonly<Record<string, string | undefined>>;
+  baseUrlAuthority?: 'configured' | 'canonical';
 }>): OpenCodeExternalSessionSourceValidationResult {
   const { source } = params;
   const env = params.env ?? {};
@@ -116,18 +176,27 @@ export function validateOpenCodeExternalSessionsSource(params: Readonly<{
     return sourceValidationError('invalid configured baseUrl');
   }
 
-  if (requestedBaseUrl && !configuredBaseUrl) {
+  const acceptsCanonicalBaseUrl = params.baseUrlAuthority === 'canonical';
+  if (requestedBaseUrl && !configuredBaseUrl && !acceptsCanonicalBaseUrl) {
     return sourceValidationError('source baseUrl override is not allowed');
   }
-  if (requestedBaseUrl && configuredBaseUrl && requestedBaseUrl !== configuredBaseUrl) {
+  if (
+    requestedBaseUrl
+    && configuredBaseUrl
+    && requestedBaseUrl !== configuredBaseUrl
+    && !acceptsCanonicalBaseUrl
+  ) {
     return sourceValidationError('source baseUrl override is not allowed');
   }
+  const resolvedBaseUrl = acceptsCanonicalBaseUrl
+    ? requestedBaseUrl ?? configuredBaseUrl
+    : configuredBaseUrl ?? requestedBaseUrl;
 
   return {
     ok: true,
     source: {
       ...source,
-      ...(requestedBaseUrl || configuredBaseUrl ? { baseUrl: configuredBaseUrl ?? requestedBaseUrl } : {}),
+      ...(resolvedBaseUrl ? { baseUrl: resolvedBaseUrl } : {}),
       ...(directoryField.value ? { directory: directoryField.value } : {}),
     },
   };
@@ -155,43 +224,68 @@ export async function createOpenCodeExternalSessionClient(params: Readonly<{
   source: ExternalSessionsSource;
   env?: Readonly<Record<string, string | undefined>>;
   fetchFn?: OpenCodeFetch;
+  headers?: Readonly<Record<string, string>>;
+  baseUrlAuthority?: 'configured' | 'canonical';
+  transport?: OpenCodeServerTransport;
 }>): Promise<OpenCodeExternalSessionClient> {
   const validated = validateOpenCodeExternalSessionsSource({
     source: params.source,
     env: params.env ?? process.env,
+    ...(params.baseUrlAuthority ? { baseUrlAuthority: params.baseUrlAuthority } : {}),
   });
   if (!validated.ok) {
     throw new Error(validated.error);
   }
 
-  const fetchFn = params.fetchFn ?? fetch;
   const baseUrl = resolveBaseUrlOrThrow(validated.source);
+  const transport = params.transport
+    ?? readOpenCodeManagedServerEndpointRegistration(baseUrl)?.transport
+    ?? null;
+  const fetchFn = transport?.fetch ?? params.fetchFn ?? fetch;
   const directory = resolveDirectory(validated.source);
   const directoryQuery = directory ? { directory } : {};
 
   return {
-    sessionList: async () => {
-      const raw = await fetchJson<unknown>(buildUrl(baseUrl, '/session', directoryQuery), fetchFn);
+    sessionList: async ({ limit, search, signal }) => {
+      const raw = await fetchJson<unknown>(buildUrl(baseUrl, '/session', {
+        ...directoryQuery,
+        limit: String(Math.max(1, Math.trunc(limit))),
+        ...(search ? { search } : {}),
+      }), fetchFn, signal, params.headers);
       return Array.isArray(raw) ? raw : [];
     },
-    sessionGet: async ({ sessionId }) => {
+    sessionGet: async ({ sessionId, signal }) => {
       return await fetchJson<unknown>(
         buildUrl(baseUrl, `/session/${encodeURIComponent(sessionId)}`, directoryQuery),
         fetchFn,
+        signal,
+        params.headers,
       );
     },
-    sessionStatusList: async () => {
-      const raw = await fetchJson<unknown>(buildUrl(baseUrl, '/session/status', directoryQuery), fetchFn);
-      return raw && typeof raw === 'object' && !Array.isArray(raw)
-        ? raw as Record<string, { type?: string }>
-        : {};
-    },
-    sessionMessagesList: async ({ sessionId }) => {
+    sessionStatusList: async (opts) => {
       const raw = await fetchJson<unknown>(
-        buildUrl(baseUrl, `/session/${encodeURIComponent(sessionId)}/message`, directoryQuery),
+        buildUrl(baseUrl, '/session/status', directoryQuery),
         fetchFn,
+        opts?.signal,
+        params.headers,
       );
-      return Array.isArray(raw) ? raw : [];
+      return parseOpenCodeSessionStatusMap(raw);
+    },
+    sessionMessagesList: async ({ sessionId, limit, before, signal }) => {
+      const result = await fetchJsonResponse<unknown>(
+        buildUrl(baseUrl, `/session/${encodeURIComponent(sessionId)}/message`, {
+          ...directoryQuery,
+          limit: String(Math.max(1, Math.trunc(limit))),
+          ...(before ? { before } : {}),
+        }),
+        fetchFn,
+        signal,
+        params.headers,
+      );
+      return {
+        items: Array.isArray(result.value) ? result.value : [],
+        nextCursor: result.response.headers.get('x-next-cursor'),
+      };
     },
     dispose: async () => {},
   };

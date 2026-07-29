@@ -15,18 +15,37 @@ describe('Claude unified terminal prompt submit verification', () => {
         'previous output',
         '❯ [Pasted text #1 +40 lines]',
         '────────────────────────',
-        '>> auto mode on',
+        '⏵⏵ auto mode on',
       ].join('\n'),
     })).toBe(true);
   });
 
-  it('keeps single-line prompts on the fast submit path', () => {
+  it('verifies every non-empty single-line prompt after submit', () => {
     const policy = createClaudePromptSubmitVerificationPolicy();
 
-    expect(policy.shouldVerifyAfterSubmit('single line prompt')).toBe(false);
+    expect(policy.shouldVerifyAfterSubmit('single line prompt')).toBe(true);
+    expect(policy.shouldVerifyAfterSubmit('   ')).toBe(false);
+  });
+
+  it('detects a single-line prompt that remains exactly in the composer after submit', () => {
+    const policy = createClaudePromptSubmitVerificationPolicy();
+    const prompt = 'continue';
+
     expect(policy.verifyAfterSubmit({
-      promptText: 'single line prompt',
-      screenText: '❯ [Pasted text #1 +40 lines]',
+      promptText: prompt,
+      screenText: [
+        'Please run /login · API Error: 401 Invalid authentication credentials',
+        '❯ continue',
+        '⏵⏵ auto mode on',
+      ].join('\n'),
+    })).toBe(true);
+    expect(policy.verifyAfterSubmit({
+      promptText: prompt,
+      screenText: [
+        '❯ continue',
+        'Claude acted on the submitted prompt.',
+        '│ > │',
+      ].join('\n'),
     })).toBe(false);
   });
 });

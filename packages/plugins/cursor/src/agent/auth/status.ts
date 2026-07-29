@@ -1,4 +1,18 @@
-import type { EnvRuntimeServiceV1, ExecRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
+type CursorEnvironmentReader = Readonly<{
+  get(key: string): string | undefined;
+}>;
+
+type CursorLegacyCommandRunner = Readonly<{
+  run(input: Readonly<{
+    kind: 'binary';
+    executablePath: string;
+    args?: readonly string[];
+    env?: Readonly<Record<string, string>>;
+  }>): Promise<Readonly<{
+    stdout: string;
+    exitCode: number | null;
+  }>>;
+}>;
 
 const CURSOR_API_KEY_ENV = 'CURSOR_API_KEY';
 const CURSOR_ABOUT_ARGS = Object.freeze(['about', '--format', 'json'] as const);
@@ -19,7 +33,7 @@ function readUserLikeRecord(value: unknown): Record<string, unknown> | null {
 }
 
 export function materializeCursorAuthEnv(
-  env: Pick<EnvRuntimeServiceV1, 'get'>,
+  env: CursorEnvironmentReader,
 ): Readonly<Record<typeof CURSOR_API_KEY_ENV, string>> | Readonly<Record<string, never>> {
   const apiKey = env.get(CURSOR_API_KEY_ENV)?.trim() ?? '';
   return apiKey ? { [CURSOR_API_KEY_ENV]: apiKey } : {};
@@ -51,8 +65,8 @@ export function resolveCursorAuthStatus(params: Readonly<{
 }
 
 export async function checkCursorAuthStatus(params: Readonly<{
-  env: Pick<EnvRuntimeServiceV1, 'get'>;
-  exec: Pick<ExecRuntimeServiceV1, 'run'>;
+  env: CursorEnvironmentReader;
+  exec: CursorLegacyCommandRunner;
   executablePath: string;
 }>): Promise<CursorAuthStatus> {
   const authEnv = materializeCursorAuthEnv(params.env);

@@ -1,4 +1,4 @@
-import type { ExecRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
+import type { PluginExecService } from '@happier-dev/plugin-sdk/runtime';
 
 type OhMyPiPreflightModelOption = Readonly<{
   id: string;
@@ -91,25 +91,29 @@ export function buildOhMyPiPreflightModelsFromListModelsOutput(
 }
 
 export async function probeOhMyPiPreflightModelsRaw(params: Readonly<{
-  exec: ExecRuntimeServiceV1;
+  exec: PluginExecService;
   cwd: string;
   timeoutMs: number;
   env?: NodeJS.ProcessEnv;
 }>): Promise<readonly OhMyPiPreflightModel[] | null> {
-  const result = await params.exec.run({
-    kind: 'agent-cli',
-    agentId: 'ohMyPi',
-    args: OH_MY_PI_CLI_MODELS_COMMAND_ARGS,
+  const resolved = await params.exec.systemTools.resolve({
+    toolId: 'ohmypi-cli',
+    purpose: 'Probe Oh My Pi models',
     cwd: params.cwd,
+  });
+  const result = await params.exec.run({
+    executable: resolved.executable,
+    args: OH_MY_PI_CLI_MODELS_COMMAND_ARGS,
+    cwd: { root: 'workspace', relativePath: '' },
     env: buildOhMyPiPreflightEnv(params.env),
-  }, {
     maxStderrBytes: PREFLIGHT_OUTPUT_MAX_BYTES,
     maxStdoutBytes: PREFLIGHT_OUTPUT_MAX_BYTES,
     timeoutMs: Math.max(MIN_PREFLIGHT_MODELS_TIMEOUT_MS, params.timeoutMs),
   });
-  if (result.exitCode !== 0) return null;
-  return buildOhMyPiPreflightModelsFromListModelsOutput(result.stdout)
-    ?? buildOhMyPiPreflightModelsFromListModelsOutput(result.stderr);
+  if (result.termination.observed.kind !== 'exit' || result.termination.observed.exitCode !== 0) return null;
+  const decoder = new TextDecoder();
+  return buildOhMyPiPreflightModelsFromListModelsOutput(decoder.decode(result.stdout))
+    ?? buildOhMyPiPreflightModelsFromListModelsOutput(decoder.decode(result.stderr));
 }
 
 export const OH_MY_PI_PREFLIGHT_SESSION_CONTROLS = Object.freeze({

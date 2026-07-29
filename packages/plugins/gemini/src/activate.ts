@@ -1,182 +1,313 @@
-import {
-  toPluginHookObjectContext,
-  toPluginHookPayloadEnvelope,
-} from '@happier-dev/plugin-sdk';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import type { PluginApi } from '@happier-dev/plugin-sdk';
 import type {
-  PluginApi,
-  PluginApiHookRegistrationV1,
-  PluginContextV1,
-  PluginHookHandler,
-} from '@happier-dev/plugin-sdk';
-import type { AcpBackendSpecV1 } from '@happier-dev/plugin-sdk/experimental/acp';
+  AgentExecutionRunEvent,
+  AgentExecutionRunOpenRequest,
+  AgentExecutionRunRuntime,
+  AgentRuntimeContext,
+  AgentRuntimeFactory,
+  AgentSessionOpenRequest,
+  AgentSessionRuntime,
+} from '@happier-dev/plugin-sdk/agent-runtime';
+import type {
+  HookHandler,
+} from '@happier-dev/plugin-sdk/runtime';
 
-import { GEMINI_ACP_BACKEND_SPEC } from './agent/acp/definition.js';
+import { GEMINI_ACP_RUNTIME_DEFINITION } from './agent/acp/definition.js';
 import {
   GEMINI_ACP_AUTH_META_ENV,
   GEMINI_ACP_AUTH_METHOD_ENV,
-  GEMINI_API_KEY_ENV,
-  GOOGLE_API_KEY_ENV,
   resolveGeminiAcpFlag,
   resolveGeminiApiKeyFromEnv,
   resolveGeminiAuthConfig,
 } from './agent/auth/resolution.js';
 import { resolveGeminiDaemonSpawnPrerequisites } from './agent/lifecycle/spawnHooks.js';
-import { prepareGeminiMcpShaping } from './agent/mcp/shaping.js';
+import { prepareGeminiNativeMcpShaping } from './agent/mcp/shaping.js';
+import { geminiConnectedAccountRuntime } from './connectedAccounts/runtime.js';
 
-type GeminiAcpCallbacksV1 = NonNullable<AcpBackendSpecV1['callbacks']>;
-type GeminiAcpAuthV1 = NonNullable<AcpBackendSpecV1['auth']>;
-type GeminiAcpEnvBuilderParamsV1 = Parameters<NonNullable<GeminiAcpCallbacksV1['envBuilder']>>[0];
-type GeminiAcpArgvBuilderParamsV1 = Parameters<NonNullable<GeminiAcpCallbacksV1['argvBuilder']>>[0];
-type GeminiAcpResolveMethodIdParamsV1 = Parameters<NonNullable<GeminiAcpAuthV1['resolveMethodId']>>[1];
-type GeminiSpawnPrerequisiteHookEvent = Parameters<typeof resolveGeminiDaemonSpawnPrerequisites>[0];
-type GeminiSpawnPrerequisiteHookContext = NonNullable<Parameters<typeof resolveGeminiDaemonSpawnPrerequisites>[1]>;
-
-const GEMINI_ACP_FLAGS = new Set(['--acp', '--experimental-acp']);
-
-function selectGeminiAcpArgv(baseArgs: readonly string[], flag: string): readonly string[] {
-  let replaced = false;
-  const nextArgs = baseArgs.map((arg) => {
-    if (!replaced && GEMINI_ACP_FLAGS.has(arg)) {
-      replaced = true;
-      return flag;
-    }
-    return arg;
-  });
-  return replaced ? nextArgs : [...baseArgs, flag];
+function buildGeminiLaunchEnvironment(
+  values: Readonly<Record<string, string>>,
+  unset: readonly string[],
+): Readonly<Record<string, string | undefined>> {
+  const env: Record<string, string | undefined> = { ...values };
+  for (const key of unset) delete env[key];
+  return env;
 }
 
-function resolveGeminiAuthForEnv(env: Readonly<Record<string, string | undefined>>): Readonly<{
-  apiKey: string | null;
-  auth: ReturnType<typeof resolveGeminiAuthConfig>;
-}> {
-  const apiKey = resolveGeminiApiKeyFromEnv(env);
-  return {
-    apiKey,
-    auth: resolveGeminiAuthConfig(env, apiKey),
-  };
+function ignoredGeminiAcpAuthControlEnv(env: Readonly<Record<string, string | undefined>>): Record<string, string> {
+  const overlay: Record<string, string> = {};
+  if (Object.prototype.hasOwnProperty.call(env, GEMINI_ACP_AUTH_METHOD_ENV)) overlay[GEMINI_ACP_AUTH_METHOD_ENV] = '';
+  if (Object.prototype.hasOwnProperty.call(env, GEMINI_ACP_AUTH_META_ENV)) overlay[GEMINI_ACP_AUTH_META_ENV] = '';
+  return overlay;
 }
 
-function tryResolveGeminiAuthForEnv(env: Readonly<Record<string, string | undefined>>): Readonly<{
-  apiKey: string | null;
-  auth: ReturnType<typeof resolveGeminiAuthConfig>;
-}> | null {
+function readServiceAccountProjectId(value: Uint8Array): string | null {
   try {
-    return resolveGeminiAuthForEnv(env);
+    const parsed = JSON.parse(new TextDecoder().decode(value)) as Record<string, unknown>;
+    if (
+      parsed.type !== 'service_account'
+      || typeof parsed.project_id !== 'string'
+      || !parsed.project_id.trim()
+      || typeof parsed.client_email !== 'string'
+      || !parsed.client_email.trim()
+      || typeof parsed.private_key !== 'string'
+      || !parsed.private_key.trim()
+    ) {
+      return null;
+    }
+    return parsed.project_id.trim();
   } catch {
     return null;
   }
 }
 
-function buildIgnoredGeminiAcpAuthControlEnv(env: Readonly<Record<string, string | undefined>>): Record<string, string> {
-  const overlay: Record<string, string> = {};
-  if (Object.prototype.hasOwnProperty.call(env, GEMINI_ACP_AUTH_METHOD_ENV)) {
-    overlay[GEMINI_ACP_AUTH_METHOD_ENV] = '';
-  }
-  if (Object.prototype.hasOwnProperty.call(env, GEMINI_ACP_AUTH_META_ENV)) {
-    overlay[GEMINI_ACP_AUTH_META_ENV] = '';
-  }
-  return overlay;
+async function openGeminiSession(
+  request: AgentSessionOpenRequest,
+  context: AgentRuntimeContext,
+): Promise<AgentSessionRuntime> {
+      const requestedLaunchEnvironment = request.launchEnvironment ?? { values: {}, unset: [] };
+      const connectedAccountEnv: Record<string, string> = {};
+      let connectedServiceAccount: Uint8Array | null = null;
+      const binding = await context.services.connectedAccounts.getBinding(
+        'model_upstream',
+        { signal: context.signal },
+      );
+      if (binding) {
+        const materializedFiles = await context.services.connectedAccounts.materialize(
+          'model_upstream',
+          { kind: 'files', fileIds: ['google-service-account.json'] },
+          { signal: context.signal },
+        );
+        if (materializedFiles.kind !== 'files') {
+          throw new Error('Gemini upstream account returned an invalid file materialization.');
+        }
+        connectedServiceAccount = materializedFiles.files['google-service-account.json'] ?? null;
+        if (connectedServiceAccount) {
+          const projectId = readServiceAccountProjectId(connectedServiceAccount);
+          if (!projectId) {
+            throw new Error('Gemini upstream account returned an invalid service-account credential.');
+          }
+          connectedAccountEnv.GOOGLE_GENAI_USE_VERTEXAI = '1';
+          connectedAccountEnv.GOOGLE_CLOUD_PROJECT = projectId;
+          connectedAccountEnv.GOOGLE_CLOUD_LOCATION = 'global';
+        } else {
+          const materialized = await context.services.connectedAccounts.materialize(
+            'model_upstream',
+            { kind: 'environment', keys: ['GEMINI_API_KEY', 'GOOGLE_API_KEY'] },
+            { signal: context.signal },
+          );
+          if (materialized.kind !== 'environment') {
+            throw new Error('Gemini upstream account returned an invalid environment materialization.');
+          }
+          const geminiApiKey = materialized.env.GEMINI_API_KEY?.trim();
+          const googleApiKey = materialized.env.GOOGLE_API_KEY?.trim();
+          if (geminiApiKey) connectedAccountEnv.GEMINI_API_KEY = geminiApiKey;
+          if (googleApiKey) connectedAccountEnv.GOOGLE_API_KEY = googleApiKey;
+          if (!geminiApiKey && !googleApiKey) {
+            throw new Error('Gemini upstream account did not materialize a supported credential.');
+          }
+        }
+      }
+      const sourceEnv: Record<string, string | undefined> = {
+        ...buildGeminiLaunchEnvironment(
+          requestedLaunchEnvironment.values,
+          requestedLaunchEnvironment.unset,
+        ),
+        ...connectedAccountEnv,
+      };
+      const auth = resolveGeminiAuthConfig(sourceEnv, resolveGeminiApiKeyFromEnv(sourceEnv));
+      const authControlEnv = ignoredGeminiAcpAuthControlEnv(sourceEnv);
+      const shaping = await prepareGeminiNativeMcpShaping(sourceEnv);
+      try {
+        if (connectedServiceAccount) {
+          const credentialDirectory = join(shaping.env.HOME, '.config', 'happier');
+          const credentialPath = join(credentialDirectory, 'google-service-account.json');
+          await mkdir(credentialDirectory, { recursive: true, mode: 0o700 });
+          await writeFile(credentialPath, connectedServiceAccount, { mode: 0o600, flag: 'wx' });
+          connectedAccountEnv.GOOGLE_APPLICATION_CREDENTIALS = credentialPath;
+          sourceEnv.GOOGLE_APPLICATION_CREDENTIALS = credentialPath;
+        }
+        const flag = await resolveGeminiAcpFlag(context.services.exec, {
+          env: {
+            ...sourceEnv,
+            ...shaping.env,
+            ...authControlEnv,
+            ...(auth.launchEnv ?? {}),
+          },
+          signal: context.signal,
+        });
+        const launchEnvironment = {
+          values: {
+            ...requestedLaunchEnvironment.values,
+            ...connectedAccountEnv,
+            ...authControlEnv,
+            ...(auth.launchEnv ?? {}),
+          },
+          unset: requestedLaunchEnvironment.unset.filter(
+            (key) => !Object.prototype.hasOwnProperty.call(connectedAccountEnv, key),
+          ),
+        };
+        const session = await context.protocols.acp.open({
+          ...request,
+          launchEnvironment,
+        }, {
+          transport: {
+            kind: 'stdio',
+            executable: { kind: 'systemTool', id: 'gemini-cli' },
+            args: [flag],
+            env: shaping.env,
+            timeouts: {
+              initializeMs: GEMINI_ACP_RUNTIME_DEFINITION.timeouts.initMs,
+              idleMs: GEMINI_ACP_RUNTIME_DEFINITION.timeouts.idleMs,
+              toolCallMs: GEMINI_ACP_RUNTIME_DEFINITION.timeouts.toolCallMs,
+            },
+          },
+          definition: GEMINI_ACP_RUNTIME_DEFINITION,
+        });
+        let disposed = false;
+        return {
+          ...session,
+          async dispose() {
+            if (disposed) return;
+            disposed = true;
+            try {
+              await session.dispose();
+            } finally {
+              await shaping.cleanup();
+            }
+          },
+        };
+      } catch (error) {
+        await shaping.cleanup();
+        throw error;
+      }
 }
 
-const resolveGeminiDaemonSpawnPrerequisitesHook: PluginHookHandler = (event, context) =>
-  resolveGeminiDaemonSpawnPrerequisites(
-    toPluginHookPayloadEnvelope<GeminiSpawnPrerequisiteHookEvent>(event),
-    toPluginHookObjectContext<GeminiSpawnPrerequisiteHookContext>(context),
-  );
+type GeminiExecutionRunEventInput = AgentExecutionRunEvent extends infer Event
+  ? Event extends AgentExecutionRunEvent
+    ? Omit<Event, 'sequence' | 'runId' | 'emittedAtMs'>
+    : never
+  : never;
+
+function createGeminiExecutionRunRuntime(
+  request: Extract<AgentExecutionRunOpenRequest, { kind: 'create' }>,
+  session: AgentSessionRuntime,
+): AgentExecutionRunRuntime {
+  const listeners = new Set<(event: AgentExecutionRunEvent) => void>();
+  const history: AgentExecutionRunEvent[] = [];
+  let sequence = 0;
+  let turnOrdinal = 0;
+  let activeTurnId: string | null = null;
+  const emit = (
+    input: GeminiExecutionRunEventInput,
+    emittedAtMs = Date.now(),
+  ): void => {
+    const event = Object.freeze({
+      ...input,
+      sequence: ++sequence,
+      runId: request.runId,
+      emittedAtMs,
+    }) as AgentExecutionRunEvent;
+    history.push(event);
+    for (const listener of listeners) listener(event);
+  };
+  const subscription = session.watch((event) => {
+    if (event.kind === 'provider-session-id') {
+      emit({ kind: 'checkpoint', checkpointId: event.providerSessionId }, event.emittedAtMs);
+    } else if (event.kind === 'message-delta') {
+      emit({
+        kind: 'output-delta',
+        channel: event.channel,
+        text: event.text,
+      }, event.emittedAtMs);
+    } else if (event.kind === 'turn-progress') {
+      emit({ kind: 'run-progress' }, event.emittedAtMs);
+    } else if (event.kind === 'turn-complete') {
+      activeTurnId = null;
+      emit({ kind: 'run-complete' }, event.emittedAtMs);
+    } else if (event.kind === 'turn-failed') {
+      activeTurnId = null;
+      emit({ kind: 'run-failed', diagnostic: event.diagnostic }, event.emittedAtMs);
+    } else if (event.kind === 'turn-cancelled') {
+      activeTurnId = null;
+      emit({
+        kind: 'run-cancelled',
+        ...(event.diagnostic ? { diagnostic: event.diagnostic } : {}),
+      }, event.emittedAtMs);
+    }
+  });
+  const send: AgentExecutionRunRuntime['send'] = async (input, options) => {
+    activeTurnId = `${request.runId}-turn-${++turnOrdinal}`;
+    const result = await session.send({
+      inputIds: [`${request.runId}-input-${turnOrdinal}`],
+      input,
+      delivery: { kind: 'newTurn', turnId: activeTurnId },
+    }, options);
+    if (result.status === 'admitted') return { status: 'admitted' };
+    activeTurnId = null;
+    emit({
+      kind: 'run-failed',
+      ...(result.diagnostic ? { diagnostic: result.diagnostic } : {}),
+    });
+    return { status: result.status, diagnostic: result.diagnostic };
+  };
+  emit({ kind: 'run-start' });
+  return {
+    send,
+    async stop(options) {
+      if (!activeTurnId) return { status: 'notRunning' };
+      const result = await session.cancel?.({
+        turnId: activeTurnId,
+        reason: 'user',
+      }, options);
+      return { status: result?.status ?? 'unsupported' };
+    },
+    watch(listener) {
+      listeners.add(listener);
+      for (const event of history) listener(event);
+      return {
+        dispose: () => {
+          listeners.delete(listener);
+        },
+      };
+    },
+    async dispose() {
+      subscription.dispose();
+      listeners.clear();
+      await session.dispose();
+    },
+  };
+}
+
+export const createGeminiAgentRuntime: AgentRuntimeFactory = () => ({
+  sessions: {
+    open: openGeminiSession,
+  },
+  executionRuns: {
+    async open(request, context) {
+      if (request.kind !== 'create') {
+        throw new Error(`Gemini execution runs do not support ${request.kind}.`);
+      }
+      const session = await openGeminiSession({
+        kind: 'create',
+        sessionId: request.runId,
+        cwd: request.cwd,
+        ...(request.launchEnvironment ? { launchEnvironment: request.launchEnvironment } : {}),
+      }, context);
+      const execution = createGeminiExecutionRunRuntime(request, session);
+      const result = await execution.send(request.input);
+      if (result.status !== 'admitted') await execution.dispose();
+      return execution;
+    },
+  },
+});
+
+const resolveGeminiDaemonSpawnPrerequisitesHook: HookHandler = (event, context) =>
+  resolveGeminiDaemonSpawnPrerequisites(event, context);
 
 export function activate(api: PluginApi): void {
-  const shapingCleanups = new Set<() => Promise<void> | void>();
-  let disposed = false;
-
-  async function cleanupGeminiMcpShaping(): Promise<void> {
-    if (disposed) return;
-    disposed = true;
-    const pending = [...shapingCleanups].reverse();
-    for (const cleanup of pending) {
-      await cleanup();
-    }
-  }
-
-  api.onDispose(cleanupGeminiMcpShaping);
-
-  api.registerAgentRuntime({
-    agentId: 'gemini',
-    create: async (ctx: PluginContextV1) => {
-      const spec = {
-        ...GEMINI_ACP_BACKEND_SPEC,
-        auth: {
-          ...GEMINI_ACP_BACKEND_SPEC.auth,
-          methodId: GEMINI_ACP_BACKEND_SPEC.auth?.methodId,
-          resolveMethodId: (_ctx: PluginContextV1, params: GeminiAcpResolveMethodIdParamsV1) => {
-            return resolveGeminiAuthForEnv(params.env).auth.authMethodId;
-          },
-        },
-        callbacks: {
-          ...GEMINI_ACP_BACKEND_SPEC.callbacks,
-          envBuilder: async (params: GeminiAcpEnvBuilderParamsV1) => {
-            const {
-              [GEMINI_ACP_AUTH_METHOD_ENV]: _authMethod,
-              [GEMINI_ACP_AUTH_META_ENV]: _authMeta,
-              ...childEnv
-            } = params.env;
-            const finalAuth = resolveGeminiAuthForEnv(params.env).auth;
-            const authControlEnv = buildIgnoredGeminiAcpAuthControlEnv(params.env);
-            const authLaunchEnv = {
-              ...authControlEnv,
-              ...finalAuth.launchEnv,
-            };
-            if (!finalAuth.shouldUseIsolatedMcpHome) {
-              return {
-                ...childEnv,
-                ...authLaunchEnv,
-              };
-            }
-            const shaping = await prepareGeminiMcpShaping(ctx);
-            if (disposed) {
-              await shaping.cleanup();
-              throw new Error('Gemini ACP MCP environment is disposed.');
-            }
-
-            const cleanup = async () => {
-              if (!shapingCleanups.delete(cleanup)) return;
-              await shaping.cleanup();
-            };
-            shapingCleanups.add(cleanup);
-            ctx.abort.signal.addEventListener('abort', () => {
-              void cleanup();
-            }, { once: true });
-
-            return {
-              ...childEnv,
-              ...shaping.env,
-              GEMINI_FORCE_ENCRYPTED_FILE_STORAGE: 'false',
-              GOOGLE_APPLICATION_CREDENTIALS: '',
-              ...authLaunchEnv,
-            };
-          },
-          argvBuilder: async (params: GeminiAcpArgvBuilderParamsV1) => {
-            if (disposed) {
-              throw new Error('Gemini ACP argv builder is disposed.');
-            }
-            resolveGeminiAuthForEnv(params.env);
-            const flag = await resolveGeminiAcpFlag(ctx, {
-              env: params.env,
-              signal: ctx.abort.signal,
-            });
-            return selectGeminiAcpArgv(params.baseArgs, flag);
-          },
-        },
-      } satisfies AcpBackendSpecV1;
-
-      return ctx.agentRuntime.acp.defineAcpBackend(spec);
-    },
-  });
-  api.registerHook({
-    hookId: 'agent.resolvePrerequisites',
-    category: 'decision',
-    scope: 'agent',
-    filters: { agentId: 'gemini' },
-    executionKind: 'decide',
-    handler: resolveGeminiDaemonSpawnPrerequisitesHook,
-  });
+  api.connectedAccounts.register('gemini-account', geminiConnectedAccountRuntime);
+  api.agents.register('gemini', createGeminiAgentRuntime);
+  api.hooks.register('resolve-prerequisites', resolveGeminiDaemonSpawnPrerequisitesHook);
 }

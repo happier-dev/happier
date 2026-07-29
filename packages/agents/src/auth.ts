@@ -36,7 +36,20 @@ export const CANONICAL_AGENT_AUTH_PROBE_CONFIG: Readonly<Record<CanonicalAgentId
   mergeAuthoredWithGeneratedAgentFacts<AgentAuthProbeConfig>({
     authored: AUTHORED_AGENT_AUTH_PROBE_CONFIG,
     label: 'auth probe config',
-    readGenerated: (definition) => definition.authProbeConfig,
+    readGenerated: (definition) => ({
+      agentId: definition.id as AgentId,
+      binaryNames: [
+        definition.cli.executable.binaryName,
+        ...(definition.cli.executable.alternativeBinaryNames ?? []),
+      ],
+      statusCommand: definition.cli.auth.probe.statusArgs ?? null,
+      parser: definition.cli.auth.probe.parser,
+      backgroundChecks: definition.cli.auth.probe.backgroundChecks,
+      ...(definition.cli.auth.probe.envVars ? { envVars: definition.cli.auth.probe.envVars } : {}),
+      ...(definition.cli.auth.probe.credentialPaths
+        ? { credentialPaths: definition.cli.auth.probe.credentialPaths }
+        : {}),
+    }),
   });
 
 export const AGENT_AUTH_PROBE_CONFIG: Readonly<Record<CanonicalAgentId, AgentAuthProbeConfig>> = CANONICAL_AGENT_AUTH_PROBE_CONFIG;

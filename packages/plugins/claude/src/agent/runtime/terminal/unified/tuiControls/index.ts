@@ -37,6 +37,9 @@ export {
   type ClaudeUnifiedVerifiedRuntimeConfig,
   type RuntimeConfigApplyOutcome,
   type RuntimeConfigChangeOutcome,
+  type RuntimeConfigOutcomeChangeKeyV1,
   type RuntimeConfigOutcomeScalar,
+  type RuntimeConfigOutcomeStatusV1,
+  type RuntimeConfigOutcomeTimingV1,
   type RuntimeConfigScheduleOutcome,
 } from './types.js';

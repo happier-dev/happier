@@ -2,11 +2,27 @@ import type {
   ExternalSessionsSource,
   RuntimeDescriptorV1,
   SessionHandoffResumePlan,
-} from '@happier-dev/plugin-sdk/sessions';
-import { ExternalSessionsSourceSchema } from '@happier-dev/plugin-sdk/sessions';
+} from '@happier-dev/plugin-sdk/experimental/sessions';
+import { ExternalSessionsSourceSchema } from '@happier-dev/plugin-sdk/experimental/sessions';
 import { z } from 'zod';
 
 import type { CodexBackendMode } from '../../../../protocol/runtimeDescriptorV1.js';
+
+export function normalizeCodexHandoffBundleRelativePath(relativePath: string): string {
+  const portable = relativePath.replaceAll('\\', '/');
+  if (
+    portable.startsWith('/')
+    || /^[A-Za-z]:/u.test(portable)
+  ) {
+    throw new Error(`Codex bundle path must be relative: ${relativePath}`);
+  }
+
+  const segments = portable.split('/').filter((segment) => segment.length > 0 && segment !== '.');
+  if (segments.length === 0 || segments.some((segment) => segment === '..')) {
+    throw new Error(`Codex bundle path escapes CODEX_HOME: ${relativePath}`);
+  }
+  return segments.join('/');
+}
 
 type CodexSessionHandoffAffinity = Readonly<{
   backendMode: CodexBackendMode | null;

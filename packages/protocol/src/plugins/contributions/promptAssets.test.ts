@@ -3,47 +3,39 @@ import { describe, expect, it } from 'vitest';
 import { PluginContributesV2Schema } from './v2.js';
 
 describe('plugin prompt asset contributions', () => {
-  it('parses inert prompt asset descriptor rows as a contribution family', () => {
+  it('parses digest-resource prompt assets targeted to an Agent', () => {
     const parsed = PluginContributesV2Schema.parse({
       promptAssets: [
         {
-          adapterKind: 'skillMd',
-          assetTypeId: 'claude.skill',
-          providerId: 'claude',
-          title: 'Claude skills',
-          description: 'Claude skill bundles.',
-          projectRootPath: ['.claude', 'skills'],
-          projectRootDisplayPath: '.claude/skills',
-          userRootPath: ['.claude', 'skills'],
-          userRootDisplayPath: '~/.claude/skills',
-          capabilities: { supportsCatalogInstall: true },
+          id: 'security-review',
+          kind: 'systemPrompt',
+          resource: 'security-review-prompt',
+          target: { kind: 'agent', agent: 'deepsec' },
+          priority: 20,
         },
       ],
     });
 
     expect(parsed.promptAssets).toEqual([
-      expect.objectContaining({
-        adapterKind: 'skillMd',
-        assetTypeId: 'claude.skill',
-        providerId: 'claude',
-      }),
+      {
+        id: 'security-review',
+        kind: 'systemPrompt',
+        resource: 'security-review-prompt',
+        target: { kind: 'agent', agent: 'deepsec' },
+        priority: 20,
+      },
     ]);
   });
 
-  it('rejects unknown prompt asset adapter kinds', () => {
+  it('rejects provider-targeted prompt assets', () => {
     expect(() =>
       PluginContributesV2Schema.parse({
         promptAssets: [
           {
-            adapterKind: 'hostExecutable',
-            assetTypeId: 'claude.skill',
-            providerId: 'claude',
-            title: 'Claude skills',
-            description: 'Claude skill bundles.',
-            projectRootPath: ['.claude', 'skills'],
-            projectRootDisplayPath: '.claude/skills',
-            userRootPath: ['.claude', 'skills'],
-            userRootDisplayPath: '~/.claude/skills',
+            id: 'security-review',
+            kind: 'systemPrompt',
+            resource: 'security-review-prompt',
+            target: { kind: 'provider', provider: 'deepsec' },
           },
         ],
       }),

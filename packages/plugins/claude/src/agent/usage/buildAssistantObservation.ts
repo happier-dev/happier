@@ -1,5 +1,9 @@
 import { estimateClaudeUsageCost } from './cost.js';
-import type { ClaudeTokenUsage, ClaudeUsageObservation } from './types.js';
+import type {
+    ClaudeTokenUsage,
+    ClaudeUsageModelSource,
+    ClaudeUsageObservation,
+} from './types.js';
 
 function asFiniteNonNegativeNumber(value: unknown): number | null {
     return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
@@ -7,6 +11,7 @@ function asFiniteNonNegativeNumber(value: unknown): number | null {
 
 export function buildClaudeAssistantUsageObservation(params: Readonly<{
     modelId?: string | null;
+    modelSource?: ClaudeUsageModelSource;
     usage: ClaudeTokenUsage;
 }>): ClaudeUsageObservation | null {
     const inputTokens = asFiniteNonNegativeNumber(params.usage.input_tokens);
@@ -28,12 +33,17 @@ export function buildClaudeAssistantUsageObservation(params: Readonly<{
         (outputTokens ?? 0) +
         (cacheCreationTokens ?? 0) +
         (cacheReadTokens ?? 0);
-    const costs = estimateClaudeUsageCost(params.usage, params.modelId ?? undefined);
-    const tokens: ClaudeUsageObservation['tokens'] = { total };
-    if (inputTokens != null) tokens.input = inputTokens;
-    if (outputTokens != null) tokens.output = outputTokens;
-    if (cacheCreationTokens != null) tokens.cache_creation = cacheCreationTokens;
-    if (cacheReadTokens != null) tokens.cache_read = cacheReadTokens;
+    const costs = params.modelSource === 'provider'
+        ? null
+        : estimateClaudeUsageCost(params.usage, params.modelId ?? undefined);
+    const tokens: ClaudeUsageObservation['tokens'] = {
+        total,
+        input: inputTokens ?? 0,
+        output: outputTokens ?? 0,
+        reasoning: 0,
+        cacheWrite: cacheCreationTokens ?? 0,
+        cacheRead: cacheReadTokens ?? 0,
+    };
 
     return {
         provider: 'claude',
@@ -42,14 +52,16 @@ export function buildClaudeAssistantUsageObservation(params: Readonly<{
         key: 'claude-session',
         modelId: typeof params.modelId === 'string' && params.modelId.trim().length > 0 ? params.modelId.trim() : null,
         tokens,
-        cost: {
-            estimatedUsd: costs.total,
-            total: costs.total,
-            input: costs.input,
-            output: costs.output,
-            billingContext: 'unknown',
-            costSource: 'pricing_estimate',
-        },
+        cost: costs
+            ? {
+                estimatedUsd: costs.total,
+                ...(costs.breakdown ? { breakdown: costs.breakdown } : {}),
+                reportedUsd: 0,
+                billingContext: 'unknown',
+                costSource: 'pricing_estimate',
+                currency: 'USD',
+            }
+            : null,
         contextUsedTokens: null,
         contextWindowTokens: null,
     };

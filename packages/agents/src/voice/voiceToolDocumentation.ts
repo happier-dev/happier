@@ -3,10 +3,29 @@ import {
   describeActionInputFieldForVoice,
   getActionVoiceWorkflowNotes,
   isVoicePromptHotPathSpec,
+  listVoiceToolActionSpecs,
   type ActionInputFieldHint,
   type ActionSpec,
   type VoiceGuidanceAvailability,
 } from '@happier-dev/protocol';
+
+const VOICE_TOOL_NAME_BY_ACTION_ID = new Map(
+  listVoiceToolActionSpecs().flatMap((spec) => {
+    const name = spec.bindings?.voiceClientToolName;
+    return typeof name === 'string' && name ? [[spec.id, name] as const] : [];
+  }),
+);
+
+function referencesUnavailableVoiceTool(
+  text: string,
+  availability: VoiceGuidanceAvailability,
+): boolean {
+  const available = new Set(availability.availableActionIds ?? []);
+  for (const [actionId, toolName] of VOICE_TOOL_NAME_BY_ACTION_ID) {
+    if (!available.has(actionId) && text.includes(toolName)) return true;
+  }
+  return false;
+}
 
 function normalizeText(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -82,7 +101,8 @@ export function buildVoiceToolDocumentationLines(
   for (const spec of enabledSpecs) {
     const toolName = normalizeText(spec.bindings?.voiceClientToolName);
     if (!toolName) continue;
-    out.push(...formatToolDocumentation(spec, toolName, params.invocationLabel, availability));
+    out.push(...formatToolDocumentation(spec, toolName, params.invocationLabel, availability)
+      .filter((line) => !referencesUnavailableVoiceTool(line, availability)));
   }
 
   return out;
@@ -104,7 +124,9 @@ export function buildVoiceDiscoveryChecklistLines(
   for (const spec of enabledSpecs) {
     for (const note of getActionVoiceWorkflowNotes(spec.id, availability)) {
       const normalized = normalizeText(note);
-      if (!normalized || seen.has(normalized)) continue;
+      if (!normalized
+        || seen.has(normalized)
+        || referencesUnavailableVoiceTool(normalized, availability)) continue;
       seen.add(normalized);
       out.push(`- ${normalized}`);
     }

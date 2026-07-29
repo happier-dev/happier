@@ -28,17 +28,23 @@ describe('createElevenLabsProtocolAdapter', () => {
         textOnly: prepared.sessionConfig.textOnly,
       })),
     };
-    const lifecycle = { started: vi.fn(), ended: vi.fn(async () => {}) };
+    const lifecycle = {
+      prepared: vi.fn(),
+      releasePrepared: vi.fn(async () => {}),
+      started: vi.fn(),
+      ended: vi.fn(async () => {}),
+    };
     const runtime = createElevenLabsProtocolAdapter({
       preparation,
       lifecycle,
       eventMapper: createElevenLabsEventMapper(),
       onDiagnosticError: vi.fn(),
-      getSettings: () => ({ voice: { providerId: 'realtime_elevenlabs' } }),
+      rememberHostedConversation: vi.fn(),
     });
 
     await expect(runtime.adapter.prepare({
       controlSessionId: 'control-1',
+      attemptId: 1,
       reason: 'initial',
       request: {
         initialContext: 'context',
@@ -46,6 +52,11 @@ describe('createElevenLabsProtocolAdapter', () => {
         retryAfterPaywall: false,
         textOnly: false,
       },
+      platform: 'web',
+      providerConfig: {},
+      accountOperations: { request: vi.fn() },
+      providerConversation: null,
+      hostedConversation: null,
       signal: new AbortController().signal,
     })).resolves.toEqual({
       kind: 'prepared',
@@ -54,7 +65,6 @@ describe('createElevenLabsProtocolAdapter', () => {
         safeMetadata: {
           billingMode: 'byo',
           expiresAtMs: null,
-          leaseId: null,
         },
       },
     });
@@ -66,10 +76,35 @@ describe('createElevenLabsProtocolAdapter', () => {
       textOnly: false,
     }));
 
+    await runtime.adapter.prepare({
+      controlSessionId: 'control-1',
+      attemptId: 2,
+      reason: 'initial',
+      request: {
+        initialContext: 'replacement context',
+        requestedTargetSessionId: 'target-1',
+        retryAfterPaywall: false,
+        textOnly: false,
+      },
+      platform: 'web',
+      providerConfig: {},
+      accountOperations: { request: vi.fn() },
+      providerConversation: null,
+      hostedConversation: null,
+      signal: new AbortController().signal,
+    });
+    await runtime.adapter.releasePrepared?.({
+      controlSessionId: 'control-1',
+      attemptId: 1,
+      reason: { code: 'replaced' },
+    });
+    expect(lifecycle.releasePrepared).toHaveBeenCalledWith(1, expect.any(Object));
+
     runtime.handleSessionIdentity({ controlSessionId: 'control-1', conversationId: 'conversation-1' });
     expect(lifecycle.started).toHaveBeenCalledWith(expect.objectContaining({
       controlSessionId: 'control-1',
       conversationId: 'conversation-1',
+      attemptId: 2,
     }));
     await runtime.endSession();
     expect(lifecycle.ended).toHaveBeenCalledTimes(1);
@@ -82,24 +117,46 @@ describe('createElevenLabsProtocolAdapter', () => {
         prepare: vi.fn(),
         buildStartConfig: vi.fn(),
       },
-      lifecycle: { started: vi.fn(), ended: vi.fn(async () => {}) },
+      lifecycle: {
+        prepared: vi.fn(),
+        releasePrepared: vi.fn(async () => {}),
+        started: vi.fn(),
+        ended: vi.fn(async () => {}),
+      },
       eventMapper: createElevenLabsEventMapper(),
       onDiagnosticError: vi.fn(),
-      getSettings: () => ({}),
+      rememberHostedConversation: vi.fn(),
     });
     runtime.adapter.prepare({
       controlSessionId: 'control-events',
+      attemptId: 1,
       reason: 'initial',
       request: {},
+      platform: 'web',
+      providerConfig: {},
+      accountOperations: { request: vi.fn() },
+      providerConversation: null,
+      hostedConversation: null,
       signal: new AbortController().signal,
     }).catch(() => {});
-    expect(runtime.adapter.decodeControl({ type: 'elevenlabs.mode', mode: 'speaking' })).toEqual([
-      { type: 'provider_event', event: { type: 'elevenlabs.mode', mode: 'speaking' } },
-    ]);
+    expect(runtime.adapter.decodeControl({ type: 'elevenlabs.mode', mode: 'speaking' }))
+      .toEqual([{ type: 'assistant_output_started' }]);
+    expect(runtime.adapter.decodeControl({ type: 'elevenlabs.mode', mode: 'listening' }))
+      .toEqual([{ type: 'assistant_output_stopped' }]);
+    expect(runtime.adapter.decodeControl({
+      type: 'future.provider.event',
+      token: 'sentinel-secret-token',
+      transcript: 'sentinel-private-transcript',
+    })).toEqual([]);
   });
 
   it('discards prepared provider state when the controller tears down before session identity', async () => {
-    const lifecycle = { started: vi.fn(), ended: vi.fn(async () => {}) };
+    const lifecycle = {
+      prepared: vi.fn(),
+      releasePrepared: vi.fn(async () => {}),
+      started: vi.fn(),
+      ended: vi.fn(async () => {}),
+    };
     const runtime = createElevenLabsProtocolAdapter({
       preparation: {
         isSelected: vi.fn(() => true),
@@ -115,17 +172,24 @@ describe('createElevenLabsProtocolAdapter', () => {
       lifecycle,
       eventMapper: createElevenLabsEventMapper(),
       onDiagnosticError: vi.fn(),
-      getSettings: () => ({}),
+      rememberHostedConversation: vi.fn(),
     });
     await runtime.adapter.prepare({
       controlSessionId: 'never-connected',
+      attemptId: 1,
       reason: 'initial',
       request: {},
+      platform: 'web',
+      providerConfig: {},
+      accountOperations: { request: vi.fn() },
+      providerConversation: null,
+      hostedConversation: null,
       signal: new AbortController().signal,
     });
 
     await runtime.adapter.releasePrepared?.({
       controlSessionId: 'never-connected',
+      attemptId: 1,
       reason: { code: 'error' },
     });
     runtime.handleSessionIdentity({

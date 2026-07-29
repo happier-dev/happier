@@ -17,8 +17,16 @@ import {
     ConnectedServiceAuthGroupV1Schema,
     ConnectedServiceBindingSelectionV1Schema,
     ConnectedServiceBindingsV1Schema,
+    PersistedConnectedServiceBindingsV1Schema,
     ConnectedServiceCredentialHealthV1Schema,
+    ConnectedServiceCredentialCompatibleMutationSuccessV1Schema,
+    ConnectedServiceCredentialMutationGuardV1Schema,
+    ConnectedServiceCredentialMutationResponseV1Schema,
+    ConnectedServiceCredentialMutationSuccessV1Schema,
+    ConnectedServiceCredentialMutationSupersededV1Schema,
     ConnectedServiceCredentialRecordV1Schema,
+    ConnectedServiceCredentialRevisionV1Schema,
+    readConnectedServiceCredentialRevisionBoundaryV1,
     ConnectedServiceQuotaRecoveryCreditsV1Schema,
     ConnectedServiceQuotaSnapshotV1Schema,
     ConnectedServiceUsageSourceV1Schema,
@@ -27,6 +35,63 @@ import {
 } from './connectedServiceSchemas.js';
 
 describe('connectedServiceSchemas', () => {
+    it('defines one strict credential revision and mutation fence contract', () => {
+        expect(ConnectedServiceCredentialRevisionV1Schema.parse('csr_0123456789ABCDEFGHJKMNPQRS')).toBe(
+            'csr_0123456789ABCDEFGHJKMNPQRS',
+        );
+        expect(ConnectedServiceCredentialMutationGuardV1Schema.safeParse({
+            refreshLeaseOwnerId: 'owner-without-revision',
+        }).success).toBe(false);
+        expect(ConnectedServiceCredentialMutationGuardV1Schema.parse({
+            expectedCredentialRevision: null,
+        })).toEqual({ expectedCredentialRevision: null });
+        expect(ConnectedServiceCredentialMutationGuardV1Schema.safeParse({
+            expectedCredentialRevision: null,
+            refreshLeaseOwnerId: 'owner-cannot-use-absence',
+        }).success).toBe(false);
+        expect(ConnectedServiceCredentialMutationResponseV1Schema.parse({
+            error: 'connect_credential_mutation_superseded',
+            reason: 'revision_mismatch',
+            credentialRevision: null,
+        })).toEqual({
+            error: 'connect_credential_mutation_superseded',
+            reason: 'revision_mismatch',
+            credentialRevision: null,
+        });
+        expect(ConnectedServiceCredentialMutationSuccessV1Schema.safeParse({
+            success: true,
+            credentialRevision: 'bad',
+        }).success).toBe(false);
+        expect(ConnectedServiceCredentialMutationSupersededV1Schema.safeParse({
+            error: 'connect_credential_mutation_superseded',
+            reason: 'unknown',
+            credentialRevision: null,
+        }).success).toBe(false);
+    });
+
+    it('normalizes exact server-v0.2.1 credential responses as explicitly unfenced', () => {
+        const legacy = ConnectedServiceCredentialCompatibleMutationSuccessV1Schema.parse({
+            success: true,
+        });
+        expect(readConnectedServiceCredentialRevisionBoundaryV1(legacy)).toEqual({
+            revisionSemantics: 'legacy_unfenced',
+            credentialRevision: null,
+        });
+
+        const revisioned = ConnectedServiceCredentialCompatibleMutationSuccessV1Schema.parse({
+            success: true,
+            credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+        });
+        expect(readConnectedServiceCredentialRevisionBoundaryV1(revisioned)).toEqual({
+            revisionSemantics: 'revisioned',
+            credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+        });
+
+        expect(readConnectedServiceCredentialRevisionBoundaryV1({
+            credentialRevision: 'malformed',
+        })).toBeNull();
+    });
+
     it('parses connected service ids', () => {
         expect(ConnectedServiceIdSchema.parse('openai-codex')).toBe('openai-codex');
         expect(ConnectedServiceIdSchema.parse('openai')).toBe('openai');
@@ -210,6 +275,14 @@ describe('connectedServiceSchemas', () => {
             serviceId: 'openai-codex',
             profileId: 'work',
             bindingKind: 'group_member',
+        }).success).toBe(false);
+
+        expect(ConnectedServiceUsageSourceV1Schema.safeParse({
+            serviceId: 'openai-codex',
+            profileId: 'work',
+            bindingKind: 'profile',
+            groupId: 'team',
+            groupGeneration: 7,
         }).success).toBe(false);
     });
 
@@ -583,33 +656,22 @@ describe('connectedServiceSchemas', () => {
         expect(ConnectedServiceAuthGroupPolicyV1Schema.parse({ v: 1, strategy: 'priority' }).strategy).toBe('priority');
     });
 
-    it('strips removed legacy no-op policy keys while rejecting genuine unknown keys', () => {
-        // Migration-safe: stored policy JSON that still carries the removed legacy keys parses
-        // (strips them) instead of failing strict validation and resetting the whole policy.
-        const migrated = ConnectedServiceAuthGroupPolicyV1Schema.parse({
+    it('rejects removed legacy no-op policy keys as unknown current-contract input', () => {
+        expect(ConnectedServiceAuthGroupPolicyV1Schema.safeParse({
             v: 1,
             strategy: 'manual',
             softSwitchRemainingPercent: 42,
             recoveryPromptMode: 'standard',
             effectiveMeterStrategy: 'weekly',
             memberRuntimeStatePersistence: 'server_state_json',
-        });
-        expect(migrated.strategy).toBe('manual');
-        expect(migrated.softSwitchRemainingPercent).toBe(42);
-        expect(migrated).not.toHaveProperty('recoveryPromptMode');
-        expect(migrated).not.toHaveProperty('effectiveMeterStrategy');
-        expect(migrated).not.toHaveProperty('memberRuntimeStatePersistence');
-        // Genuine typos are still rejected (strict is preserved for non-legacy unknown keys).
+        }).success).toBe(false);
         expect(ConnectedServiceAuthGroupPolicyV1Schema.safeParse({ v: 1, bogusKey: true }).success).toBe(false);
-        // The patch schema also tolerates the removed legacy keys from older clients.
-        const migratedPatch = ConnectedServiceAuthGroupPolicyPatchV1Schema.parse({
+        expect(ConnectedServiceAuthGroupPolicyPatchV1Schema.safeParse({
             strategy: 'least_limited',
             recoveryPromptMode: 'standard',
             effectiveMeterStrategy: 'weekly',
             memberRuntimeStatePersistence: 'server_state_json',
-        });
-        expect(migratedPatch.strategy).toBe('least_limited');
-        expect(migratedPatch).not.toHaveProperty('effectiveMeterStrategy');
+        }).success).toBe(false);
         expect(ConnectedServiceAuthGroupPolicyPatchV1Schema.safeParse({ bogusKey: true }).success).toBe(false);
     });
 
@@ -696,6 +758,7 @@ describe('connectedServiceSchemas', () => {
             policy,
             activeProfileId: 'work',
             generation: 2,
+            runtimeStateRevision: 0,
             state: { status: 'ready', lastSwitchAt: 123 },
             createdAt: 1,
             updatedAt: 2,
@@ -716,6 +779,10 @@ describe('connectedServiceSchemas', () => {
 
         expect(group.members[0]?.profileId).toBe('work');
         expect((group as Record<string, unknown>).credential).toBeUndefined();
+        expect(ConnectedServiceAuthGroupV1Schema.safeParse({
+            ...group,
+            runtimeStateRevision: undefined,
+        }).success).toBe(false);
         expect(ConnectedServiceAuthGroupCreateRequestV1Schema.parse({
             groupId: 'codex-main',
             displayName: 'Codex main',
@@ -754,6 +821,7 @@ describe('connectedServiceSchemas', () => {
     it('parses runtime state patches with generation checks', () => {
         expect(ConnectedServiceAuthGroupRuntimeStatePatchRequestV1Schema.parse({
             expectedGeneration: 2,
+            expectedRuntimeStateRevision: 3,
             state: { status: 'exhausted', lastSwitchReason: 'usage_limit' },
             memberStates: [{
                 profileId: 'backup',
@@ -761,6 +829,7 @@ describe('connectedServiceSchemas', () => {
             }],
         })).toEqual({
             expectedGeneration: 2,
+            expectedRuntimeStateRevision: 3,
             state: { status: 'exhausted', lastSwitchReason: 'usage_limit' },
             memberStates: [{
                 profileId: 'backup',
@@ -787,6 +856,9 @@ describe('connectedServiceSchemas', () => {
         expect(ConnectedServiceAuthGroupRuntimeStatePatchRequestV1Schema.safeParse({
             expectedGeneration: -1,
         }).success).toBe(false);
+        expect(ConnectedServiceAuthGroupRuntimeStatePatchRequestV1Schema.safeParse({
+            expectedRuntimeStateRevision: -1,
+        }).success).toBe(false);
     });
 
     it('parses typed auth-group route error responses', () => {
@@ -796,6 +868,13 @@ describe('connectedServiceSchemas', () => {
         })).toEqual({
             error: 'connect_group_generation_conflict',
             generation: 4,
+        });
+        expect(ConnectedServiceAuthGroupErrorResponseV1Schema.parse({
+            error: 'connect_group_runtime_state_revision_conflict',
+            runtimeStateRevision: 7,
+        })).toEqual({
+            error: 'connect_group_runtime_state_revision_conflict',
+            runtimeStateRevision: 7,
         });
         expect(ConnectedServiceAuthGroupErrorResponseV1Schema.parse({
             error: 'connect_group_profile_runtime_cooldown',
@@ -875,6 +954,23 @@ describe('connectedServiceSchemas', () => {
             expectedGroupGenerationByServiceId: { anthropic: 4 },
             accountSettingsVersionHint: 42,
         });
+    });
+
+    it('keeps mixed-version binding reads permissive while persisted writes reject unknown fields', () => {
+        const mixedVersionBinding = {
+            v: 1,
+            bindingsByServiceId: {
+                'openai-codex': {
+                    source: 'connected',
+                    selection: 'profile',
+                    profileId: 'work',
+                    futureField: 'supported-by-a-newer-reader',
+                },
+            },
+        };
+
+        expect(ConnectedServiceBindingsV1Schema.safeParse(mixedVersionBinding).success).toBe(true);
+        expect(PersistedConnectedServiceBindingsV1Schema.safeParse(mixedVersionBinding).success).toBe(false);
     });
 
     it('parses active-profile compare-and-set generation requests with explicit cooldown override', () => {

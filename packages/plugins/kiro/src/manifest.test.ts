@@ -1,72 +1,35 @@
+import { ingestPluginManifestV2 } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
 
+import { KIRO_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
 
 describe('Kiro plugin manifest', () => {
-  it('declares agent settings as plugin-authored contribution data', () => {
-    const contribution = PLUGIN_MANIFEST.contributes.agentSettings?.find((entry) => entry.agentId === 'kiro');
-
-    expect(contribution).toEqual(expect.objectContaining({
-      id: 'kiro.agentSettings.v1',
-      kind: 'agentSettings.v1',
-      storageScope: 'agentAccount',
-    }));
-    expect(contribution?.fields).toEqual([]);
-    expect(contribution?.ui.sections).toEqual([]);
-  });
-
-  it('declares a plugin-owned generic ACP backend contribution', () => {
-    const backend = PLUGIN_MANIFEST.contributes?.agents?.find((entry) => entry.id === 'kiro');
-
-    expect(PLUGIN_MANIFEST.id).toBe('happier.agent.kiro');
-    expect(PLUGIN_MANIFEST.uses).toContain('agents');
-    expect(backend).toBeDefined();
-    if (!backend) return;
-
-    expect(backend).toMatchObject({
-      kindVersion: 1,
-      id: 'kiro',
-      runtime: {
-        kind: 'acp',
-        transport: {
-          kind: 'stdio',
-          launch: {
-            kind: 'agent-cli',
-            agentId: 'kiro',
-            args: ['acp'],
-          },
-        },
-        auth: {
-          config: {
-            support: 'login_terminal',
-            machineLoginKey: 'kiro-cli',
-            docsUrl: 'https://kiro.dev/docs/cli/acp/',
-            loginCommand: { command: 'kiro-cli', args: ['login'] },
-            statusCommand: ['whoami', '--format', 'json'],
-            parser: 'kiroWhoamiJson',
-          },
-        },
-        sessionIdHeaderName: 'kiroSessionId',
-        stderrRules: {
-          suppress: [
-            {
-              includes: ['error handling notification', '_kiro.dev/', 'method not found'],
-            },
-          ],
-        },
-        mcp: { policy: 'pass_through' },
+  it('uses the strict target manifest and declares its custom ACP handoff', () => {
+    expect(ingestPluginManifestV2(PLUGIN_MANIFEST)).toMatchObject({ ok: true });
+    expect(PLUGIN_MANIFEST).not.toHaveProperty('uses');
+    expect(PLUGIN_MANIFEST).not.toHaveProperty('permissions');
+    expect(PLUGIN_MANIFEST).not.toHaveProperty('activationEvents');
+    expect(PLUGIN_MANIFEST).toMatchObject({ entrypoints: { daemon: './dist/index.js' } });
+    expect(PLUGIN_MANIFEST).not.toHaveProperty('activation');
+    expect(PLUGIN_MANIFEST).toMatchObject({
+      hostAccess: {
+        required: [{
+          id: 'kiro-process',
+          capability: 'process',
+          scope: { executables: [{ kind: 'systemTool', id: 'kiro-cli' }] },
+        }],
+        optional: [],
       },
-      capabilities: {
-        executionRun: { supported: true },
-        session: {
-          media: {
-            acceptsImageInput: { supported: true },
-            emitsSessionMedia: { supported: false },
-            nativeImageGeneration: { supported: false },
-          },
-        },
+      contributes: {
+        agents: [{
+          id: 'kiro', title: 'Kiro', primary: 'sessions',
+          runtime: { kind: 'custom' },
+          capabilities: { sessions: { open: ['create', 'resume'], delivery: ['newTurn', 'steer', 'followUp'], cancel: true } },
+        }],
+        systemTools: [{ id: 'kiro-cli', executableNames: ['kiro-cli'] }],
+        settings: [KIRO_AGENT_SETTINGS_CONTRIBUTION],
       },
     });
-    expect(backend.runtime).not.toHaveProperty('callbacks');
   });
 });

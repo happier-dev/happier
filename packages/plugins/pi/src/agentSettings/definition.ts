@@ -1,25 +1,15 @@
-import {
-  buildAgentSettingsDefaults,
-  defineAgentSettingsContribution,
-  agentSettingsContributionToUiDescriptor,
-} from '@happier-dev/plugin-sdk/experimental/manifest/agentSettings';
+import type { PluginSettingsContribution } from '@happier-dev/plugin-sdk/manifest';
 
-export const PI_AGENT_SETTINGS_CONTRIBUTION = defineAgentSettingsContribution({
-  id: 'pi.agentSettings.v1',
-  agentId: 'pi',
+export const PI_AGENT_SETTINGS_CONTRIBUTION = {
+  id: 'agent-settings',
+  version: 1,
+  title: { key: 'settingsAgents.plugins.pi.title', fallback: 'Pi' },
+  target: { kind: 'agent', agent: 'pi' },
+  scope: 'synced',
   fields: [],
-  ui: {
-    title: { key: 'settingsAgents.plugins.pi.title' },
+  presentation: {
     icon: { ionName: 'code-slash-outline', color: { kind: 'theme', token: 'green' } },
-    subagentSettingsSections: [],
+    subagentSections: [],
     sections: [],
   },
-});
-
-export const PI_AGENT_SETTINGS_DEFAULTS = buildAgentSettingsDefaults(
-  PI_AGENT_SETTINGS_CONTRIBUTION,
-);
-
-export const PI_AGENT_SETTINGS_DESCRIPTOR = agentSettingsContributionToUiDescriptor(
-  PI_AGENT_SETTINGS_CONTRIBUTION,
-);
+} satisfies PluginSettingsContribution;

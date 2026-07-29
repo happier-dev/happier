@@ -17,6 +17,7 @@ export const BUNDLED_AGENT_DEFINITION_IDS: readonly string[] = Object.freeze([
   "copilot",
   "cursor",
   "gemini",
+  "grok",
   "kilo",
   "kimi",
   "kiro",
@@ -30,59 +31,68 @@ export const BUNDLED_AGENT_DEFINITION_IDS: readonly string[] = Object.freeze([
 
 const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   "antigravity": Object.freeze(({
-  "agentCliRuntime": {
-    "acceptsJavaScriptFileOverride": false,
-    "binaryName": "agy",
-    "docsUrl": "https://antigravity.google/docs/cli-install",
-    "id": "antigravity",
-    "installGuideUrl": "https://antigravity.google/docs/cli-install",
-    "knownUserBinDirSuffixes": null,
-    "managedInstall": null,
-    "manualInstallKind": "vendor_recipe",
-    "manualInstallRecipes": {
-      "darwin": [
+  "cli": {
+    "auth": {
+      "loginLaunches": [
         {
-          "args": [
-            "-lc",
-            "curl -fsSL https://antigravity.google/cli/install.sh | bash"
-          ],
-          "cmd": "bash"
+          "args": [],
+          "kind": "primary"
         }
       ],
-      "linux": [
-        {
-          "args": [
-            "-lc",
-            "curl -fsSL https://antigravity.google/cli/install.sh | bash"
-          ],
-          "cmd": "bash"
-        }
-      ],
-      "win32": [
-        {
-          "args": [
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            "irm https://antigravity.google/cli/install.ps1 | iex"
-          ],
-          "cmd": "powershell"
-        }
-      ]
+      "machineLoginKey": "antigravity-cli",
+      "probe": {
+        "backgroundChecks": "manual_only",
+        "parser": "none",
+        "statusArgs": null
+      },
+      "support": "login_terminal"
     },
-    "sourcePreferenceDefault": "system-first",
-    "title": "Antigravity CLI"
-  },
-  "agentSettings": null,
-  "authProbeConfig": {
-    "agentId": "antigravity",
-    "backgroundChecks": "manual_only",
-    "binaryNames": [
-      "agy"
-    ],
-    "parser": "none",
-    "statusCommand": null
+    "displayName": "Antigravity CLI",
+    "executable": {
+      "binaryName": "agy",
+      "knownUserBinDirSuffixes": null,
+      "sourcePreference": "system-first"
+    },
+    "install": {
+      "docsUrl": "https://antigravity.google/docs/cli-install",
+      "guideUrl": "https://antigravity.google/docs/cli-install",
+      "managed": null,
+      "manual": {
+        "kind": "vendor_recipe",
+        "recipes": {
+          "darwin": [
+            {
+              "args": [
+                "-lc",
+                "curl -fsSL https://antigravity.google/cli/install.sh | bash"
+              ],
+              "cmd": "bash"
+            }
+          ],
+          "linux": [
+            {
+              "args": [
+                "-lc",
+                "curl -fsSL https://antigravity.google/cli/install.sh | bash"
+              ],
+              "cmd": "bash"
+            }
+          ],
+          "win32": [
+            {
+              "args": [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                "irm https://antigravity.google/cli/install.ps1 | iex"
+              ],
+              "cmd": "powershell"
+            }
+          ]
+        }
+      }
+    }
   },
   "core": {
     "backendDefinition": false,
@@ -112,8 +122,8 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
       "topology": "exclusive"
     },
     "resume": {
-      "vendorResume": "unsupported",
-      "vendorResumeIdField": null
+      "vendorResume": "supported",
+      "vendorResumeIdField": "antigravitySessionId"
     },
     "sessionCapabilities": {
       "sessionFork": {
@@ -139,16 +149,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     "antigravity-terminal"
   ],
   "id": "antigravity",
-  "localCli": {
-    "agentId": "antigravity",
-    "detectKey": "agy",
-    "loginLaunch": {
-      "args": [],
-      "command": "agy"
-    },
-    "machineLoginKey": "antigravity-cli",
-    "supportKind": "login_terminal"
-  },
   "modelConfig": {
     "acpApplyBehavior": "restart_session",
     "acpModelConfigOptionId": null,
@@ -186,31 +186,40 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   "settingsBackendId": "antigravity"
 }) as const),
   "auggie": Object.freeze(({
-  "agentCliRuntime": {
-    "acceptsJavaScriptFileOverride": false,
-    "binaryName": "auggie",
-    "docsUrl": "https://augmentcode.com",
-    "id": "auggie",
-    "knownUserBinDirSuffixes": null,
-    "managedInstall": {
-      "binaryName": "auggie",
-      "kind": "managed_package",
-      "packageName": "@augmentcode/auggie"
+  "cli": {
+    "auth": {
+      "loginLaunches": [
+        {
+          "args": [
+            "login"
+          ],
+          "kind": "primary"
+        }
+      ],
+      "probe": {
+        "backgroundChecks": "safe",
+        "parser": "unknown",
+        "statusArgs": null
+      },
+      "support": "login_terminal"
     },
-    "manualInstallKind": "command",
-    "manualInstallRecipes": null,
-    "sourcePreferenceDefault": "system-first",
-    "title": "Auggie CLI"
-  },
-  "agentSettings": null,
-  "authProbeConfig": {
-    "agentId": "auggie",
-    "backgroundChecks": "safe",
-    "binaryNames": [
-      "auggie"
-    ],
-    "parser": "unknown",
-    "statusCommand": null
+    "displayName": "Auggie CLI",
+    "executable": {
+      "binaryName": "auggie",
+      "knownUserBinDirSuffixes": null,
+      "sourcePreference": "system-first"
+    },
+    "install": {
+      "docsUrl": "https://augmentcode.com",
+      "managed": {
+        "binaryName": "auggie",
+        "kind": "managed_package",
+        "packageName": "@augmentcode/auggie"
+      },
+      "manual": {
+        "kind": "command"
+      }
+    }
   },
   "core": {
     "cliSubcommand": "auggie",
@@ -246,18 +255,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     }
   },
   "id": "auggie",
-  "localCli": {
-    "agentId": "auggie",
-    "detectKey": "auggie",
-    "loginLaunch": {
-      "args": [
-        "login"
-      ],
-      "command": "auggie"
-    },
-    "machineLoginKey": "auggie",
-    "supportKind": "login_terminal"
-  },
   "modelConfig": {
     "acpModelConfigOptionId": "model",
     "allowedModes": [
@@ -281,73 +278,82 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   "sessionModesKind": "none"
 }) as const),
   "claude": Object.freeze(({
-  "agentCliRuntime": {
-    "acceptsJavaScriptFileOverride": true,
-    "binaryName": "claude",
-    "docsUrl": "https://claude.ai",
-    "id": "claude",
-    "installGuideUrl": "https://code.claude.com/docs/en/setup",
-    "knownUserBinDirSuffixes": [
-      ".local/bin"
-    ],
-    "managedInstall": null,
-    "manualInstallKind": "vendor_recipe",
-    "manualInstallRecipes": {
-      "darwin": [
+  "cli": {
+    "auth": {
+      "loginLaunches": [
         {
-          "args": [
-            "-lc",
-            "curl -fsSL https://claude.ai/install.sh | bash"
-          ],
-          "cmd": "bash"
+          "args": [],
+          "initialInput": "/login\r",
+          "kind": "primary"
         }
       ],
-      "linux": [
-        {
-          "args": [
-            "-lc",
-            "curl -fsSL https://claude.ai/install.sh | bash"
-          ],
-          "cmd": "bash"
-        }
+      "machineLoginKey": "claude-code",
+      "probe": {
+        "backgroundChecks": "safe",
+        "credentialPaths": [
+          "~/.claude/.credentials.json",
+          "~/.claude/.claude.json"
+        ],
+        "envVars": [
+          "ANTHROPIC_API_KEY",
+          "ANTHROPIC_AUTH_TOKEN"
+        ],
+        "parser": "claudeCredentialsFile",
+        "statusArgs": null
+      },
+      "support": "login_terminal"
+    },
+    "displayName": "Claude Code CLI",
+    "executable": {
+      "acceptsJavaScriptFileOverride": true,
+      "binaryName": "claude",
+      "knownUserBinDirSuffixes": [
+        ".local/bin"
       ],
-      "win32": [
-        {
-          "args": [
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            "irm https://claude.ai/install.ps1 | iex"
+      "sourcePreference": "system-first",
+      "systemCommandResolutionStrategy": "known-user-first-runnable"
+    },
+    "install": {
+      "docsUrl": "https://claude.ai",
+      "guideUrl": "https://code.claude.com/docs/en/setup",
+      "managed": null,
+      "manual": {
+        "kind": "vendor_recipe",
+        "recipes": {
+          "darwin": [
+            {
+              "args": [
+                "-lc",
+                "curl -fsSL https://claude.ai/install.sh | bash"
+              ],
+              "cmd": "bash"
+            }
           ],
-          "cmd": "powershell"
+          "linux": [
+            {
+              "args": [
+                "-lc",
+                "curl -fsSL https://claude.ai/install.sh | bash"
+              ],
+              "cmd": "bash"
+            }
+          ],
+          "win32": [
+            {
+              "args": [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                "irm https://claude.ai/install.ps1 | iex"
+              ],
+              "cmd": "powershell"
+            }
+          ]
         }
-      ]
-    },
-    "setupRecommendation": {
-      "order": 10
-    },
-    "sourcePreferenceDefault": "system-first",
-    "systemCommandResolutionStrategy": "known-user-first-runnable",
-    "title": "Claude Code CLI"
-  },
-  "agentSettings": null,
-  "authProbeConfig": {
-    "agentId": "claude",
-    "backgroundChecks": "safe",
-    "binaryNames": [
-      "claude"
-    ],
-    "credentialPaths": [
-      "~/.claude/.credentials.json",
-      "~/.claude/.claude.json"
-    ],
-    "envVars": [
-      "ANTHROPIC_API_KEY",
-      "ANTHROPIC_AUTH_TOKEN"
-    ],
-    "parser": "claudeCredentialsFile",
-    "statusCommand": null
+      },
+      "recommendationOrder": 10
+    }
   },
   "core": {
     "cliSubcommand": "claude",
@@ -447,19 +453,9 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     }
   },
   "id": "claude",
-  "localCli": {
-    "agentId": "claude",
-    "detectKey": "claude",
-    "loginLaunch": {
-      "args": [],
-      "command": "claude",
-      "initialInput": "/login\r"
-    },
-    "machineLoginKey": "claude-code",
-    "supportKind": "login_terminal"
-  },
   "modelConfig": {
     "allowedModes": [
+      "claude-opus-5",
       "claude-fable-5",
       "claude-opus-4-8",
       "claude-opus-4-7",
@@ -473,6 +469,49 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     "dynamicProbe": "static-only",
     "nonAcpApplyScope": "next_prompt",
     "staticModels": [
+      {
+        "contextWindowTokens": 1000000,
+        "description": "Latest highest-capability Claude model for the hardest coding and reasoning tasks.",
+        "id": "claude-opus-5",
+        "modelOptions": [
+          {
+            "currentValue": "high",
+            "id": "reasoning_effort",
+            "name": "Thinking",
+            "options": [
+              {
+                "name": "Low",
+                "value": "low"
+              },
+              {
+                "name": "Medium",
+                "value": "medium"
+              },
+              {
+                "name": "High",
+                "value": "high"
+              },
+              {
+                "name": "XHigh",
+                "value": "xhigh"
+              },
+              {
+                "name": "Max",
+                "value": "max"
+              }
+            ],
+            "type": "select"
+          },
+          {
+            "currentValue": "false",
+            "description": "Maximum coding effort. Overrides the Thinking level while enabled.",
+            "id": "ultracode",
+            "name": "Ultracode",
+            "type": "boolean"
+          }
+        ],
+        "name": "Opus 5"
+      },
       {
         "contextWindowTokens": 1000000,
         "description": "Newest highest-capability generally available Claude model for the hardest coding and reasoning tasks.",
@@ -723,45 +762,52 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   "sessionModesKind": "staticAgentModes"
 }) as const),
   "codex": Object.freeze(({
-  "agentCliRuntime": {
-    "acceptsJavaScriptFileOverride": false,
-    "binaryName": "codex",
-    "docsUrl": "https://github.com/openai/codex",
-    "id": "codex",
-    "installGuideUrl": null,
-    "knownUserBinDirSuffixes": null,
-    "managedInstall": {
+  "cli": {
+    "auth": {
+      "loginLaunches": [
+        {
+          "args": [
+            "login"
+          ],
+          "kind": "primary"
+        }
+      ],
+      "probe": {
+        "backgroundChecks": "safe",
+        "credentialPaths": [
+          "~/.codex/auth.json"
+        ],
+        "envVars": [
+          "OPENAI_API_KEY",
+          "CODEX_API_KEY"
+        ],
+        "parser": "codexLoginStatus",
+        "statusArgs": [
+          "login",
+          "status"
+        ]
+      },
+      "support": "login_terminal"
+    },
+    "displayName": "OpenAI Codex CLI",
+    "executable": {
       "binaryName": "codex",
-      "githubRepo": "openai/codex",
-      "kind": "github_release_binary"
+      "knownUserBinDirSuffixes": null,
+      "sourcePreference": "system-first"
     },
-    "manualInstallKind": "command",
-    "manualInstallRecipes": null,
-    "setupRecommendation": {
-      "order": 20
-    },
-    "sourcePreferenceDefault": "system-first",
-    "title": "OpenAI Codex CLI"
-  },
-  "agentSettings": null,
-  "authProbeConfig": {
-    "agentId": "codex",
-    "backgroundChecks": "safe",
-    "binaryNames": [
-      "codex"
-    ],
-    "credentialPaths": [
-      "~/.codex/auth.json"
-    ],
-    "envVars": [
-      "OPENAI_API_KEY",
-      "CODEX_API_KEY"
-    ],
-    "parser": "codexLoginStatus",
-    "statusCommand": [
-      "login",
-      "status"
-    ]
+    "install": {
+      "docsUrl": "https://github.com/openai/codex",
+      "guideUrl": null,
+      "managed": {
+        "binaryName": "codex",
+        "githubRepo": "openai/codex",
+        "kind": "github_release_binary"
+      },
+      "manual": {
+        "kind": "command"
+      },
+      "recommendationOrder": 20
+    }
   },
   "commandPolicy": {
     "daemonAutostartDefault": "preferLocalTui"
@@ -911,18 +957,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     }
   },
   "id": "codex",
-  "localCli": {
-    "agentId": "codex",
-    "detectKey": "codex",
-    "loginLaunch": {
-      "args": [
-        "login"
-      ],
-      "command": "codex"
-    },
-    "machineLoginKey": "codex",
-    "supportKind": "login_terminal"
-  },
   "modelConfig": {
     "acpModelConfigOptionId": "model",
     "allowedModes": [
@@ -1140,14 +1174,14 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
               "path": [
                 "directSessionV1",
                 "codexBackendMode"
-              ]
+              ],
+              "providerId": "codex"
             },
             {
               "path": [
                 "externalSessionV1",
                 "codexBackendMode"
-              ],
-              "providerId": "codex"
+              ]
             }
           ],
           "rawDescriptorPaths": [
@@ -1373,37 +1407,46 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   "sessionModesKind": "acpPolicyPresets"
 }) as const),
   "copilot": Object.freeze(({
-  "agentCliRuntime": {
-    "acceptsJavaScriptFileOverride": false,
-    "binaryName": "copilot",
-    "docsUrl": "https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli",
-    "id": "copilot",
-    "installGuideUrl": null,
-    "knownUserBinDirSuffixes": null,
-    "managedInstall": {
-      "binaryName": "copilot",
-      "kind": "managed_package",
-      "packageName": "@github/copilot"
+  "cli": {
+    "auth": {
+      "loginLaunches": [
+        {
+          "args": [
+            "login"
+          ],
+          "kind": "primary"
+        }
+      ],
+      "probe": {
+        "backgroundChecks": "safe",
+        "envVars": [
+          "COPILOT_GITHUB_TOKEN",
+          "GH_TOKEN",
+          "GITHUB_TOKEN"
+        ],
+        "parser": "copilotGhAuth",
+        "statusArgs": null
+      },
+      "support": "login_terminal"
     },
-    "manualInstallKind": "command",
-    "manualInstallRecipes": null,
-    "sourcePreferenceDefault": "system-first",
-    "title": "GitHub Copilot CLI"
-  },
-  "agentSettings": null,
-  "authProbeConfig": {
-    "agentId": "copilot",
-    "backgroundChecks": "safe",
-    "binaryNames": [
-      "copilot"
-    ],
-    "envVars": [
-      "COPILOT_GITHUB_TOKEN",
-      "GH_TOKEN",
-      "GITHUB_TOKEN"
-    ],
-    "parser": "copilotGhAuth",
-    "statusCommand": null
+    "displayName": "GitHub Copilot CLI",
+    "executable": {
+      "binaryName": "copilot",
+      "knownUserBinDirSuffixes": null,
+      "sourcePreference": "system-first"
+    },
+    "install": {
+      "docsUrl": "https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli",
+      "guideUrl": null,
+      "managed": {
+        "binaryName": "copilot",
+        "kind": "managed_package",
+        "packageName": "@github/copilot"
+      },
+      "manual": {
+        "kind": "command"
+      }
+    }
   },
   "core": {
     "cliSubcommand": "copilot",
@@ -1442,18 +1485,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     }
   },
   "id": "copilot",
-  "localCli": {
-    "agentId": "copilot",
-    "detectKey": "copilot",
-    "loginLaunch": {
-      "args": [
-        "login"
-      ],
-      "command": "copilot"
-    },
-    "machineLoginKey": "copilot",
-    "supportKind": "login_terminal"
-  },
   "modelConfig": {
     "acpModelConfigOptionId": "model",
     "allowedModes": [
@@ -1477,42 +1508,43 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   "sessionModesKind": "acpAgentModes"
 }) as const),
   "cursor": Object.freeze(({
-  "agentCliRuntime": {
-    "acceptsJavaScriptFileOverride": false,
-    "alternativeBinaryFallbackEnabledEnvVar": "HAPPIER_CURSOR_AGENT_FALLBACK_ENABLED",
-    "alternativeBinaryNames": [
-      "agent"
-    ],
-    "binaryName": "cursor-agent",
-    "docsUrl": "https://cursor.com/docs/cli",
-    "id": "cursor",
-    "installGuideUrl": "https://cursor.com/docs/cli/installation",
-    "knownUserBinDirSuffixes": [
-      ".local/bin"
-    ],
-    "managedInstall": null,
-    "manualInstallKind": "vendor_recipe",
-    "manualInstallRecipes": null,
-    "sourcePreferenceDefault": "system-first",
-    "title": "Cursor Agent CLI"
-  },
-  "agentSettings": null,
-  "authProbeConfig": {
-    "agentId": "cursor",
-    "backgroundChecks": "safe",
-    "binaryNames": [
-      "cursor-agent",
-      "agent"
-    ],
-    "envVars": [
-      "CURSOR_API_KEY"
-    ],
-    "parser": "cursorAboutJson",
-    "statusCommand": [
-      "about",
-      "--format",
-      "json"
-    ]
+  "cli": {
+    "auth": {
+      "loginLaunches": [],
+      "probe": {
+        "backgroundChecks": "safe",
+        "envVars": [
+          "CURSOR_API_KEY"
+        ],
+        "parser": "cursorAboutJson",
+        "statusArgs": [
+          "about",
+          "--format",
+          "json"
+        ]
+      },
+      "support": "status_only"
+    },
+    "displayName": "Cursor Agent CLI",
+    "executable": {
+      "alternativeBinaryFallbackEnabledEnvVar": "HAPPIER_CURSOR_AGENT_FALLBACK_ENABLED",
+      "alternativeBinaryNames": [
+        "agent"
+      ],
+      "binaryName": "cursor-agent",
+      "knownUserBinDirSuffixes": [
+        ".local/bin"
+      ],
+      "sourcePreference": "system-first"
+    },
+    "install": {
+      "docsUrl": "https://cursor.com/docs/cli",
+      "guideUrl": "https://cursor.com/docs/cli/installation",
+      "managed": null,
+      "manual": {
+        "kind": "vendor_recipe"
+      }
+    }
   },
   "core": {
     "cliSubcommand": "cursor",
@@ -1556,13 +1588,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     }
   },
   "id": "cursor",
-  "localCli": {
-    "agentId": "cursor",
-    "detectKey": "cursor-agent",
-    "loginLaunch": null,
-    "machineLoginKey": "cursor-agent",
-    "supportKind": "status_only"
-  },
   "modelConfig": {
     "acpApplyBehavior": "set_model",
     "acpModelConfigOptionId": "model",
@@ -1596,43 +1621,42 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   "sessionModesKind": "acpAgentModes"
 }) as const),
   "gemini": Object.freeze(({
-  "agentCliRuntime": {
-    "acceptsJavaScriptFileOverride": false,
-    "binaryName": "gemini",
-    "docsUrl": "https://goo.gle/gemini-cli-auth-docs",
-    "id": "gemini",
-    "installGuideUrl": null,
-    "knownUserBinDirSuffixes": null,
-    "managedInstall": {
+  "cli": {
+    "auth": {
+      "loginLaunches": [],
+      "probe": {
+        "backgroundChecks": "safe",
+        "envVars": [
+          "GEMINI_API_KEY",
+          "GOOGLE_API_KEY",
+          "GOOGLE_GENAI_USE_VERTEXAI",
+          "GOOGLE_CLOUD_PROJECT",
+          "GOOGLE_CLOUD_LOCATION"
+        ],
+        "parser": "envOnly",
+        "statusArgs": null
+      },
+      "support": "unsupported"
+    },
+    "displayName": "Google Gemini CLI",
+    "executable": {
       "binaryName": "gemini",
-      "kind": "managed_package",
-      "packageName": "@google/gemini-cli"
+      "knownUserBinDirSuffixes": null,
+      "sourcePreference": "system-first"
     },
-    "manualInstallKind": "command",
-    "manualInstallRecipes": null,
-    "setupRecommendation": {
-      "order": 30
-    },
-    "sourcePreferenceDefault": "system-first",
-    "title": "Google Gemini CLI"
-  },
-  "agentSettings": null,
-  "authProbeConfig": {
-    "agentId": "gemini",
-    "backgroundChecks": "safe",
-    "binaryNames": [
-      "gemini"
-    ],
-    "credentialPaths": [],
-    "envVars": [
-      "GEMINI_API_KEY",
-      "GOOGLE_API_KEY",
-      "GOOGLE_GENAI_USE_VERTEXAI",
-      "GOOGLE_CLOUD_PROJECT",
-      "GOOGLE_CLOUD_LOCATION"
-    ],
-    "parser": "envOnly",
-    "statusCommand": null
+    "install": {
+      "docsUrl": "https://goo.gle/gemini-cli-auth-docs",
+      "guideUrl": null,
+      "managed": {
+        "binaryName": "gemini",
+        "kind": "managed_package",
+        "packageName": "@google/gemini-cli"
+      },
+      "manual": {
+        "kind": "command"
+      },
+      "recommendationOrder": 30
+    }
   },
   "core": {
     "cliSubcommand": "gemini",
@@ -1690,13 +1714,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     }
   },
   "id": "gemini",
-  "localCli": {
-    "agentId": "gemini",
-    "detectKey": "gemini",
-    "loginLaunch": null,
-    "machineLoginKey": "gemini",
-    "supportKind": "unsupported"
-  },
   "modelConfig": {
     "acpApplyBehavior": "restart_session",
     "acpModelConfigOptionId": "model",
@@ -1770,33 +1787,178 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   },
   "sessionModesKind": "none"
 }) as const),
-  "kilo": Object.freeze(({
-  "agentCliRuntime": {
-    "acceptsJavaScriptFileOverride": false,
-    "binaryName": "kilo",
-    "docsUrl": "https://kilo.ai/docs/cli",
-    "id": "kilo",
-    "installGuideUrl": null,
-    "knownUserBinDirSuffixes": null,
-    "managedInstall": {
-      "binaryName": "kilo",
-      "kind": "managed_package",
-      "packageName": "@kilocode/cli"
+  "grok": Object.freeze(({
+  "cli": {
+    "auth": {
+      "loginLaunches": [
+        {
+          "args": [
+            "login"
+          ],
+          "kind": "primary"
+        },
+        {
+          "args": [
+            "login",
+            "--device-auth"
+          ],
+          "kind": "device_code"
+        }
+      ],
+      "probe": {
+        "backgroundChecks": "safe",
+        "envVars": [
+          "XAI_API_KEY"
+        ],
+        "parser": "unknown",
+        "statusArgs": null
+      },
+      "support": "login_terminal"
     },
-    "manualInstallKind": "command",
-    "manualInstallRecipes": null,
-    "sourcePreferenceDefault": "system-first",
-    "title": "Kilo CLI"
+    "displayName": "Grok",
+    "executable": {
+      "binaryName": "grok",
+      "knownUserBinDirSuffixes": [
+        ".grok/bin",
+        ".local/bin"
+      ],
+      "sourcePreference": "system-first",
+      "systemCommandResolutionStrategy": "path-first"
+    },
+    "install": {
+      "docsUrl": "https://x.ai",
+      "guideUrl": "https://x.ai/cli",
+      "managed": null,
+      "manual": {
+        "kind": "vendor_recipe",
+        "recipes": {
+          "darwin": [
+            {
+              "args": [
+                "-lc",
+                "curl -fsSL https://x.ai/cli/install.sh | bash"
+              ],
+              "cmd": "bash"
+            }
+          ],
+          "linux": [
+            {
+              "args": [
+                "-lc",
+                "curl -fsSL https://x.ai/cli/install.sh | bash"
+              ],
+              "cmd": "bash"
+            }
+          ],
+          "win32": [
+            {
+              "args": [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                "irm https://x.ai/cli/install.ps1 | iex"
+              ],
+              "cmd": "powershell"
+            }
+          ]
+        }
+      }
+    }
   },
-  "agentSettings": null,
-  "authProbeConfig": {
-    "agentId": "kilo",
-    "backgroundChecks": "safe",
-    "binaryNames": [
-      "kilo"
+  "core": {
+    "cliSubcommand": "grok",
+    "cloudConnect": null,
+    "connectedServices": null,
+    "detectKey": "grok",
+    "flavorAliases": [
+      "grok-build",
+      "grok-cli"
     ],
-    "parser": "unknown",
-    "statusCommand": null
+    "handoff": {
+      "vendorStateTransfer": "unsupported"
+    },
+    "id": "grok",
+    "resume": {
+      "vendorResume": "supported",
+      "vendorResumeIdField": "grokSessionId"
+    },
+    "sessionCapabilities": {
+      "sessionFork": {
+        "conversation": "supported",
+        "fromMessage": "supported"
+      },
+      "sessionListing": "unsupported",
+      "sessionRollback": {
+        "conversation": "supported"
+      }
+    },
+    "sessionStorage": {
+      "direct": false,
+      "persisted": true
+    },
+    "tools": {
+      "delivery": "native_mcp",
+      "support": "experimental"
+    }
+  },
+  "id": "grok",
+  "modelConfig": {
+    "acpApplyBehavior": "set_model",
+    "allowedModes": [],
+    "defaultMode": null,
+    "dynamicProbe": "auto",
+    "nonAcpApplyScope": "next_prompt",
+    "supportsSelection": true
+  },
+  "runtimeContributions": {
+    "agentCatalogEntry": {
+      "importName": "GROK_AGENT_RUNTIME_CONTRIBUTION",
+      "source": "./agent/contributions/runtime"
+    }
+  },
+  "sessionModeDescriptor": {
+    "runtimeSwitch": "none",
+    "semantics": "none",
+    "source": "none"
+  },
+  "sessionModesKind": "none"
+}) as const),
+  "kilo": Object.freeze(({
+  "cli": {
+    "auth": {
+      "loginLaunches": [
+        {
+          "args": [],
+          "initialInput": "/connect\r",
+          "kind": "primary"
+        }
+      ],
+      "probe": {
+        "backgroundChecks": "safe",
+        "parser": "unknown",
+        "statusArgs": null
+      },
+      "support": "login_terminal"
+    },
+    "displayName": "Kilo CLI",
+    "executable": {
+      "binaryName": "kilo",
+      "knownUserBinDirSuffixes": null,
+      "sourcePreference": "system-first"
+    },
+    "install": {
+      "docsUrl": "https://kilo.ai/docs/cli",
+      "guideUrl": null,
+      "managed": {
+        "binaryName": "kilo",
+        "kind": "managed_package",
+        "packageName": "@kilocode/cli"
+      },
+      "manual": {
+        "kind": "command"
+      }
+    }
   },
   "core": {
     "cliSubcommand": "kilo",
@@ -1834,17 +1996,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     }
   },
   "id": "kilo",
-  "localCli": {
-    "agentId": "kilo",
-    "detectKey": "kilo",
-    "loginLaunch": {
-      "args": [],
-      "command": "kilo",
-      "initialInput": "/connect\r"
-    },
-    "machineLoginKey": "kilo",
-    "supportKind": "login_terminal"
-  },
   "modelConfig": {
     "acpModelConfigOptionId": "model",
     "allowedModes": [
@@ -1869,61 +2020,71 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   "sessionModesKind": "acpAgentModes"
 }) as const),
   "kimi": Object.freeze(({
-  "agentCliRuntime": {
-    "acceptsJavaScriptFileOverride": false,
-    "binaryName": "kimi",
-    "docsUrl": "https://code.kimi.com",
-    "id": "kimi",
-    "installGuideUrl": "https://kimi.moonshot.cn/docs/cli",
-    "knownUserBinDirSuffixes": [
-      ".local/bin"
-    ],
-    "managedInstall": null,
-    "manualInstallKind": "vendor_recipe",
-    "manualInstallRecipes": {
-      "darwin": [
+  "cli": {
+    "auth": {
+      "loginLaunches": [
         {
           "args": [
-            "-lc",
-            "curl -fsSL https://code.kimi.com/install.sh | bash"
+            "login"
           ],
-          "cmd": "bash"
+          "kind": "primary"
         }
       ],
-      "linux": [
-        {
-          "args": [
-            "-lc",
-            "curl -fsSL https://code.kimi.com/install.sh | bash"
-          ],
-          "cmd": "bash"
-        }
-      ],
-      "win32": [
-        {
-          "args": [
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            "Invoke-RestMethod https://code.kimi.com/install.ps1 | Invoke-Expression"
-          ],
-          "cmd": "powershell"
-        }
-      ]
+      "probe": {
+        "backgroundChecks": "safe",
+        "parser": "unknown",
+        "statusArgs": null
+      },
+      "support": "login_terminal"
     },
-    "sourcePreferenceDefault": "system-first",
-    "title": "Kimi CLI"
-  },
-  "agentSettings": null,
-  "authProbeConfig": {
-    "agentId": "kimi",
-    "backgroundChecks": "safe",
-    "binaryNames": [
-      "kimi"
-    ],
-    "parser": "unknown",
-    "statusCommand": null
+    "displayName": "Kimi CLI",
+    "executable": {
+      "binaryName": "kimi",
+      "knownUserBinDirSuffixes": [
+        ".local/bin"
+      ],
+      "sourcePreference": "system-first"
+    },
+    "install": {
+      "docsUrl": "https://code.kimi.com",
+      "guideUrl": "https://kimi.moonshot.cn/docs/cli",
+      "managed": null,
+      "manual": {
+        "kind": "vendor_recipe",
+        "recipes": {
+          "darwin": [
+            {
+              "args": [
+                "-lc",
+                "curl -fsSL https://code.kimi.com/install.sh | bash"
+              ],
+              "cmd": "bash"
+            }
+          ],
+          "linux": [
+            {
+              "args": [
+                "-lc",
+                "curl -fsSL https://code.kimi.com/install.sh | bash"
+              ],
+              "cmd": "bash"
+            }
+          ],
+          "win32": [
+            {
+              "args": [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                "Invoke-RestMethod https://code.kimi.com/install.ps1 | Invoke-Expression"
+              ],
+              "cmd": "powershell"
+            }
+          ]
+        }
+      }
+    }
   },
   "core": {
     "cliSubcommand": "kimi",
@@ -1961,18 +2122,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     }
   },
   "id": "kimi",
-  "localCli": {
-    "agentId": "kimi",
-    "detectKey": "kimi",
-    "loginLaunch": {
-      "args": [
-        "login"
-      ],
-      "command": "kimi"
-    },
-    "machineLoginKey": "kimi",
-    "supportKind": "login_terminal"
-  },
   "modelConfig": {
     "acpModelConfigOptionId": "model",
     "allowedModes": [
@@ -1997,31 +2146,40 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   "sessionModesKind": "none"
 }) as const),
   "kiro": Object.freeze(({
-  "agentCliRuntime": {
-    "acceptsJavaScriptFileOverride": false,
-    "binaryName": "kiro-cli",
-    "docsUrl": "https://kiro.dev/docs/cli/acp/",
-    "id": "kiro",
-    "knownUserBinDirSuffixes": null,
-    "managedInstall": null,
-    "manualInstallKind": "command",
-    "manualInstallRecipes": null,
-    "sourcePreferenceDefault": "system-first",
-    "title": "Kiro CLI"
-  },
-  "agentSettings": null,
-  "authProbeConfig": {
-    "agentId": "kiro",
-    "backgroundChecks": "manual_only",
-    "binaryNames": [
-      "kiro-cli"
-    ],
-    "parser": "kiroWhoamiJson",
-    "statusCommand": [
-      "whoami",
-      "--format",
-      "json"
-    ]
+  "cli": {
+    "auth": {
+      "loginLaunches": [
+        {
+          "args": [
+            "login"
+          ],
+          "kind": "primary"
+        }
+      ],
+      "probe": {
+        "backgroundChecks": "manual_only",
+        "parser": "kiroWhoamiJson",
+        "statusArgs": [
+          "whoami",
+          "--format",
+          "json"
+        ]
+      },
+      "support": "login_terminal"
+    },
+    "displayName": "Kiro CLI",
+    "executable": {
+      "binaryName": "kiro-cli",
+      "knownUserBinDirSuffixes": null,
+      "sourcePreference": "system-first"
+    },
+    "install": {
+      "docsUrl": "https://kiro.dev/docs/cli/acp/",
+      "managed": null,
+      "manual": {
+        "kind": "command"
+      }
+    }
   },
   "core": {
     "cliSubcommand": "kiro",
@@ -2064,18 +2222,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     }
   },
   "id": "kiro",
-  "localCli": {
-    "agentId": "kiro",
-    "detectKey": "kiro-cli",
-    "loginLaunch": {
-      "args": [
-        "login"
-      ],
-      "command": "kiro-cli"
-    },
-    "machineLoginKey": "kiro-cli",
-    "supportKind": "login_terminal"
-  },
   "modelConfig": {
     "acpApplyBehavior": "set_model",
     "acpModelConfigOptionId": "model",
@@ -2102,73 +2248,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   "sessionModesKind": "acpAgentModes"
 }) as const),
   "ohMyPi": Object.freeze(({
-  "agentCliRuntime": {
-    "acceptsJavaScriptFileOverride": true,
-    "binaryName": "omp",
-    "docsUrl": "https://github.com/can1357/oh-my-pi",
-    "id": "ohMyPi",
-    "installGuideUrl": "https://github.com/can1357/oh-my-pi#via-bun-recommended",
-    "knownUserBinDirSuffixes": [
-      ".bun/bin"
-    ],
-    "managedInstall": {
-      "binaryName": "omp",
-      "githubRepo": "can1357/oh-my-pi",
-      "kind": "github_release_binary"
-    },
-    "manualInstallKind": "vendor_recipe",
-    "manualInstallRecipes": {
-      "darwin": [
-        {
-          "args": [
-            "install",
-            "-g",
-            "@oh-my-pi/pi-coding-agent"
-          ],
-          "cmd": "bun"
-        }
-      ],
-      "linux": [
-        {
-          "args": [
-            "install",
-            "-g",
-            "@oh-my-pi/pi-coding-agent"
-          ],
-          "cmd": "bun"
-        }
-      ],
-      "win32": [
-        {
-          "args": [
-            "install",
-            "-g",
-            "@oh-my-pi/pi-coding-agent"
-          ],
-          "cmd": "bun"
-        }
-      ]
-    },
-    "sourcePreferenceDefault": "system-first",
-    "title": "oh-my-pi CLI"
-  },
-  "agentSettings": null,
-  "authProbeConfig": {
-    "agentId": "ohMyPi",
-    "backgroundChecks": "safe",
-    "binaryNames": [
-      "omp"
-    ],
-    "envVars": [
-      "OPENAI_CODEX_OAUTH_TOKEN",
-      "OPENAI_API_KEY",
-      "ANTHROPIC_OAUTH_TOKEN",
-      "ANTHROPIC_API_KEY",
-      "GEMINI_API_KEY"
-    ],
-    "parser": "piEnvOnly",
-    "statusCommand": null
-  },
   "builtInAcpConfig": {
     "agentId": "ohMyPi",
     "launcher": {
@@ -2183,6 +2262,78 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     "supportsModels": "yes",
     "supportsModes": "yes",
     "transportProfile": "generic"
+  },
+  "cli": {
+    "auth": {
+      "loginLaunches": [],
+      "machineLoginKey": "oh-my-pi",
+      "probe": {
+        "backgroundChecks": "safe",
+        "envVars": [
+          "OPENAI_CODEX_OAUTH_TOKEN",
+          "OPENAI_API_KEY",
+          "ANTHROPIC_OAUTH_TOKEN",
+          "ANTHROPIC_API_KEY",
+          "GEMINI_API_KEY"
+        ],
+        "parser": "piEnvOnly",
+        "statusArgs": null
+      },
+      "support": "manual_only"
+    },
+    "displayName": "oh-my-pi CLI",
+    "executable": {
+      "acceptsJavaScriptFileOverride": true,
+      "binaryName": "omp",
+      "knownUserBinDirSuffixes": [
+        ".bun/bin"
+      ],
+      "sourcePreference": "system-first"
+    },
+    "install": {
+      "docsUrl": "https://github.com/can1357/oh-my-pi",
+      "guideUrl": "https://github.com/can1357/oh-my-pi#via-bun-recommended",
+      "managed": {
+        "binaryName": "omp",
+        "githubRepo": "can1357/oh-my-pi",
+        "kind": "github_release_binary"
+      },
+      "manual": {
+        "kind": "vendor_recipe",
+        "recipes": {
+          "darwin": [
+            {
+              "args": [
+                "install",
+                "-g",
+                "@oh-my-pi/pi-coding-agent"
+              ],
+              "cmd": "bun"
+            }
+          ],
+          "linux": [
+            {
+              "args": [
+                "install",
+                "-g",
+                "@oh-my-pi/pi-coding-agent"
+              ],
+              "cmd": "bun"
+            }
+          ],
+          "win32": [
+            {
+              "args": [
+                "install",
+                "-g",
+                "@oh-my-pi/pi-coding-agent"
+              ],
+              "cmd": "bun"
+            }
+          ]
+        }
+      }
+    }
   },
   "core": {
     "cliSubcommand": "ohMyPi",
@@ -2246,13 +2397,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     }
   },
   "id": "ohMyPi",
-  "localCli": {
-    "agentId": "ohMyPi",
-    "detectKey": "omp",
-    "loginLaunch": null,
-    "machineLoginKey": "oh-my-pi",
-    "supportKind": "manual_only"
-  },
   "modelConfig": {
     "acpApplyBehavior": "set_model",
     "acpModelConfigOptionId": "model",
@@ -2279,44 +2423,52 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   "sessionModesKind": "acpAgentModes"
 }) as const),
   "opencode": Object.freeze(({
-  "agentCliRuntime": {
-    "acceptsJavaScriptFileOverride": false,
-    "binaryName": "opencode",
-    "docsUrl": "https://opencode.ai",
-    "id": "opencode",
-    "installGuideUrl": "https://opencode.ai/docs",
-    "knownUserBinDirSuffixes": [
-      ".opencode/bin",
-      "AppData/Roaming/npm"
-    ],
-    "managedInstall": {
-      "binaryName": "opencode",
-      "kind": "managed_package",
-      "packageBinarySetup": {
-        "kind": "opencode_platform_binary"
+  "cli": {
+    "auth": {
+      "loginLaunches": [
+        {
+          "args": [
+            "auth",
+            "login"
+          ],
+          "kind": "primary"
+        }
+      ],
+      "probe": {
+        "backgroundChecks": "safe",
+        "parser": "opencodeAuthList",
+        "statusArgs": [
+          "auth",
+          "list"
+        ]
       },
-      "packageName": "opencode-ai"
+      "support": "login_terminal"
     },
-    "manualInstallKind": "command",
-    "manualInstallRecipes": null,
-    "setupRecommendation": {
-      "order": 40
+    "displayName": "OpenCode CLI",
+    "executable": {
+      "binaryName": "opencode",
+      "knownUserBinDirSuffixes": [
+        ".opencode/bin",
+        "AppData/Roaming/npm"
+      ],
+      "sourcePreference": "system-first"
     },
-    "sourcePreferenceDefault": "system-first",
-    "title": "OpenCode CLI"
-  },
-  "agentSettings": null,
-  "authProbeConfig": {
-    "agentId": "opencode",
-    "backgroundChecks": "safe",
-    "binaryNames": [
-      "opencode"
-    ],
-    "parser": "opencodeAuthList",
-    "statusCommand": [
-      "auth",
-      "list"
-    ]
+    "install": {
+      "docsUrl": "https://opencode.ai",
+      "guideUrl": "https://opencode.ai/docs",
+      "managed": {
+        "binaryName": "opencode",
+        "kind": "managed_package",
+        "packageBinarySetup": {
+          "kind": "opencode_platform_binary"
+        },
+        "packageName": "opencode-ai"
+      },
+      "manual": {
+        "kind": "command"
+      },
+      "recommendationOrder": 40
+    }
   },
   "commandSurface": {
     "allowTmux": true,
@@ -2423,19 +2575,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     }
   },
   "id": "opencode",
-  "localCli": {
-    "agentId": "opencode",
-    "detectKey": "opencode",
-    "loginLaunch": {
-      "args": [
-        "auth",
-        "login"
-      ],
-      "command": "opencode"
-    },
-    "machineLoginKey": "opencode",
-    "supportKind": "login_terminal"
-  },
   "modelConfig": {
     "acpModelConfigOptionId": "model",
     "allowedModes": [
@@ -2655,36 +2794,41 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   "sessionModesKind": "acpAgentModes"
 }) as const),
   "pi": Object.freeze(({
-  "agentCliRuntime": {
-    "acceptsJavaScriptFileOverride": false,
-    "binaryName": "pi",
-    "docsUrl": null,
-    "id": "pi",
-    "installGuideUrl": "https://github.com/badlogic/pi-mono",
-    "knownUserBinDirSuffixes": null,
-    "managedInstall": {
-      "binaryName": "pi",
-      "kind": "managed_package",
-      "packageName": "@earendil-works/pi-coding-agent"
+  "cli": {
+    "auth": {
+      "loginLaunches": [],
+      "probe": {
+        "backgroundChecks": "safe",
+        "envVars": [
+          "OPENAI_API_KEY",
+          "ANTHROPIC_API_KEY",
+          "GEMINI_API_KEY",
+          "OPENROUTER_API_KEY",
+          "KIMI_API_KEY"
+        ],
+        "parser": "piEnvOnly",
+        "statusArgs": null
+      },
+      "support": "status_only"
     },
-    "manualInstallKind": "command",
-    "manualInstallRecipes": null,
-    "sourcePreferenceDefault": "system-first",
-    "title": "Pi Coding Agent CLI"
-  },
-  "agentSettings": null,
-  "authProbeConfig": {
-    "agentId": "pi",
-    "backgroundChecks": "safe",
-    "binaryNames": [
-      "pi"
-    ],
-    "envVars": [
-      "OPENAI_API_KEY",
-      "ANTHROPIC_API_KEY"
-    ],
-    "parser": "piEnvOnly",
-    "statusCommand": null
+    "displayName": "Pi Coding Agent CLI",
+    "executable": {
+      "binaryName": "pi",
+      "knownUserBinDirSuffixes": null,
+      "sourcePreference": "system-first"
+    },
+    "install": {
+      "docsUrl": null,
+      "guideUrl": "https://github.com/badlogic/pi-mono",
+      "managed": {
+        "binaryName": "pi",
+        "kind": "managed_package",
+        "packageName": "@earendil-works/pi-coding-agent"
+      },
+      "manual": {
+        "kind": "command"
+      }
+    }
   },
   "core": {
     "cliSubcommand": "pi",
@@ -2781,13 +2925,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     }
   },
   "id": "pi",
-  "localCli": {
-    "agentId": "pi",
-    "detectKey": "pi",
-    "loginLaunch": null,
-    "machineLoginKey": "pi",
-    "supportKind": "status_only"
-  },
   "modelConfig": {
     "acpModelConfigOptionId": "model",
     "allowedModes": [
@@ -2831,32 +2968,40 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   "sessionModesKind": "none"
 }) as const),
   "qwen": Object.freeze(({
-  "agentCliRuntime": {
-    "acceptsJavaScriptFileOverride": false,
-    "binaryName": "qwen",
-    "docsUrl": null,
-    "id": "qwen",
-    "installGuideUrl": "https://qwenlm.github.io/qwen-code-docs/",
-    "knownUserBinDirSuffixes": null,
-    "managedInstall": {
-      "binaryName": "qwen",
-      "kind": "managed_package",
-      "packageName": "@qwen-code/qwen-code"
+  "cli": {
+    "auth": {
+      "loginLaunches": [
+        {
+          "args": [],
+          "initialInput": "/auth\r",
+          "kind": "primary"
+        }
+      ],
+      "probe": {
+        "backgroundChecks": "safe",
+        "parser": "unknown",
+        "statusArgs": null
+      },
+      "support": "login_terminal"
     },
-    "manualInstallKind": "command",
-    "manualInstallRecipes": null,
-    "sourcePreferenceDefault": "system-first",
-    "title": "Qwen CLI"
-  },
-  "agentSettings": null,
-  "authProbeConfig": {
-    "agentId": "qwen",
-    "backgroundChecks": "safe",
-    "binaryNames": [
-      "qwen"
-    ],
-    "parser": "unknown",
-    "statusCommand": null
+    "displayName": "Qwen CLI",
+    "executable": {
+      "binaryName": "qwen",
+      "knownUserBinDirSuffixes": null,
+      "sourcePreference": "system-first"
+    },
+    "install": {
+      "docsUrl": null,
+      "guideUrl": "https://qwenlm.github.io/qwen-code-docs/",
+      "managed": {
+        "binaryName": "qwen",
+        "kind": "managed_package",
+        "packageName": "@qwen-code/qwen-code"
+      },
+      "manual": {
+        "kind": "command"
+      }
+    }
   },
   "core": {
     "cliSubcommand": "qwen",
@@ -2894,17 +3039,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     }
   },
   "id": "qwen",
-  "localCli": {
-    "agentId": "qwen",
-    "detectKey": "qwen",
-    "loginLaunch": {
-      "args": [],
-      "command": "qwen",
-      "initialInput": "/auth\r"
-    },
-    "machineLoginKey": "qwen",
-    "supportKind": "login_terminal"
-  },
   "modelConfig": {
     "acpModelConfigOptionId": "model",
     "allowedModes": [
@@ -2923,31 +3057,33 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   "sessionModesKind": "none"
 }) as const),
   "coderabbit": Object.freeze(({
-  "agentCliRuntime": {
-    "acceptsJavaScriptFileOverride": false,
-    "binaryName": "coderabbit",
-    "docsUrl": null,
-    "id": "coderabbit",
-    "installGuideUrl": null,
-    "knownUserBinDirSuffixes": null,
-    "managedInstall": null,
-    "manualInstallKind": "command",
-    "manualInstallRecipes": null,
-    "sourcePreferenceDefault": "system-first",
-    "title": "CodeRabbit"
-  },
-  "agentSettings": null,
-  "authProbeConfig": {
-    "agentId": "coderabbit",
-    "backgroundChecks": "safe",
-    "binaryNames": [
-      "coderabbit"
-    ],
-    "envVars": [
-      "CODERABBIT_API_KEY"
-    ],
-    "parser": "unknown",
-    "statusCommand": null
+  "cli": {
+    "auth": {
+      "loginLaunches": [],
+      "probe": {
+        "backgroundChecks": "safe",
+        "envVars": [
+          "CODERABBIT_API_KEY"
+        ],
+        "parser": "unknown",
+        "statusArgs": null
+      },
+      "support": "status_only"
+    },
+    "displayName": "CodeRabbit",
+    "executable": {
+      "binaryName": "coderabbit",
+      "knownUserBinDirSuffixes": null,
+      "sourcePreference": "system-first"
+    },
+    "install": {
+      "docsUrl": null,
+      "guideUrl": null,
+      "managed": null,
+      "manual": {
+        "kind": "command"
+      }
+    }
   },
   "core": {
     "cliSubcommand": "coderabbit",
@@ -2982,13 +3118,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     }
   },
   "id": "coderabbit",
-  "localCli": {
-    "agentId": "coderabbit",
-    "detectKey": "coderabbit",
-    "loginLaunch": null,
-    "machineLoginKey": "coderabbit",
-    "supportKind": "status_only"
-  },
   "modelConfig": {
     "allowedModes": [
       "review"
@@ -3006,31 +3135,33 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
   "sessionModesKind": "none"
 }) as const),
   "deepsec": Object.freeze(({
-  "agentCliRuntime": {
-    "acceptsJavaScriptFileOverride": false,
-    "binaryName": "deepsec",
-    "docsUrl": null,
-    "id": "deepsec",
-    "installGuideUrl": null,
-    "knownUserBinDirSuffixes": null,
-    "managedInstall": null,
-    "manualInstallKind": "command",
-    "manualInstallRecipes": null,
-    "sourcePreferenceDefault": "system-first",
-    "title": "DeepSec"
-  },
-  "agentSettings": null,
-  "authProbeConfig": {
-    "agentId": "deepsec",
-    "backgroundChecks": "safe",
-    "binaryNames": [
-      "deepsec"
-    ],
-    "envVars": [
-      "AI_GATEWAY_API_KEY"
-    ],
-    "parser": "unknown",
-    "statusCommand": null
+  "cli": {
+    "auth": {
+      "loginLaunches": [],
+      "probe": {
+        "backgroundChecks": "safe",
+        "envVars": [
+          "AI_GATEWAY_API_KEY"
+        ],
+        "parser": "unknown",
+        "statusArgs": null
+      },
+      "support": "status_only"
+    },
+    "displayName": "DeepSec",
+    "executable": {
+      "binaryName": "deepsec",
+      "knownUserBinDirSuffixes": null,
+      "sourcePreference": "system-first"
+    },
+    "install": {
+      "docsUrl": null,
+      "guideUrl": null,
+      "managed": null,
+      "manual": {
+        "kind": "command"
+      }
+    }
   },
   "core": {
     "cliSubcommand": "deepsec",
@@ -3065,13 +3196,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     }
   },
   "id": "deepsec",
-  "localCli": {
-    "agentId": "deepsec",
-    "detectKey": "deepsec",
-    "loginLaunch": null,
-    "machineLoginKey": "deepsec",
-    "supportKind": "status_only"
-  },
   "modelConfig": {
     "allowedModes": [
       "review",

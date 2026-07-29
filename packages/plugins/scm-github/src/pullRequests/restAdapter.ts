@@ -7,7 +7,7 @@ import type {
   ScmHostingProviderPullRequestGetInput,
   ScmHostingProviderPullRequestListInput,
   ScmHostingProviderRuntimeServices,
-} from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/experimental/scm/hostingProvider';
 import type {
   ScmHostingProviderRef,
   ScmForgeHttpErrorContext,
@@ -15,8 +15,8 @@ import type {
   ScmForgeHttpResponse,
   ScmPullRequestState,
   ScmPullRequestSummary,
-} from '@happier-dev/plugin-sdk/scm';
-import { requestScmForgeJson } from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm';
+import { requestScmForgeJson } from '@happier-dev/plugin-sdk/experimental/scm';
 
 import { resolveGithubCheckoutReferenceFromPullRequest } from './checkoutReference.js';
 import { mapGithubDefaultBranch } from './defaultBranch.js';
@@ -251,6 +251,7 @@ export function createGithubRestAdapter(params?: Readonly<{
     url: string,
     init?: Omit<RequestInit, 'headers'>,
     runtimeServices?: ScmHostingProviderRuntimeServices,
+    signal?: AbortSignal,
   ): Promise<unknown> {
     const auth = await resolveToken(provider, tokenResolver, runtimeServices);
     profileKeyByProvider.set(providerAuthProfileScopeKey(provider), auth.profileKey ?? null);
@@ -258,6 +259,7 @@ export function createGithubRestAdapter(params?: Readonly<{
       url,
       init: {
         ...init,
+        ...(signal ? { signal } : {}),
         headers: buildHeaders(auth.token),
       },
       fetcher,
@@ -268,7 +270,7 @@ export function createGithubRestAdapter(params?: Readonly<{
   async function getPullRequest(input: ScmHostingProviderPullRequestGetInput): Promise<ScmPullRequestSummary | null> {
     const number = readReferenceNumber(input);
     if (number) {
-      const raw = await requestJson(input.provider, pullUrl({ provider: input.provider, number }), { method: 'GET' }, input.runtimeServices);
+      const raw = await requestJson(input.provider, pullUrl({ provider: input.provider, number }), { method: 'GET' }, input.runtimeServices, input.signal);
       return mapGithubPullRequest(input.provider, raw);
     }
     const reference = input.reference as Readonly<{ headBranch?: unknown }>;
@@ -278,6 +280,7 @@ export function createGithubRestAdapter(params?: Readonly<{
         head: reference.headBranch,
         state: 'open',
         ...(input.runtimeServices ? { runtimeServices: input.runtimeServices } : {}),
+        ...(input.signal ? { signal: input.signal } : {}),
       });
       return matches[0] ?? null;
     }
@@ -285,7 +288,7 @@ export function createGithubRestAdapter(params?: Readonly<{
   }
 
   async function listPullRequests(input: ScmHostingProviderPullRequestListInput): Promise<readonly ScmPullRequestSummary[]> {
-    const raw = await requestJson(input.provider, pullsUrl(input), { method: 'GET' }, input.runtimeServices);
+    const raw = await requestJson(input.provider, pullsUrl(input), { method: 'GET' }, input.runtimeServices, input.signal);
     return (Array.isArray(raw) ? raw : [])
       .map((item) => mapGithubPullRequest(input.provider, item))
       .filter((item): item is ScmPullRequestSummary => item !== null);
@@ -312,13 +315,14 @@ export function createGithubRestAdapter(params?: Readonly<{
           }),
         },
         input.runtimeServices,
+        input.signal,
       );
       const pullRequest = mapGithubPullRequest(input.provider, raw);
       if (!pullRequest) throw createGithubCommandFailedError('GitHub returned an invalid pull request payload');
       return pullRequest;
     },
     async getDefaultBranch(input) {
-      const raw = await requestJson(input.provider, repositoryUrl(input.provider), { method: 'GET' }, input.runtimeServices);
+      const raw = await requestJson(input.provider, repositoryUrl(input.provider), { method: 'GET' }, input.runtimeServices, input.signal);
       const mapped = mapGithubDefaultBranch(raw);
       if (!mapped) throw createGithubCommandFailedError('GitHub returned an invalid repository payload');
       return mapped;

@@ -4,7 +4,7 @@ import type {
   ScmHostingProviderRepositoryDescribePublishTargetsResult,
   ScmHostingProviderRepositoryGetInput,
   ScmHostingProviderRuntimeServices,
-} from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/experimental/scm/hostingProvider';
 import type {
   ScmForgeHttpErrorContext,
   ScmForgeHttpFetcher,
@@ -13,8 +13,8 @@ import type {
   ScmHostingRepositoryAuthSummary,
   ScmHostingRepositoryPublishTarget,
   ScmHostingRepositorySummary,
-} from '@happier-dev/plugin-sdk/scm';
-import { requestScmForgeJson } from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm';
+import { requestScmForgeJson } from '@happier-dev/plugin-sdk/experimental/scm';
 
 import {
   createGithubRepositoryAlreadyExistsError,
@@ -216,6 +216,7 @@ export function createGithubRepositoryRestAdapter(params?: Readonly<{
     path: string,
     init?: Omit<RequestInit, 'headers'>,
     runtimeServices?: ScmHostingProviderRuntimeServices,
+    signal?: AbortSignal,
   ): Promise<Readonly<{
     raw: unknown;
     profileKey?: string;
@@ -225,6 +226,7 @@ export function createGithubRepositoryRestAdapter(params?: Readonly<{
       url: `${resolveGithubRepositoryApiBaseUrl(provider)}${path}`,
       init: {
         ...init,
+        ...(signal ? { signal } : {}),
         headers: buildHeaders(auth.token),
       },
       fetcher,
@@ -238,8 +240,8 @@ export function createGithubRepositoryRestAdapter(params?: Readonly<{
 
   return Object.freeze({
     async describePublishTargets(input) {
-      const user = await requestJson(input.provider, '/user', { method: 'GET' }, input.runtimeServices);
-      const orgs = await requestJson(input.provider, '/user/orgs', { method: 'GET' }, input.runtimeServices);
+      const user = await requestJson(input.provider, '/user', { method: 'GET' }, input.runtimeServices, input.signal);
+      const orgs = await requestJson(input.provider, '/user/orgs', { method: 'GET' }, input.runtimeServices, input.signal);
       const auth = createAuthSummary(user.profileKey);
       const targets: ScmHostingRepositoryPublishTarget[] = [];
       const userLogin = readLogin(user.raw);
@@ -295,6 +297,7 @@ export function createGithubRepositoryRestAdapter(params?: Readonly<{
           body: JSON.stringify(body),
         },
         input.runtimeServices,
+        input.signal,
       );
       const mapped = mapGithubRepositorySummary({
         provider: input.provider,
@@ -307,7 +310,7 @@ export function createGithubRepositoryRestAdapter(params?: Readonly<{
     },
     async getRepository(input) {
       try {
-        const { raw } = await requestJson(input.provider, `/repos/${repoPath(input)}`, { method: 'GET' }, input.runtimeServices);
+        const { raw } = await requestJson(input.provider, `/repos/${repoPath(input)}`, { method: 'GET' }, input.runtimeServices, input.signal);
         const mapped = mapGithubRepositorySummary({
           provider: input.provider,
           raw,

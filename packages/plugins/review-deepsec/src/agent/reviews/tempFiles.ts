@@ -1,21 +1,28 @@
-import type { FsRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
+import { randomUUID } from 'node:crypto';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import type { DeepSecTempFiles, DeepSecTempFileRequest } from './run.js';
 
-export async function createDeepSecTempFiles(fs: Pick<FsRuntimeServiceV1, 'createTempDirectory'>): Promise<DeepSecTempFiles> {
-  const directory = await fs.createTempDirectory({ prefix: 'happier-deepsec-' });
+export async function createDeepSecTempFiles(): Promise<DeepSecTempFiles> {
+  const directory = await mkdtemp(join(tmpdir(), 'happier-deepsec-'));
   return {
     async createTextFile(request: DeepSecTempFileRequest) {
-      return await directory.createTextFile(request);
+      const path = join(directory, `${randomUUID()}${request.suffix}`);
+      await writeFile(path, request.contents, 'utf8');
+      return path;
     },
     async createScopedPathListFile(request) {
-      return await directory.createScopedPathListFile(request);
+      const path = join(directory, `${randomUUID()}${request.suffix}`);
+      await writeFile(path, `${request.paths.join('\n')}\n`, 'utf8');
+      return { status: 'created', path, paths: request.paths };
     },
     async readText(path: string) {
-      return await directory.readText({ path });
+      return await readFile(path, 'utf8');
     },
     async cleanup() {
-      await directory.cleanup();
+      await rm(directory, { recursive: true, force: true });
     },
   };
 }

@@ -1,4 +1,4 @@
-import { unsupportedAccountUsage, type UnsupportedAccountUsage } from '@happier-dev/plugin-sdk/account-usage';
+import { unsupportedAccountUsage, type UnsupportedAccountUsage } from '@happier-dev/plugin-sdk/experimental/account-usage';
 
 export type GeminiAccountUsageAvailability = Readonly<{
   providerId: 'gemini';

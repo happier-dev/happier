@@ -11,6 +11,7 @@ import type {
   SessionStateFieldId,
   SessionSystemRecordKind,
   SessionSystemRecordNamespace,
+  ConnectedServiceCredentialRevisionV1,
   SubagentId,
   SubagentLifecycleDetailV1 as ProtocolSubagentLifecycleDetailV1,
   SubagentRefInputV1 as ProtocolSubagentRefInputV1,
@@ -28,6 +29,7 @@ export interface SubscriptionV1 {
 export type SessionRuntimeAuthRefreshRequestV1 = Readonly<{
   agentId: string;
   serviceId: string;
+  refreshAttemptId?: string;
   targetId?: string | null;
   selection?: unknown;
   planType?: string | null;
@@ -36,6 +38,7 @@ export type SessionRuntimeAuthRefreshRequestV1 = Readonly<{
   targetMaterializedEnv?: Readonly<Record<string, string>> | null;
   classification?: unknown;
   failingAccessTokenFingerprint?: string | null;
+  expectedCredentialRevision?: ConnectedServiceCredentialRevisionV1 | null;
   reason?: string | null;
 }>;
 
@@ -55,6 +58,10 @@ export type SessionRuntimeAuthRefreshResultV1 = Readonly<
       error?: unknown;
       runtimeAuthClassification?: unknown;
       recovery?: unknown;
+    }
+  | {
+      status: 'pending';
+      refreshAttemptId: string;
     }
 >;
 
@@ -183,24 +190,6 @@ export type ExternalSessionTranscriptUpdateV1 = Readonly<{
   nextCursor?: string | null;
 }>;
 
-export interface PluginExternalSessionsServiceV1 {
-  listCandidates(
-    params?: ExternalSessionListCandidatesParamsV1,
-  ): Promise<ExternalSessionListCandidatesResultV1>;
-  attach(params: ExternalSessionAttachParamsV1): Promise<ExternalSessionAttachResultV1>;
-  takeover(params: ExternalSessionTakeoverInputV1): Promise<ExternalSessionTakeoverResultV1>;
-  pageTranscript(
-    params: ExternalSessionTranscriptPageParamsV1,
-  ): Promise<ExternalSessionTranscriptPageResultV1>;
-  readAfterTranscript(
-    params: ExternalSessionTranscriptReadAfterParamsV1,
-  ): Promise<ExternalSessionTranscriptReadAfterResultV1>;
-  followTranscript(
-    params: ExternalSessionTranscriptReadAfterParamsV1,
-    onEvent: (event: ExternalSessionTranscriptUpdateV1) => void,
-  ): SubscriptionV1;
-}
-
 export type SubagentListParamsV1 = Readonly<{
   parentSessionId?: SessionId;
   groupId?: string | null;
@@ -303,12 +292,6 @@ export type SessionScopedSendResultV1 = Readonly<
   | { ok: false; error: 'invalid_request' | 'unsupported_kind' | string }
 >;
 
-export type SessionProviderAcceptedUserMessageDeliveryQueryV1 = Readonly<{
-  localIds?: readonly string[] | null;
-  userMessageSeq?: number | null;
-  userMessageSeqs?: readonly number[] | null;
-}>;
-
 export type SessionScopedSubscribeRequestV1 = Readonly<{
   eventName?: string;
 }>;
@@ -336,7 +319,12 @@ export type SessionAgentStateWriteRequestV1 = Readonly<
     }
 >;
 
-export type SessionStateFieldWriteRequestV1<F extends SessionStateFieldId = SessionStateFieldId> = Readonly<{
+export type PublicSessionStateFieldId = Exclude<
+  SessionStateFieldId,
+  'runtime.activity' | 'runtime.externalAgent'
+>;
+
+export type SessionStateFieldWriteRequestV1<F extends PublicSessionStateFieldId = PublicSessionStateFieldId> = Readonly<{
   fieldId: F;
   value: SessionStateFieldWriteValue<F>;
   reason?: string;
@@ -382,6 +370,11 @@ export type SessionPermissionModeV1 = string;
 
 export type SessionPermissionDecisionRequestV1 = Readonly<{
   provider?: string;
+  /**
+   * Runtime-owned provenance for the published request. This is carried separately from tool
+   * input so provider-authored arguments cannot impersonate a host/runtime-owned request kind.
+   */
+  source?: string;
   requestId?: string;
   toolCallId?: string;
   toolName?: string;
@@ -462,11 +455,26 @@ export interface SessionPermissionsServiceV1 {
   getMode(): SessionPermissionModeV1;
 }
 
+export type SessionMediaPublishGeneratedRequestV1 = Readonly<{
+  localId: string;
+  path: string;
+  referencePaths?: readonly string[];
+  description?: string;
+  toolCallId?: string;
+  createdAtMs?: number;
+}>;
+
+export type SessionMediaSourceRootV1 = Readonly<{
+  publishGenerated(request: SessionMediaPublishGeneratedRequestV1): Promise<Readonly<{ status: 'published' }>>;
+  dispose(): void;
+}>;
+
+export type SessionMediaServiceV1 = Readonly<{
+  registerSourceRoot(request: Readonly<{ rootPath: string }>): Promise<SessionMediaSourceRootV1>;
+}>;
+
 export interface SessionScopedServicesV1 {
   readonly sessionId?: string;
-  hasProviderAcceptedUserMessageDelivery?(
-    query: SessionProviderAcceptedUserMessageDeliveryQueryV1,
-  ): boolean;
   send(request: SessionScopedSendRequestV1): Promise<SessionScopedSendResultV1>;
   subscribe(
     request: SessionScopedSubscribeRequestV1,
@@ -474,7 +482,7 @@ export interface SessionScopedServicesV1 {
   ): SubscriptionV1;
   writeMetadata(request: SessionMetadataWriteRequestV1): Promise<void>;
   writeAgentState(request: SessionAgentStateWriteRequestV1): Promise<void>;
-  writeStateField<F extends SessionStateFieldId>(request: SessionStateFieldWriteRequestV1<F>): Promise<void>;
+  writeStateField<F extends PublicSessionStateFieldId>(request: SessionStateFieldWriteRequestV1<F>): Promise<void>;
   /**
    * Write a durable session system record (host-sealed). Optional so a host that predates the
    * capability degrades gracefully; runtimes must treat an absent method as "records unavailable".
@@ -488,6 +496,6 @@ export interface SessionScopedServicesV1 {
   readonly mcp: SessionMcpServiceV1;
   readonly auth: SessionAuthServiceV1;
   readonly permissions: SessionPermissionsServiceV1;
+  readonly media?: SessionMediaServiceV1;
   readonly subagents: PluginSubagentsServiceV1;
-  readonly external: PluginExternalSessionsServiceV1;
 }

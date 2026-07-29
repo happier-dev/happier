@@ -1,13 +1,25 @@
-import type { AcpTier2ArgvBuilderV1 } from '@happier-dev/plugin-sdk/experimental/acp';
+import type { AgentSessionConfigurationSnapshot } from '@happier-dev/plugin-sdk/agent-runtime';
 
-import { readAuggieAllowIndexingFromEnv } from '../options/allowIndexing.js';
-import { buildAuggiePermissionArgs } from '../permissions/permissionArgs.js';
+import { buildAuggiePermissionIntentArgs } from '../permissions/permissionArgs.js';
 
-export const buildAuggieAcpArgv: AcpTier2ArgvBuilderV1 = (params) => {
+function composeAuggieAcpArgv(params: Readonly<{
+  baseArgs: readonly string[];
+  allowIndexing: boolean;
+  permissionArgs: readonly string[];
+}>): readonly string[] {
   const args = [...params.baseArgs];
-  if (readAuggieAllowIndexingFromEnv(params.env)) {
-    args.push('--allow-indexing');
-  }
-  args.push(...buildAuggiePermissionArgs(params.permissionMode));
+  if (params.allowIndexing) args.push('--allow-indexing');
+  args.push(...params.permissionArgs);
   return args;
+}
+
+export function buildAuggieAcpArgvFromSessionConfiguration(params: Readonly<{
+  baseArgs: readonly string[];
+  configuration: AgentSessionConfigurationSnapshot;
+}>): readonly string[] {
+  return composeAuggieAcpArgv({
+    baseArgs: params.baseArgs,
+    allowIndexing: params.configuration.options.allowIndexing?.value === true,
+    permissionArgs: buildAuggiePermissionIntentArgs(params.configuration.permissionIntent.value),
+  });
 };

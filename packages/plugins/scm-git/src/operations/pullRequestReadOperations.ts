@@ -12,11 +12,11 @@ import {
   type ScmPullRequestState,
   type ScmPullRequestSummary,
   type ScmWorkingSnapshot,
-} from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm';
 import {
     readCurrentScmHostingProviderRuntimeServices,
     type ScmHostingProviderRuntimeServices,
-} from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/experimental/scm/hostingProvider';
 
 import type { ScmBackendContext } from '../types.js';
 import { getGitSnapshot } from '../repository.js';
@@ -130,17 +130,6 @@ function buildCacheKey(input: Readonly<{
     };
 }
 
-function withoutAuthProfileKey(key: PrStatusCacheKey): Omit<PrStatusCacheKey, 'authProfileKey'> {
-    return {
-        workspaceKey: key.workspaceKey,
-        repoRootPath: key.repoRootPath,
-        provider: key.provider,
-        ...(key.baseBranch !== undefined ? { baseBranch: key.baseBranch } : {}),
-        headBranch: key.headBranch,
-        ...(key.state ? { state: key.state } : {}),
-    };
-}
-
 function readAuthProfileKey(adapter: PullRequestReadAdapter, provider: ScmHostingProviderRef): string | undefined {
     const key = adapter.getPullRequestAuthProfileKey?.({ provider })?.trim();
     return key ? key : undefined;
@@ -248,15 +237,11 @@ export function createGitPullRequestReadOperations(
             state: request.state,
             authProfileKey,
         });
-        const fresh = cache.getFresh(key);
+        const fresh = authProfileKey ? cache.getFresh(key) : null;
         if (fresh?.kind === 'success') {
             return { success: true, pullRequests: [...fresh.pullRequests] };
         }
         if (!resolved.adapter?.listPullRequests) {
-            const staleReadable = cache.getFreshForAnyAuthProfile(withoutAuthProfileKey(key));
-            if (staleReadable?.kind === 'success') {
-                return { success: true, pullRequests: [...staleReadable.pullRequests] };
-            }
             return errorResponse('SCM hosting provider does not support pull request listing', SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED);
         }
         try {
@@ -279,7 +264,9 @@ export function createGitPullRequestReadOperations(
                     state: request.state,
                     authProfileKey: currentAuthProfileKey,
                 });
-            cache.setSuccess({ key: writeKey, pullRequests });
+            if (currentAuthProfileKey) {
+                cache.setSuccess({ key: writeKey, pullRequests });
+            }
             return { success: true, pullRequests: [...pullRequests] };
         } catch (error) {
             const classified = classifyError(error);
@@ -295,12 +282,14 @@ export function createGitPullRequestReadOperations(
                     state: request.state,
                     authProfileKey: currentAuthProfileKey,
                 });
-            cache.setError({
-                key: writeKey,
-                error: classified.message,
-                errorCode: classified.code,
-                errorKind: classified.cacheKind,
-            });
+            if (currentAuthProfileKey) {
+                cache.setError({
+                    key: writeKey,
+                    error: classified.message,
+                    errorCode: classified.code,
+                    errorKind: classified.cacheKind,
+                });
+            }
             return errorResponse(classified.message, classified.code);
         }
     }

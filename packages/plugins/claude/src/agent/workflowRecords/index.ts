@@ -31,6 +31,9 @@ export {
 export {
   createClaudeUnifiedWorkflowRuntime,
   type ClaudeUnifiedWorkflowRuntime,
+  type ClaudeWorkflowMetadataWriter,
+  type ClaudeWorkflowSystemRecordReader,
+  type ClaudeWorkflowSystemRecordWriter,
 } from './workflowRuntime.js';
 export {
   createWorkflowActivityPublisher,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildOpenCodeBrokerMarker } from '../broker/env.js';
+import { buildOpenCodeRequestAuthMarker } from '../requestAuth/source.js';
 
 import { hashOpenCodeDirectKeyAuthContent } from './directKeyAuthHash.js';
 
@@ -19,10 +19,10 @@ describe('hashOpenCodeDirectKeyAuthContent (F3 direct-key fingerprint fold)', ()
     expect(before).not.toBe(after);
   });
 
-  it('EXCLUDES the broker marker (stable, non-secret) so OAuth rotation never changes the hash', () => {
-    const marker = buildOpenCodeBrokerMarker('openai', '1');
-    const onlyBroker = hashOpenCodeDirectKeyAuthContent(JSON.stringify({ openai: { type: 'api', key: marker } }));
-    expect(onlyBroker).toBe('');
+  it('EXCLUDES the request-auth marker (stable, non-secret) so OAuth rotation never changes the hash', () => {
+    const marker = buildOpenCodeRequestAuthMarker('openai');
+    const onlyRequestAuth = hashOpenCodeDirectKeyAuthContent(JSON.stringify({ openai: { type: 'api', key: marker } }));
+    expect(onlyRequestAuth).toBe('');
   });
 
   it('EXCLUDES non-api entries (e.g. a legacy oauth record) — those are governed by the selection identity', () => {
@@ -32,8 +32,8 @@ describe('hashOpenCodeDirectKeyAuthContent (F3 direct-key fingerprint fold)', ()
     expect(onlyOauth).toBe('');
   });
 
-  it('reacts ONLY to the direct key in a mixed (broker marker + direct key) payload', () => {
-    const marker = buildOpenCodeBrokerMarker('openai', '1');
+  it('reacts ONLY to the direct key in a mixed (request-auth marker + direct key) payload', () => {
+    const marker = buildOpenCodeRequestAuthMarker('openai');
     const v1 = hashOpenCodeDirectKeyAuthContent(JSON.stringify({
       openai: { type: 'api', key: marker },
       anthropic: { type: 'api', key: 'sk-ant-console-v1' },

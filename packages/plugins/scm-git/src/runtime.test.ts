@@ -49,7 +49,7 @@ describe('Git SCM plugin runtime', () => {
     });
     expect(calls).toEqual([
       {
-        installableKey: 'dep.git',
+        installableKey: 'git-cli',
         command: 'git',
         cwd: '/repo',
         args: ['status', '--short'],

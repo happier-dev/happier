@@ -1,10 +1,16 @@
-import type { Dirent } from 'node:fs';
+import {
+    closeSync,
+    openSync,
+    readSync,
+    type Dirent,
+} from 'node:fs';
 import { open, readdir, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 
 export type CodexSessionMetaPayload = {
     id?: string;
+    session_id?: string;
     timestamp?: string;
     cwd?: string;
     [key: string]: unknown;
@@ -157,9 +163,72 @@ async function readFirstLine(filePath: string): Promise<string | null> {
     }
 }
 
-export async function readCodexSessionMetaFromRollout(filePath: string): Promise<CodexSessionMetaPayload | null> {
-    const line = await readFirstLine(filePath);
-    if (!line) return null;
+function readFirstLineSync(filePath: string): string | null {
+    const maxProbeBytes = 64 * 1024;
+    const chunkBytes = 4 * 1024;
+    let fd: number | null = null;
+    try {
+        fd = openSync(filePath, 'r');
+        const decoder = new StringDecoder('utf8');
+        const chunk = Buffer.allocUnsafe(chunkBytes);
+        let readOffset = 0;
+        let text = '';
+        let sawEof = false;
+
+        while (readOffset < maxProbeBytes) {
+            const bytesToRead = Math.min(
+                chunk.byteLength,
+                maxProbeBytes - readOffset,
+            );
+            const bytesRead = readSync(
+                fd,
+                chunk,
+                0,
+                bytesToRead,
+                readOffset,
+            );
+            if (bytesRead <= 0) {
+                sawEof = true;
+                break;
+            }
+            readOffset += bytesRead;
+            text += decoder.write(chunk.subarray(0, bytesRead));
+            const index = text.indexOf('\n');
+            if (index !== -1) {
+                const line = text.slice(0, index).trim();
+                return line.length > 0 ? line : null;
+            }
+            if (bytesRead < bytesToRead) {
+                sawEof = true;
+                break;
+            }
+        }
+
+        text += decoder.end();
+        const index = text.indexOf('\n');
+        if (index !== -1) {
+            const line = text.slice(0, index).trim();
+            return line.length > 0 ? line : null;
+        }
+        if (!sawEof && readOffset >= maxProbeBytes) return null;
+        const line = text.trim();
+        return line.length > 0 ? line : null;
+    } catch {
+        return null;
+    } finally {
+        if (fd !== null) {
+            try {
+                closeSync(fd);
+            } catch {
+                // Ignore close failures after a best-effort metadata probe.
+            }
+        }
+    }
+}
+
+export function parseCodexSessionMetaLine(
+    line: string,
+): CodexSessionMetaPayload | null {
     try {
         const parsed = JSON.parse(line) as unknown;
         if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
@@ -171,6 +240,18 @@ export async function readCodexSessionMetaFromRollout(filePath: string): Promise
     } catch {
         return null;
     }
+}
+
+export async function readCodexSessionMetaFromRollout(filePath: string): Promise<CodexSessionMetaPayload | null> {
+    const line = await readFirstLine(filePath);
+    return line ? parseCodexSessionMetaLine(line) : null;
+}
+
+export function readCodexSessionMetaFromRolloutSync(
+    filePath: string,
+): CodexSessionMetaPayload | null {
+    const line = readFirstLineSync(filePath);
+    return line ? parseCodexSessionMetaLine(line) : null;
 }
 
 export function scoreCodexRolloutCandidate(opts: {

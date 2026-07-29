@@ -3,31 +3,65 @@ import { tmpdir } from 'node:os';
 import { isAbsolute, relative } from 'node:path';
 
 import { expect, vi } from 'vitest';
+import type {
+  AgentSessionHostServices,
+  AgentSessionRuntimeEvent,
+} from '@happier-dev/plugin-sdk/agent-runtime';
 
 import type {
   TerminalHostHandle,
   TerminalInputInjectionResult,
-} from '@happier-dev/plugin-sdk/experimental/runtime/session';
+} from '@happier-dev/agents';
 import type {
-  ExecClientHandleV1,
-  JsonStreamClientV1,
-  PluginEventListenerV1,
-  PluginContextV1,
-  RuntimeCancelResultV1,
-  RuntimeConfigUpdateOutcomeV1,
-  RuntimeDisposeReasonV1,
-  RuntimeEventV1,
-  RuntimePermissionResponseOutcomeV1,
-  RuntimeSendResultV1,
-  SessionRuntimeConfigUpdateV1,
-  SessionRuntimeV1,
-  TerminalHostRuntimeServiceV1,
-  TranscriptFileFollowHandleV1,
-  TranscriptFileFollowInputV1,
-  TranscriptsRuntimeServiceV1,
-} from '@happier-dev/plugin-sdk';
+  ClaudeSdkExecClientHandle,
+  ClaudeSdkJsonStreamClient,
+  ClaudeSdkQueryContext,
+} from '../sdk/query.js';
+import type { ClaudeAgentSdkContext } from './remote/sdk/session.js';
+import type { ClaudeUnifiedTerminalContext } from './terminal/unified/turnOperations.js';
+import type { ClaudeTestSessionRuntime } from './sessionRuntime.testkit.js';
+import type {
+  ClaudeProviderConfigurationOutcome,
+  ClaudeProviderConfigurationUpdate,
+  ClaudeProviderDisposeReason,
+  ClaudeProviderPermissionResponseOutcome,
+  ClaudeRuntimePromptSubmissionOutcome,
+} from './providerOperations.js';
+import type { ClaudeProviderEvent } from './providerEvents.js';
 
 const DEFAULT_TEST_FILE_FOLLOW_POLL_INTERVAL_MS = 25;
+type AgentTerminalHostService = NonNullable<AgentSessionHostServices['terminalHost']>;
+type ClaudeTestPluginContext = ClaudeAgentSdkContext & ClaudeUnifiedTerminalContext;
+type ClaudeTestEventListener = (event: Readonly<{
+  id: string;
+  payload: unknown;
+  envelope: Readonly<{
+    emittedAt: string;
+    source: Readonly<{ kind: 'host'; namespace: 'session' }>;
+  }>;
+}>) => void | Promise<void>;
+type ClaudeTestEventsService = Readonly<{
+  subscribe(selector: string, listener: ClaudeTestEventListener): Readonly<{ unsubscribe(): void }>;
+}>;
+type ClaudeTestTranscriptFileFollowInput = Readonly<{
+  path: string;
+  startAt: 'beginning' | 'end';
+  strategy?: 'poll';
+  onLine(line: Readonly<{ line: string; sourcePath: string; sequence: number }>): void | Promise<void>;
+  onError?(error: unknown): void | Promise<void>;
+}>;
+type ClaudeTestTranscriptFileFollowHandle = Readonly<{
+  id: string;
+  drainNow(): Promise<void>;
+  close(options?: Readonly<{ finalDrain?: boolean }>): Promise<void>;
+}>;
+type ClaudeTestTranscriptsService = Readonly<{
+  append(...args: readonly unknown[]): Promise<void>;
+  defineSource(definition: Readonly<{ id: string }>): Promise<Readonly<{ id: string; dispose(): Promise<void> }>>;
+  fileFollow: Readonly<{
+    follow(input: ClaudeTestTranscriptFileFollowInput): Promise<ClaudeTestTranscriptFileFollowHandle>;
+  }>;
+}>;
 
 export function createTerminalHostHandle(): TerminalHostHandle {
   return {
@@ -47,10 +81,10 @@ export function createTerminalHostHandle(): TerminalHostHandle {
 
 export function createTerminalHostFixture(): Readonly<{
   handle: TerminalHostHandle;
-  service: TerminalHostRuntimeServiceV1;
+  service: AgentTerminalHostService;
 }> {
   const handle = createTerminalHostHandle();
-  const service: TerminalHostRuntimeServiceV1 = {
+  const service: AgentTerminalHostService = {
     resolve: vi.fn(async () => ({
       status: 'resolved',
       hostKind: 'zellij',
@@ -82,17 +116,17 @@ export function createTerminalHostFixture(): Readonly<{
 }
 
 export function createEventsFixture(): Readonly<{
-  service: Pick<PluginContextV1['events'], 'subscribe'>;
+  service: ClaudeTestEventsService;
   emit(id: string, payload: unknown): Promise<void>;
 }> {
-  const listenersById = new Map<string, Set<PluginEventListenerV1>>();
+  const listenersById = new Map<string, Set<ClaudeTestEventListener>>();
   return {
     service: {
       subscribe: vi.fn((selector, listener) => {
         if (typeof selector !== 'string') {
           throw new Error('Claude runtime test fixture only supports direct event ids');
         }
-        const listeners = listenersById.get(selector) ?? new Set<PluginEventListenerV1>();
+        const listeners = listenersById.get(selector) ?? new Set<ClaudeTestEventListener>();
         listeners.add(listener);
         listenersById.set(selector, listeners);
         return {
@@ -160,7 +194,7 @@ export function createSessionHooksFixture(): Readonly<{
 export function createSdkExecFixture(): Readonly<{
   spawnClient: ReturnType<typeof vi.fn>;
   written: unknown[];
-  service: PluginContextV1['agentRuntime']['exec'];
+  service: ClaudeSdkQueryContext;
   emit(record: unknown): Promise<void>;
   exitWith(result: Readonly<{
     exitCode: number | null;
@@ -187,7 +221,7 @@ export function createSdkExecFixture(): Readonly<{
     resolveExitPromise = resolve;
   });
   const closed = exit.then(() => undefined);
-  const client: JsonStreamClientV1 = {
+  const client: ClaudeSdkJsonStreamClient = {
     closed,
     subscribe(listener) {
       listeners.add(listener);
@@ -195,9 +229,10 @@ export function createSdkExecFixture(): Readonly<{
     },
     async writeRecord(record) {
       written.push(record);
+      return { kind: 'written' };
     },
   };
-  const handle: ExecClientHandleV1<JsonStreamClientV1> = {
+  const handle: ClaudeSdkExecClientHandle = {
     client,
     process: {
       pid: 123,
@@ -227,7 +262,7 @@ export function createSdkExecFixture(): Readonly<{
     service: {
       // Boundary fixture: Vitest mock has one implementation while the SDK exposes overloads.
       spawnClient,
-    } as unknown as PluginContextV1['agentRuntime']['exec'],
+    } as unknown as ClaudeSdkQueryContext,
     async emit(record) {
       await Promise.all([...listeners].map((listener) => listener(record)));
     },
@@ -292,10 +327,10 @@ async function readFileSize(filePath: string): Promise<number> {
 }
 
 function createTestTranscriptFileFollowHandle(
-  input: TranscriptFileFollowInputV1,
+  input: ClaudeTestTranscriptFileFollowInput,
   sourcePath: string,
   pollIntervalMs: number,
-): TranscriptFileFollowHandleV1 {
+): ClaudeTestTranscriptFileFollowHandle {
   let closed = false;
   let closePromise: Promise<void> | null = null;
   let offsetPromise = input.startAt === 'end' ? readFileSize(sourcePath) : Promise.resolve(0);
@@ -379,7 +414,7 @@ function createTestTranscriptFileFollowHandle(
   });
 }
 
-function createTranscriptsFixture(options: TestTranscriptsFixtureOptions = {}): TranscriptsRuntimeServiceV1 {
+function createTranscriptsFixture(options: TestTranscriptsFixtureOptions = {}): ClaudeTestTranscriptsService {
   const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_TEST_FILE_FOLLOW_POLL_INTERVAL_MS;
   return {
     append: vi.fn(async () => undefined),
@@ -388,7 +423,7 @@ function createTranscriptsFixture(options: TestTranscriptsFixtureOptions = {}): 
       dispose: vi.fn(async () => undefined),
     })),
     fileFollow: {
-      follow: vi.fn(async (input: TranscriptFileFollowInputV1) => {
+      follow: vi.fn(async (input: ClaudeTestTranscriptFileFollowInput) => {
         if (input.startAt !== 'beginning' && input.startAt !== 'end') {
           throw new Error('test transcript file follow startAt must be beginning or end');
         }
@@ -426,13 +461,13 @@ function createPluginStorageFixture() {
 }
 
 export function createPluginContextFixture(
-  terminalHost: TerminalHostRuntimeServiceV1,
-  events: Pick<PluginContextV1['events'], 'subscribe'>,
+  terminalHost: AgentTerminalHostService,
+  events: ClaudeTestEventsService,
   extras?: Readonly<{
     accountUsage?: unknown;
     configValues?: Readonly<Record<string, unknown>>;
     enabledFeatures?: readonly string[];
-    exec?: PluginContextV1['agentRuntime']['exec'];
+    exec?: ClaudeSdkQueryContext;
     settingsValues?: Readonly<Record<string, unknown>>;
     sessionHooks?: unknown;
     sessionPermissions?: unknown;
@@ -443,12 +478,11 @@ export function createPluginContextFixture(
     sessionReadSystemRecord?: unknown;
     sessionSend?: unknown;
     sessionAuth?: unknown;
-    sessionHasProviderAcceptedUserMessageDelivery?: unknown;
     transcripts?: unknown;
     transcriptFileFollowAllowedPaths?: readonly string[];
     transcriptFileFollowAllowedPathRoots?: readonly string[];
   }>,
-): PluginContextV1 {
+): ClaudeTestPluginContext {
   const configValues = extras?.configValues ?? {};
   const settingsValues = extras?.settingsValues ?? {};
   const enabledFeatures = new Set(extras?.enabledFeatures ?? ['agents.claude.unifiedTerminal']);
@@ -463,9 +497,6 @@ export function createPluginContextFixture(
   });
   const currentSession = {
     permissions: sessionPermissions,
-    ...(extras?.sessionHasProviderAcceptedUserMessageDelivery
-      ? { hasProviderAcceptedUserMessageDelivery: extras.sessionHasProviderAcceptedUserMessageDelivery }
-      : {}),
     ...(extras?.sessionWriteAgentState ? { writeAgentState: extras.sessionWriteAgentState } : {}),
     writeStateField: extras?.sessionWriteStateField ?? vi.fn(async () => undefined),
     ...(extras?.sessionWriteMetadata ? { writeMetadata: extras.sessionWriteMetadata } : {}),
@@ -506,58 +537,64 @@ export function createPluginContextFixture(
     sessions: {
       current: currentSession,
     },
-  } as unknown as PluginContextV1;
+  } as unknown as ClaudeTestPluginContext;
 }
 
 type ClaudeTestRuntimeOperations = Readonly<{
   beginTurnLifecycle(): void;
-  startOrLoadSession(opts?: Readonly<Record<string, unknown>>): Promise<string | null | Readonly<Record<string, unknown>>>;
+  startProviderSession(opts?: Readonly<Record<string, unknown>>): Promise<string | null | Readonly<Record<string, unknown>>>;
   sendTurnPrompt(prompt: string, meta?: Readonly<{
     localId?: string | null;
     localIds?: readonly string[];
-    providerClaimedPendingLocalIds?: readonly string[];
     userMessageSeq?: number | null;
     userMessageSeqs?: readonly number[];
-  }>): Promise<void>;
+  }>): Promise<ClaudeRuntimePromptSubmissionOutcome>;
   steerInFlightTurn(message: string, meta?: Readonly<{
     localId?: string | null;
     localIds?: readonly string[];
-    providerClaimedPendingLocalIds?: readonly string[];
     userMessageSeq?: number | null;
     userMessageSeqs?: readonly number[];
-  }>): Promise<void>;
+  }>): Promise<ClaudeRuntimePromptSubmissionOutcome>;
   waitForTurnCompletion(opts?: Readonly<{ timeoutMs?: number | null }>): Promise<void>;
-  subscribeRuntimeEvents(handler: (event: RuntimeEventV1) => void): () => void;
-  respondToPermission(requestId: string, approved: boolean): Promise<RuntimePermissionResponseOutcomeV1>;
+  subscribeRuntimeEvents(handler: (event: ClaudeProviderEvent) => void): () => void;
+  subscribeCanonicalAgentSessionEvents(handler: (event: AgentSessionRuntimeEvent) => void): () => void;
+  respondToPermission(
+    requestId: string,
+    approved: boolean,
+  ): Promise<ClaudeProviderPermissionResponseOutcome>;
   cancelTurn(): Promise<void>;
   readSessionIdentity(): Readonly<{ sessionId: string | null }>;
   updateSessionRuntimeConfig(
-    update: SessionRuntimeConfigUpdateV1 & Readonly<Record<string, unknown>>,
-  ): Promise<RuntimeConfigUpdateOutcomeV1 | void>;
-  resetOrDisposeRuntime(reason?: RuntimeDisposeReasonV1 | Readonly<{ reason?: RuntimeDisposeReasonV1 }>): Promise<void>;
+    update: ClaudeProviderConfigurationUpdate,
+  ): Promise<ClaudeProviderConfigurationOutcome | void>;
+  resetOrDisposeRuntime(
+    reason?: ClaudeProviderDisposeReason | Readonly<{ reason?: ClaudeProviderDisposeReason }>,
+  ): Promise<void>;
 }>;
 
 type ClaudeTestRuntimeNativeExtras = Partial<ClaudeTestRuntimeOperations>;
 
 type ClaudeTestRuntimeEnvelope = Readonly<{
   operations: ClaudeTestRuntimeOperations;
-  nativeRuntime: SessionRuntimeV1 & ClaudeTestRuntimeNativeExtras;
+  nativeRuntime: ClaudeTestSessionRuntime & ClaudeTestRuntimeNativeExtras;
 }>;
 
-function readRuntimeNativeExtras(runtime: SessionRuntimeV1): ClaudeTestRuntimeNativeExtras {
-  return runtime as SessionRuntimeV1 & ClaudeTestRuntimeNativeExtras;
+function readRuntimeNativeExtras(runtime: ClaudeTestSessionRuntime): ClaudeTestRuntimeNativeExtras {
+  return runtime as ClaudeTestSessionRuntime & ClaudeTestRuntimeNativeExtras;
 }
 
 function createRuntimeInput(prompt: string): Readonly<{ v: 1; text: string }> {
   return { v: 1, text: prompt };
 }
 
-function assertAccepted(result: RuntimeSendResultV1): void {
+function assertAccepted(
+  result: Awaited<ReturnType<ClaudeTestSessionRuntime['send']>>,
+): void {
   if (result.status === 'accepted') return;
   throw new Error(result.diagnostic ?? `runtime send was not accepted: ${result.status}`);
 }
 
-function expectSessionRuntime(value: unknown): SessionRuntimeV1 {
+function expectSessionRuntime(value: unknown): ClaudeTestSessionRuntime {
   expect(value).toMatchObject({
     identity: {
       read: expect.any(Function),
@@ -568,7 +605,7 @@ function expectSessionRuntime(value: unknown): SessionRuntimeV1 {
     send: expect.any(Function),
     dispose: expect.any(Function),
   });
-  return value as SessionRuntimeV1;
+  return value as ClaudeTestSessionRuntime;
 }
 
 export function expectRuntimeEnvelope(value: unknown): ClaudeTestRuntimeEnvelope {
@@ -578,22 +615,21 @@ export function expectRuntimeEnvelope(value: unknown): ClaudeTestRuntimeEnvelope
     beginTurnLifecycle: () => {
       extras.beginTurnLifecycle?.();
     },
-    startOrLoadSession: async (opts) => {
-      if (extras.startOrLoadSession) return await extras.startOrLoadSession(opts);
+    startProviderSession: async (opts) => {
+      if (extras.startProviderSession) return await extras.startProviderSession(opts);
       return { sessionId: runtime.identity.read().providerSessionId };
     },
     sendTurnPrompt: async (prompt, meta) => {
       if (extras.sendTurnPrompt) {
-        await extras.sendTurnPrompt(prompt, meta);
-        return;
+        return await extras.sendTurnPrompt(prompt, meta);
       }
       const result = await runtime.send(createRuntimeInput(prompt));
       assertAccepted(result);
+      return { kind: 'accepted' };
     },
     steerInFlightTurn: async (message, meta) => {
       if (extras.steerInFlightTurn) {
-        await extras.steerInFlightTurn(message, meta);
-        return;
+        return await extras.steerInFlightTurn(message, meta);
       }
       const result = await runtime.send(createRuntimeInput(message), {
         deliverAs: 'steer',
@@ -602,11 +638,21 @@ export function expectRuntimeEnvelope(value: unknown): ClaudeTestRuntimeEnvelope
           : {}),
       });
       assertAccepted(result);
+      return { kind: 'accepted' };
     },
     waitForTurnCompletion: async (opts) => {
       await extras.waitForTurnCompletion?.(opts);
     },
     subscribeRuntimeEvents: (handler) => runtime.events.subscribe(handler),
+    subscribeCanonicalAgentSessionEvents: (handler) => {
+      const subscribe = (runtime as ClaudeTestSessionRuntime & Readonly<{
+        subscribeCanonicalAgentSessionEvents?: (listener: (event: AgentSessionRuntimeEvent) => void) => () => void;
+      }>).subscribeCanonicalAgentSessionEvents;
+      if (typeof subscribe !== 'function') {
+        throw new Error('Claude public session runtime omitted canonical agent session events');
+      }
+      return subscribe(handler);
+    },
     respondToPermission: async (requestId, approved) => {
       if (extras.respondToPermission) return await extras.respondToPermission(requestId, approved);
       const permissions = runtime.permissions;
@@ -618,7 +664,9 @@ export function expectRuntimeEnvelope(value: unknown): ClaudeTestRuntimeEnvelope
         await extras.cancelTurn();
         return;
       }
-      const result: RuntimeCancelResultV1 | undefined = await runtime.cancel?.({ reason: 'user' });
+      const result:
+        | Awaited<ReturnType<ClaudeTestSessionRuntime['cancel']>>
+        | undefined = await runtime.cancel?.({ reason: 'user' });
       if (result?.status === 'unsupported' || result?.status === 'unavailable') {
         throw new Error(result.diagnostic ?? `runtime cancel failed: ${result.status}`);
       }

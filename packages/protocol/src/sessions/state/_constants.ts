@@ -8,6 +8,8 @@ export const SESSION_STATE_FIELD_IDS = [
   'display.title',
   'runtime.workState',
   'runtime.activity',
+  'runtime.externalAgent',
+  'runtime.externalSessionOperation',
   'runtime.usageLimitRecovery',
   'runtime.sessionRunner',
   'view.readState',

@@ -1,31 +1,81 @@
+import { ingestPluginManifestV2 } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
-
+import { OPENCODE_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
 
 describe('OpenCode plugin manifest', () => {
-  it('declares agent settings as plugin-authored contribution data', () => {
-    const contribution = PLUGIN_MANIFEST.contributes.agentSettings?.find((entry) => entry.agentId === 'opencode');
-
-    expect(contribution).toEqual(expect.objectContaining({
-      id: 'opencode.agentSettings.v1',
-      kind: 'agentSettings.v1',
-      storageScope: 'agentAccount',
-    }));
-    expect(contribution?.fields.map((field) => field.id)).toEqual([
-      'opencodeBackendMode',
-      'opencodeServerBaseUrl',
-      'opencodeServerBaseUrlByServerIdV1',
+  it('is a canonical data-only custom Agent declaration', () => {
+    const result = ingestPluginManifestV2(PLUGIN_MANIFEST);
+    expect(result).toMatchObject({ ok: true });
+    expect(ingestPluginManifestV2(JSON.stringify(PLUGIN_MANIFEST))).toEqual(result);
+    expect(PLUGIN_MANIFEST.contributes.agents).toEqual([
+      expect.objectContaining({ id: 'opencode', runtime: { kind: 'custom' } }),
     ]);
-    expect(contribution?.fields.find((field) => field.id === 'opencodeBackendMode')).toMatchObject({
-      default: 'server',
-      schema: {
-        kind: 'enum',
-        values: ['server', 'acp'],
+    expect(PLUGIN_MANIFEST.contributes.settings).toEqual([
+      OPENCODE_AGENT_SETTINGS_CONTRIBUTION,
+    ]);
+  });
+
+  it('does not advertise provider runtime Activity authority', () => {
+    const agent = PLUGIN_MANIFEST.contributes.agents.find((entry) => entry.id === 'opencode');
+
+    expect(agent?.capabilities.sessions?.runtimeActivitySnapshots).toBeUndefined();
+  });
+
+  it('authorizes only managed-launch env and does not grant the external-attach descriptor to the child process', () => {
+    const processAccess = PLUGIN_MANIFEST.hostAccess.required.find((entry) => entry.id === 'opencode-process');
+
+    expect(processAccess).toEqual(expect.objectContaining({
+      id: 'opencode-process',
+      scope: expect.objectContaining({
+        envKeys: [
+          'HAPPIER_OPENCODE_PROVIDER_API_KEY',
+          'OPENCODE_AUTH_CONTENT',
+          'OPENCODE_CONFIG_CONTENT',
+          'OPENAI_API_KEY',
+          'ANTHROPIC_API_KEY',
+          'XDG_CONFIG_HOME',
+          'HAPPIER_CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH',
+          'OPENCODE_PERMISSION',
+          'OPENCODE_SERVER_PASSWORD',
+        ],
+      }),
+    }));
+    expect(processAccess?.scope.envKeys).not.toContain('HAPPIER_OPENCODE_SERVER_URL');
+  });
+
+  it('declares the native session facets that the OpenCode primary consumes', () => {
+    const agent = PLUGIN_MANIFEST.contributes.agents.find((entry) => entry.id === 'opencode');
+
+    expect(agent?.capabilities.sessions).toMatchObject({
+      open: ['create', 'resume', 'fork'],
+      delivery: ['newTurn', 'steer', 'followUp'],
+      cancel: true,
+      configuration: true,
+      compaction: { events: true, manual: true },
+      catalog: { active: ['skills'] },
+      usageLimitRecovery: {
+        active: ['checkNow'],
+        inactive: ['checkNow'],
       },
     });
-    expect(contribution?.ui.sections.map((section) => section.id)).toEqual([
-      'opencodeBackendMode',
-      'opencodeServer',
-    ]);
+  });
+
+  it('declares the exact qualified purposes consumed by request-time OpenCode auth', () => {
+    const agent = PLUGIN_MANIFEST.contributes.agents.find((entry) => entry.id === 'opencode');
+
+    expect(agent?.connectedAccounts).toEqual([{
+      purpose: 'anthropic-model-request',
+      service: {
+        pluginId: 'happier.agent.claude',
+        localId: 'claude-subscription',
+      },
+    }, {
+      purpose: 'openai-codex-model-request',
+      service: {
+        pluginId: 'happier.agent.codex',
+        localId: 'openai-codex',
+      },
+    }]);
   });
 });

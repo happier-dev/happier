@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { PendingLocalIdSchema, readPendingLocalId } from '../pending/pendingLocalId.js';
 
 export const SESSION_PENDING_QUEUE_HOLD_METADATA_KEY = 'sessionPendingQueueHoldV1' as const;
 export const SESSION_PENDING_QUEUE_HOLD_MAX_TTL_MS = 5 * 60_000;
@@ -8,7 +9,7 @@ export const SessionPendingQueueHoldEntryV1Schema = z
     v: z.literal(1),
     holdId: z.string().trim().min(1),
     kind: z.literal('pending_message_edit'),
-    localId: z.string().trim().min(1),
+    localId: PendingLocalIdSchema,
     updatedAtMs: z.number().int().nonnegative(),
     expiresAtMs: z.number().int().nonnegative(),
   })
@@ -83,8 +84,8 @@ export function writeSessionPendingQueueHoldV1ToMetadata(
   const base = toMetadataRecord(metadata);
   const existing = readSessionPendingQueueHoldV1FromMetadata(metadata);
   const holdId = input.holdId.trim();
-  const localId = input.localId.trim();
-  if (!holdId || !localId) return base;
+  const localId = readPendingLocalId(input.localId);
+  if (!holdId || localId === null) return base;
   const updatedAtMs = normalizeTimestampMs(input.updatedAtMs);
   const expiresAtMs = Math.min(
     normalizeTimestampMs(input.expiresAtMs),

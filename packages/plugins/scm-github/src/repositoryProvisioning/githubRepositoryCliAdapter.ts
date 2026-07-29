@@ -4,13 +4,13 @@ import type {
   ScmHostingProviderRepositoryDescribePublishTargetsResult,
   ScmHostingProviderRepositoryGetInput,
   ScmHostingProviderRuntimeServices,
-} from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/experimental/scm/hostingProvider';
 import type {
   ScmHostingProviderRef,
   ScmHostingRepositoryAuthSummary,
   ScmHostingRepositoryPublishTarget,
   ScmHostingRepositorySummary,
-} from '@happier-dev/plugin-sdk/scm';
+} from '@happier-dev/plugin-sdk/experimental/scm';
 
 import {
   createGithubRepositoryAuthRequiredError,
@@ -22,7 +22,6 @@ import {
   detectGithubRepositoryCliAuth,
   resolveGithubRepositoryCliHost,
   type GithubRepositoryCliAuthDetectionResult,
-  type GithubRepositoryCliCommandResolution,
   type GithubRepositoryCliCommandRunner,
 } from './githubRepositoryCliAuth.js';
 import { mapGithubRepositorySummary } from './githubRepositoryMapping.js';
@@ -41,6 +40,7 @@ type GithubRepositoryCliAuthDetector = (input: Readonly<{
 }>) => Promise<GithubRepositoryCliAuthDetectionResult>;
 
 const DEFAULT_GITHUB_REPOSITORY_CLI_TIMEOUT_MS = 30_000;
+const GITHUB_CLI_EXECUTABLE = Object.freeze({ kind: 'systemTool' as const, id: 'github-cli' });
 const GITHUB_CLI_NONINTERACTIVE_ENV = Object.freeze({
   GH_PROMPT_DISABLED: '1',
   GIT_TERMINAL_PROMPT: '0',
@@ -48,29 +48,30 @@ const GITHUB_CLI_NONINTERACTIVE_ENV = Object.freeze({
 });
 const GITHUB_REPOSITORY_JSON_FIELDS = 'nameWithOwner,url,sshUrl,defaultBranchRef,visibility';
 
-function normalizeRuntimeCommandResolution(
-  result: Awaited<ReturnType<NonNullable<ScmHostingProviderRuntimeServices['resolveInstallableCommand']>>>,
-): GithubRepositoryCliCommandResolution {
-  if (result.kind === 'available' && (result.source === 'system' || result.source === 'managed')) {
-    return {
-      kind: 'available',
-      source: result.source,
-      binPath: result.binPath,
-    };
-  }
-  return { kind: 'missing' };
+function createRuntimeCommandRunner(
+  runtimeServices?: ScmHostingProviderRuntimeServices,
+): GithubRepositoryCliCommandRunner | null {
+  const executeCommand = runtimeServices?.executeCommand;
+  if (!executeCommand) return null;
+  return async (request) => await executeCommand({
+    executable: GITHUB_CLI_EXECUTABLE,
+    args: request.args,
+    timeoutMs: request.timeoutMs,
+    ...(request.env ? { env: request.env } : {}),
+  });
 }
 
 function defaultDetectAuth(input: Readonly<{
   providerBaseUrl: string;
   runtimeServices?: ScmHostingProviderRuntimeServices;
 }>): Promise<GithubRepositoryCliAuthDetectionResult> {
+  const runtimeCommandRunner = createRuntimeCommandRunner(input.runtimeServices);
   return detectGithubRepositoryCliAuth({
     providerBaseUrl: input.providerBaseUrl,
-    resolveCommand: async () => input.runtimeServices?.resolveInstallableCommand
-      ? normalizeRuntimeCommandResolution(await input.runtimeServices.resolveInstallableCommand({ capabilityId: 'dep.gh' }))
+    resolveCommand: async () => runtimeCommandRunner
+      ? { kind: 'available', source: 'system', binPath: 'github-cli' }
       : { kind: 'missing' },
-    runCommand: input.runtimeServices?.runCommand ?? (async () => ({ ok: false, stdout: '', stderr: '', exitCode: null })),
+    runCommand: runtimeCommandRunner ?? (async () => ({ ok: false, stdout: '', stderr: '', exitCode: null })),
   });
 }
 
@@ -204,7 +205,7 @@ export function createGithubRepositoryCliAdapter(params?: Readonly<{
     runtimeServices?: ScmHostingProviderRuntimeServices,
   ): Promise<string> {
     const auth = await resolveAuthenticatedCommand(provider, runtimeServices);
-    const commandRunner = runtimeServices?.runCommand ?? runCommand;
+    const commandRunner = createRuntimeCommandRunner(runtimeServices) ?? runCommand;
     const result = await commandRunner({
       binPath: auth.binPath,
       args,
@@ -275,7 +276,7 @@ export function createGithubRepositoryCliAdapter(params?: Readonly<{
     },
     async getRepository(input) {
       const auth = await resolveAuthenticatedCommand(input.provider, input.runtimeServices);
-      const commandRunner = input.runtimeServices?.runCommand ?? runCommand;
+      const commandRunner = createRuntimeCommandRunner(input.runtimeServices) ?? runCommand;
       const result = await commandRunner({
         binPath: auth.binPath,
         // Audit fence: provider-owned gh repo view for repository descriptions.

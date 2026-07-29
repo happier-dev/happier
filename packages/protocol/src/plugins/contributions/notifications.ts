@@ -1,8 +1,26 @@
 import { z } from 'zod';
 
-import { PluginLooseJsonObjectSchema, PluginOptionalStringSchema } from '../_shared.js';
+import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
+import { PluginSettingFieldV2Schema } from './settings.js';
+import {
+  PluginAvailabilityDescriptorV2Schema,
+  PluginContributionReferenceV2Schema,
+  PluginJsonValueV2Schema,
+  PluginLocalizedStringV2Schema,
+} from './publicTypes.js';
 
-export const PluginNotificationCategoryKindV1Schema = z.enum(['activity', 'approval', 'plugin']);
+const DisplayBaseSchema = z.object({
+  id: PluginContributionLocalIdSchema,
+  title: PluginLocalizedStringV2Schema,
+  description: PluginLocalizedStringV2Schema.optional(),
+  metadata: z.record(z.string(), PluginJsonValueV2Schema).optional(),
+});
+
+export const PluginNotificationCategoryKindV1Schema = z.enum([
+  'activity',
+  'approval',
+  'plugin',
+]);
 export type PluginNotificationCategoryKindV1 = z.infer<typeof PluginNotificationCategoryKindV1Schema>;
 
 export const PluginNotificationChannelKindV1Schema = z.enum([
@@ -17,28 +35,19 @@ export const PluginNotificationChannelKindV1Schema = z.enum([
 ]);
 export type PluginNotificationChannelKindV1 = z.infer<typeof PluginNotificationChannelKindV1Schema>;
 
-export const PluginNotificationCategoryContributionV2Schema = z.object({
-  id: z.string().trim().min(1),
+export const PluginNotificationCategoryContributionV2Schema = DisplayBaseSchema.extend({
   kind: PluginNotificationCategoryKindV1Schema,
-  title: z.string().trim().min(1),
-  description: PluginOptionalStringSchema,
-  eventIds: z.array(z.string().trim().min(1)).default([]),
-  defaultChannelIds: z.array(z.string().trim().min(1)).default([]),
-  featureGate: PluginOptionalStringSchema,
-  metadata: PluginLooseJsonObjectSchema.optional(),
+  eventIds: z.array(PluginContributionReferenceV2Schema),
+  defaultChannels: z.array(PluginContributionReferenceV2Schema).optional(),
+  availability: PluginAvailabilityDescriptorV2Schema.optional(),
 }).strict();
 export type PluginNotificationCategoryContributionV2 = z.infer<typeof PluginNotificationCategoryContributionV2Schema>;
 
-export const PluginNotificationChannelContributionV2Schema = z.object({
-  id: z.string().trim().min(1),
+export const PluginNotificationChannelContributionV2Schema = DisplayBaseSchema.extend({
   kind: PluginNotificationChannelKindV1Schema,
-  title: z.string().trim().min(1),
-  description: PluginOptionalStringSchema,
-  configurable: z.boolean().default(false),
-  defaultEnabled: z.boolean().default(true),
-  featureGate: PluginOptionalStringSchema,
-  settingsSchema: PluginLooseJsonObjectSchema.optional(),
-  credentialSchema: PluginLooseJsonObjectSchema.optional(),
-  metadata: PluginLooseJsonObjectSchema.optional(),
+  configurable: z.boolean().optional(),
+  defaultEnabled: z.boolean().optional(),
+  settings: z.array(PluginSettingFieldV2Schema).optional(),
+  availability: PluginAvailabilityDescriptorV2Schema.optional(),
 }).strict();
 export type PluginNotificationChannelContributionV2 = z.infer<typeof PluginNotificationChannelContributionV2Schema>;

@@ -1,7 +1,7 @@
-import type { ExecRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
+import type { PluginExecService } from '@happier-dev/plugin-sdk/runtime';
 
 import { readCodexEnvironmentAuthState, type CodexEnvironmentAuthMethod } from '../../cli/auth/environment.js';
-import { createCodexAppServerClient } from '../../runtime/appServer/client.js';
+import { createCodexNativeAppServerClient } from '../../runtime/appServer/client.js';
 import {
   readCodexAppServerSessionControls,
   type CodexAppServerSessionControlsSnapshot,
@@ -16,7 +16,7 @@ export type CodexPreflightSessionControlsPolicy = Readonly<{
 }>;
 
 export type CodexPreflightSessionControlsProbeParams = Readonly<{
-  exec: ExecRuntimeServiceV1;
+  exec: PluginExecService;
   cwd: string;
   timeoutMs: number;
   accountSettings?: Readonly<Record<string, unknown>> | null;
@@ -54,7 +54,7 @@ async function readCodexPreflightSessionControls(
   });
   if (!policy) return null;
 
-  const client = await createCodexAppServerClient({
+  const client = await createCodexNativeAppServerClient({
     exec: params.exec,
     processEnv: buildCodexPreflightProcessEnv(env, policy),
     cwd: params.cwd,

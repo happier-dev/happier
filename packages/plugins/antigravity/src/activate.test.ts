@@ -1,51 +1,89 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { PluginContextV1 } from '@happier-dev/plugin-sdk';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 
 import { activate } from './activate.js';
+import { antigravityExternalSessionsContribution } from './agent/cliPrint/externalSessions.js';
+import { antigravityExternalSessionObservationContribution } from './agent/cliPrint/observation.js';
+import { PLUGIN_MANIFEST } from './manifest.js';
 
 describe('Antigravity plugin activation', () => {
-  it('registers the canonical Antigravity backend engine through the public plugin API', async () => {
-    const registerAgentRuntime = vi.fn();
-    const registerHook = vi.fn();
-
-    activate({ registerAgentRuntime, registerHook });
-
-    expect(registerAgentRuntime).toHaveBeenCalledWith(expect.objectContaining({
-      agentId: 'antigravity',
-      create: expect.any(Function),
-    }));
-    expect(registerHook).toHaveBeenCalledWith(expect.objectContaining({
-      hookId: 'agent.resolvePrerequisites',
-      category: 'decision',
-      scope: 'agent',
-      filters: { agentId: 'antigravity' },
-      executionKind: 'decide',
-      handler: expect.any(Function),
-    }));
-
-    const registration = registerAgentRuntime.mock.calls[0]?.[0];
-    const engine = await registration.create({
-      logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
-    } as unknown as PluginContextV1);
-
-    expect(engine.runtimeCore).toEqual(expect.objectContaining({
-      createSessionRuntime: expect.any(Function),
-      createExecutionRunBackend: expect.any(Function),
-    }));
-    expect(engine.terminalRuntimeSurface).toEqual(expect.objectContaining({
-      launch: expect.any(Function),
-    }));
+  it('commits the complete Antigravity Agent aggregate through manifest-derived registration rights', async () => {
+    const testkit = await createPluginTestkit({
+      manifest: PLUGIN_MANIFEST,
+      module: { activate },
+    });
+    try {
+      expect(testkit.registrations()).toContainEqual({
+        family: 'agents',
+        localId: 'antigravity',
+      });
+    } finally {
+      await testkit.dispose();
+    }
   });
 
-  it('registers the SDK spawn prerequisite hook handler', async () => {
-    const registerAgentRuntime = vi.fn();
-    const registerHook = vi.fn();
+  it('registers one native Antigravity runtime with both structured modes and no V1 fallback', async () => {
+    const fixture = await createPluginTestkit({
+      manifest: PLUGIN_MANIFEST,
+      module: { activate },
+    });
 
-    activate({ registerAgentRuntime, registerHook });
+    expect(fixture.registrations()).toContainEqual({
+      family: 'agents',
+      localId: 'antigravity',
+    });
+    const registration = fixture.registration('agents', 'antigravity');
+    expect(registration?.factory).toEqual(expect.any(Function));
+    expect(registration?.externalSessions).toEqual(
+      antigravityExternalSessionsContribution,
+    );
+    expect(Object.keys(registration?.externalSessions ?? {}).sort()).toEqual([
+      'listCandidates',
+      'pageTranscript',
+      'readAfterTranscript',
+      'resolveLinkIdentity',
+      'resolveLinkedIdentity',
+      'resolveSource',
+    ]);
+    expect(registration?.externalSessionObservation).toEqual(
+      antigravityExternalSessionObservationContribution,
+    );
+    expect(Object.keys(
+      registration?.externalSessionObservation ?? {},
+    ).sort()).toEqual([
+      'describeResource',
+      'observeResource',
+      'reconcileResource',
+    ]);
+    expect(registration?.externalSessionHooks).toBeUndefined();
+    expect(registration?.externalSessionTakeover).toBeUndefined();
+    expect(fixture.registration('hooks', 'resolve-prerequisites')).toEqual(expect.any(Function));
 
-    const registration = registerHook.mock.calls[0]?.[0];
-    const result = await registration.handler({
+    const runtime = await registration!.factory!({
+      plugin: { id: 'happier.agent.antigravity', version: '0.0.0' },
+      agent: { id: 'antigravity' },
+      signal: new AbortController().signal,
+    });
+
+    expect(runtime.sessions).toEqual({ open: expect.any(Function) });
+    expect(runtime.executionRuns).toEqual({ open: expect.any(Function) });
+    await fixture.dispose();
+  });
+
+  it('routes SDK setup through the canonical managed-dependency service without consulting the predecessor owner', async () => {
+    const fixture = await createPluginTestkit({
+      manifest: PLUGIN_MANIFEST,
+      module: { activate },
+    });
+
+    const registration = fixture.registration('hooks', 'resolve-prerequisites');
+    const resolveManagedInstallable = vi.fn(async () => ({
+      ok: false as const,
+      errorMessage: 'missing localharness',
+    }));
+    const ensure = vi.fn(async () => ({ state: 'ready' as const }));
+    const result = await registration?.({
       payload: {
         runtimeSelection: {
           providerRuntimeSelection: { antigravityRuntimeMode: 'sdk' },
@@ -54,23 +92,22 @@ describe('Antigravity plugin activation', () => {
       },
     }, {
       tools: {
-        resolveManagedInstallable: async () => ({
-          ok: false,
-          errorMessage: 'missing localharness',
-        }),
+        resolveManagedInstallable,
       },
+      services: { managed: { dependencies: { ensure } } },
     });
 
-    expect(result).toMatchObject({
-      allowed: false,
-      reasonCode: 'antigravity_localharness_unavailable',
-      errorMessage: 'missing localharness',
-    });
+    expect(result).toEqual({ decision: 'allow' });
+    expect(resolveManagedInstallable).not.toHaveBeenCalled();
+    expect(ensure).toHaveBeenCalledWith('localharness', undefined);
+    await fixture.dispose();
   });
 
   it('passes direct activation-hook payloads through to the spawn prerequisite owner', async () => {
-    const registerAgentRuntime = vi.fn();
-    const registerHook = vi.fn();
+    const fixture = await createPluginTestkit({
+      manifest: PLUGIN_MANIFEST,
+      module: { activate },
+    });
     const runSystemTool = vi.fn(async () => ({
       ok: true as const,
       command: '/usr/local/bin/agy',
@@ -81,10 +118,8 @@ describe('Antigravity plugin activation', () => {
       stderr: '',
     }));
 
-    activate({ registerAgentRuntime, registerHook });
-
-    const registration = registerHook.mock.calls[0]?.[0];
-    const result = await registration.handler({
+    const registration = fixture.registration('hooks', 'resolve-prerequisites');
+    const result = await registration?.({
       runtimeSelection: {
         providerRuntimeSelection: { antigravityRuntimeMode: 'cliPrint' },
         cwd: '/repo',
@@ -104,6 +139,7 @@ describe('Antigravity plugin activation', () => {
       cwd: '/repo',
       env: { SAFE_TEST_ENV: 'kept' },
     }));
-    expect(result).toEqual({ allowed: true });
+    expect(result).toEqual({ decision: 'allow' });
+    await fixture.dispose();
   });
 });

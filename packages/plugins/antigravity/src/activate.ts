@@ -1,42 +1,27 @@
-import {
-  toPluginHookObjectContext,
-  toPluginHookPayloadEnvelope,
-} from '@happier-dev/plugin-sdk';
-import type {
-  PluginApi,
-  PluginApiHookRegistrationV1,
-  PluginContextV1,
-  PluginHookHandler,
-} from '@happier-dev/plugin-sdk';
+import type { PluginApi } from '@happier-dev/plugin-sdk';
+import type { HookHandler } from '@happier-dev/plugin-sdk/runtime';
 
+import { antigravityExternalSessionsContribution } from './agent/cliPrint/externalSessions.js';
+import { antigravityExternalSessionObservationContribution } from './agent/cliPrint/observation.js';
 import { ANTIGRAVITY_BACKEND_ID } from './agent/install/cliRuntime.js';
 import { resolveAntigravityDaemonSpawnPrerequisites } from './agent/lifecycle/spawnHooks.js';
-import { createAntigravityBackendEngine } from './agent/runtime/engine.js';
-import { createAntigravityTerminalRuntimeSurface } from './agent/terminal/runtime.js';
+import { createAntigravityNativeRuntime } from './agent/runtime/nativeRuntime.js';
+import { createAntigravityNativeSessionRuntime } from './agent/runtime/nativeSession.js';
 
-type AntigravitySpawnPrerequisiteHookEvent = Parameters<typeof resolveAntigravityDaemonSpawnPrerequisites>[0];
-type AntigravitySpawnPrerequisiteHookContext = NonNullable<Parameters<typeof resolveAntigravityDaemonSpawnPrerequisites>[1]>;
-
-const resolveAntigravityDaemonSpawnPrerequisitesHook: PluginHookHandler = (event, context) =>
-  resolveAntigravityDaemonSpawnPrerequisites(
-    toPluginHookPayloadEnvelope<AntigravitySpawnPrerequisiteHookEvent>(event),
-    toPluginHookObjectContext<AntigravitySpawnPrerequisiteHookContext>(context),
-  );
+const resolveAntigravityDaemonSpawnPrerequisitesHook: HookHandler = (event, context) =>
+  resolveAntigravityDaemonSpawnPrerequisites(event, context);
 
 export function activate(api: PluginApi): void {
-  api.registerAgentRuntime({
-    agentId: ANTIGRAVITY_BACKEND_ID,
-    create: (ctx: PluginContextV1) => ({
-      ...createAntigravityBackendEngine(ctx),
-      terminalRuntimeSurface: createAntigravityTerminalRuntimeSurface(),
-    }),
-  });
-  api.registerHook({
-    hookId: 'agent.resolvePrerequisites',
-    category: 'decision',
-    scope: 'agent',
-    filters: { agentId: ANTIGRAVITY_BACKEND_ID },
-    executionKind: 'decide',
-    handler: resolveAntigravityDaemonSpawnPrerequisitesHook,
-  });
+  api.agents.register(ANTIGRAVITY_BACKEND_ID, () => createAntigravityNativeRuntime({
+    openSession: createAntigravityNativeSessionRuntime,
+  }));
+  api.agents.registerExternalSessions(
+    ANTIGRAVITY_BACKEND_ID,
+    antigravityExternalSessionsContribution,
+  );
+  api.agents.registerExternalSessionObservation(
+    ANTIGRAVITY_BACKEND_ID,
+    antigravityExternalSessionObservationContribution,
+  );
+  api.hooks.register('resolve-prerequisites', resolveAntigravityDaemonSpawnPrerequisitesHook);
 }

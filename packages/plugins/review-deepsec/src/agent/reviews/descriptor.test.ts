@@ -17,37 +17,35 @@ describe('DeepSec review descriptor', () => {
 
     const backend = PLUGIN_MANIFEST.contributes.agents[0];
     expect(backend?.id).toBe('deepsec');
-    expect(backend?.capabilities.session.supported).toBe(false);
-    expect(backend?.capabilities.executionRun.review.requiredPrerequisites).toContain('node>=22');
+    expect(backend?.primary).toBe('executionRuns');
+    expect(backend?.capabilities.executionRuns).toEqual({ open: ['create'], checkpoint: false, stop: true });
   });
 
   it('projects review and security execution run profiles', () => {
     expect(createDeepSecReviewExecutionProfile('review')).toMatchObject({
-      id: 'deepsec.review',
-      kind: 'executionRun.profile',
+      id: 'review',
       intent: 'review',
-      displayKey: 'plugins.deepsec.executionRuns.review.label',
+      promptAsset: 'review-prompt',
     });
     expect(createDeepSecReviewExecutionProfile('repository_security_audit')).toMatchObject({
-      id: 'deepsec.securityReview',
-      kind: 'executionRun.profile',
+      id: 'repository-security-audit',
       intent: 'review',
-      displayKey: 'plugins.deepsec.executionRuns.securityReview.label',
+      promptAsset: 'repository-security-audit-prompt',
     });
   });
 
   it('declares the DeepSec system tool used by the runtime resolver', () => {
     expect(PLUGIN_MANIFEST.contributes.systemTools).toContainEqual(expect.objectContaining({
-      toolId: 'deepsec',
-      displayName: 'DeepSec',
-      lookupNames: ['deepsec'],
+      id: 'deepsec-cli',
+      title: 'DeepSec CLI',
+      executableNames: ['deepsec'],
     }));
   });
 
   it('declares the gateway key environment permission consumed by readiness checks', () => {
-    expect(PLUGIN_MANIFEST.permissions.required).toContainEqual(expect.objectContaining({
-      capability: 'env',
-      scope: 'AI_GATEWAY_API_KEY',
+    expect(PLUGIN_MANIFEST.hostAccess.required).toContainEqual(expect.objectContaining({
+      capability: 'environment',
+      scope: { keys: ['AI_GATEWAY_API_KEY'] },
     }));
   });
 });

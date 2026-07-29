@@ -6,7 +6,7 @@ import { SessionProviderBindingMetadataV1Schema } from './bindingMetadataV1.js';
 function binding(overrides: Record<string, unknown> = {}) {
   return {
     v: 1,
-    connectionId: 'pc_a', contributionKey: 'plugin:providers:p', connectionRevision: 1,
+    connectionId: 'pc_a', contributionKey: 'plugin/p', connectionRevision: 1,
     protocol: 'openai-responses', materialization: 'engineConfig', adapterBindingKey: 'p_pc_a',
     compatibilityFingerprint: 'compatibility:v1:a', bindingSecurityFingerprint: 'binding-security:v1:a',
     displaySnapshot: {

@@ -1,9 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { PluginContextV1 } from '@happier-dev/plugin-sdk';
 
-import { createClaudePermissionEngine } from './createClaudePermissionEngine.js';
+import {
+    createClaudePermissionEngine,
+    type ClaudePermissionContext,
+} from './createClaudePermissionEngine.js';
 
-function createContextWithRequestDecision(requestDecision: ReturnType<typeof vi.fn>): PluginContextV1 {
+function createContextWithRequestDecision(
+    requestDecision: ReturnType<typeof vi.fn>,
+): ClaudePermissionContext {
     return {
         sessions: {
             current: {
@@ -13,7 +17,7 @@ function createContextWithRequestDecision(requestDecision: ReturnType<typeof vi.
                 },
             },
         },
-    } as unknown as PluginContextV1;
+    } as ClaudePermissionContext;
 }
 
 function createContextFixture(decision: 'approved' | 'denied' | 'abort') {

@@ -18,7 +18,7 @@ const REDACTED_PATH_SEGMENT = ':redacted';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const PERCENT_ESCAPE_PATTERN = /%[0-9a-f]{2}/iu;
-const EMBEDDED_WEB_URL_PATTERN = /(?:https?|wss?):\/\/[^\s"'<>()[\]{}\\]+/giu;
+const INLINE_URL_PATTERN = /(?:https?|wss?):\/\/[^\s"'<>()[\]{}\\]+/giu;
 const EMBEDDED_ENCODED_WEB_URL_PATTERN = /(?:https?|wss?)%3A%2F%2F[^\s"'<>()[\]{}\\]+/giu;
 
 // Whole-value non-web schemes that must collapse to the scheme alone: each can smuggle secrets
@@ -122,7 +122,7 @@ export function stripBrowserDiagnosticUrlValues(value: string): string {
 
 /**
  * Redact URL-shaped content inside an ARBITRARY string value, regardless of the key it sits
- * under. Prose stays readable; every embedded web URL is reduced via
+ * under. Prose stays readable; every inline URL is reduced via
  * `stripBrowserDiagnosticUrlValues`; a whole value carrying a secret-capable non-web scheme is
  * reduced to its scheme. This is the value-shape classifier the automation timeline/result
  * redactors apply to every string (L2-3: key-name matching is insufficient by design).
@@ -150,7 +150,7 @@ export function stripUrlValuesInString(value: string): string {
     }
   }
   return value
-    .replace(EMBEDDED_WEB_URL_PATTERN, (match) => stripBrowserDiagnosticUrlValues(match))
+    .replace(INLINE_URL_PATTERN, (match) => stripBrowserDiagnosticUrlValues(match))
     .replace(EMBEDDED_ENCODED_WEB_URL_PATTERN, (match) => stripBrowserDiagnosticUrlValues(match));
 }
 

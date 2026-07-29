@@ -3,7 +3,6 @@ import {
   type ConnectedServiceCredentialRecordV1,
   type ConnectedServiceId,
 } from './connectedServiceSchemas.js';
-import { requireConnectedAccountDescriptor, type ConnectedAccountDescriptor } from './connectedAccountDescriptors.js';
 
 export type ConnectedServiceOauthCredentialRawMetadata = Readonly<{
   claudeAiOauth?: Readonly<{
@@ -26,8 +25,8 @@ function readString(value: unknown): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function sanitizeOauthRawMetadata(
-  raw: ConnectedServiceOauthCredentialRawMetadata | null | undefined,
+export function normalizeConnectedServiceOauthCredentialRawMetadata(
+  raw: unknown,
 ): ConnectedServiceOauthCredentialRawMetadata | null {
   const root = isRecord(raw) ? raw : {};
   const claudeAiOauthRaw = isRecord(root.claudeAiOauth)
@@ -97,7 +96,7 @@ export function buildConnectedServiceCredentialRecord(
             tokenType: params.oauth.tokenType,
             providerAccountId: params.oauth.providerAccountId,
             providerEmail: params.oauth.providerEmail,
-            raw: sanitizeOauthRawMetadata(params.oauth.raw),
+            raw: normalizeConnectedServiceOauthCredentialRawMetadata(params.oauth.raw),
           },
           token: null,
         }
@@ -113,58 +112,4 @@ export function buildConnectedServiceCredentialRecord(
         };
 
   return ConnectedServiceCredentialRecordV1Schema.parse(record);
-}
-
-function resolveTokenMissingMessage(descriptor: ConnectedAccountDescriptor): string {
-  return descriptor.tokenSetup?.tokenKind === 'personal-access-token'
-    ? 'Missing personal access token'
-    : descriptor.tokenSetup?.tokenKind === 'setup-token'
-      ? 'Missing setup-token'
-      : 'Missing API key';
-}
-
-export function buildConnectedAccountCredentialRecordFromTokenInput(params: Readonly<{
-  now: number;
-  serviceId: ConnectedServiceId;
-  profileId: string;
-  token: string;
-  providerAccountId?: string | null;
-  providerEmail?: string | null;
-  descriptor?: ConnectedAccountDescriptor;
-}>): Extract<ConnectedServiceCredentialRecordV1, { kind: 'token' }> {
-  const descriptor = params.descriptor ?? requireConnectedAccountDescriptor(params.serviceId);
-  if (descriptor.id !== params.serviceId) {
-    throw new Error(`Connected account descriptor id mismatch: ${descriptor.id} !== ${params.serviceId}`);
-  }
-  if (!descriptor.tokenSetup || !descriptor.credentialKinds.includes('token')) {
-    throw new Error(`Connected account does not support token credentials: ${params.serviceId}`);
-  }
-  const token = params.token.trim();
-  if (!token) {
-    throw new Error(resolveTokenMissingMessage(descriptor));
-  }
-  const providerAccountId = params.providerAccountId?.trim() || null;
-  const providerEmail = params.providerEmail?.trim() || null;
-  if (descriptor.tokenSetup.identity && !providerEmail && !providerAccountId) {
-    throw new Error(
-      descriptor.tokenSetup.identity.missingValueErrorKey === 'connectedServices.tokenPrompts.errors.missingBitbucketEmailOrUsername'
-        ? 'Missing Bitbucket email or username'
-        : 'Missing account identity',
-    );
-  }
-  const record = buildConnectedServiceCredentialRecord({
-    now: params.now,
-    serviceId: params.serviceId,
-    profileId: params.profileId,
-    kind: 'token',
-    token: {
-      token,
-      providerAccountId,
-      providerEmail,
-    },
-  });
-  if (record.kind !== 'token') {
-    throw new Error(`Connected account token mapper produced a non-token record: ${params.serviceId}`);
-  }
-  return record;
 }

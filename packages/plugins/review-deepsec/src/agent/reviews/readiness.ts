@@ -1,30 +1,30 @@
-import type { SystemToolDiagnosticV1 } from '@happier-dev/plugin-sdk';
+import type { PluginSystemToolDiagnostic } from '@happier-dev/plugin-sdk/runtime';
 
-export type DeepSecPrerequisiteV1 = 'deepsec' | 'node>=22' | 'claude-or-codex' | 'AI_GATEWAY_API_KEY';
+export type DeepSecPrerequisite = 'deepsec' | 'node>=22' | 'claude-or-codex' | 'AI_GATEWAY_API_KEY';
 
-export type DeepSecToolRuntimeV1 =
+export type DeepSecToolRuntime =
   | Readonly<{
       kind: 'node';
       version: string;
       majorVersion: number;
-      diagnostics: readonly SystemToolDiagnosticV1[];
+      diagnostics: readonly PluginSystemToolDiagnostic[];
     }>
   | Readonly<{
       kind: 'unknown';
-      diagnostics: readonly SystemToolDiagnosticV1[];
+      diagnostics: readonly PluginSystemToolDiagnostic[];
     }>;
 
-export type DeepSecReadinessV1 =
+export type DeepSecReadiness =
   | Readonly<{
       status: 'ready';
       executablePath: string;
-      toolRuntime: DeepSecToolRuntimeV1;
+      toolRuntime: DeepSecToolRuntime;
       agentCli?: 'claude' | 'codex' | 'both';
     }>
   | Readonly<{
       status: 'missing' | 'blocked';
-      missing: readonly DeepSecPrerequisiteV1[];
-      toolRuntime: DeepSecToolRuntimeV1;
+      missing: readonly DeepSecPrerequisite[];
+      toolRuntime: DeepSecToolRuntime;
       installUrl?: string;
       commandPreview?: readonly string[];
       messageKey: string;
@@ -32,11 +32,11 @@ export type DeepSecReadinessV1 =
 
 export function checkDeepSecReadiness(params: Readonly<{
   executablePath: string | null | undefined;
-  toolRuntime?: DeepSecToolRuntimeV1 | null;
+  toolRuntime?: DeepSecToolRuntime | null;
   agentCli?: 'claude' | 'codex' | 'both' | null;
   hasGatewayKey: boolean;
-}>): DeepSecReadinessV1 {
-  const missing: DeepSecPrerequisiteV1[] = [];
+}>): DeepSecReadiness {
+  const missing: DeepSecPrerequisite[] = [];
   const executablePath = String(params.executablePath ?? '').trim();
   const toolRuntime = params.toolRuntime ?? { kind: 'unknown', diagnostics: [] };
   if (!executablePath) missing.push('deepsec');

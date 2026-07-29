@@ -43,8 +43,26 @@ export const ReviewStartInputSchema = z
     engines: ReviewEngineInputsSchema.prefault(DEFAULT_REVIEW_ENGINE_INPUTS),
     scmReviewScope: ReviewScmScopeV1Schema.optional(),
     permissionMode: z.string().min(1).default('read_only'),
+    profileId: z.string().trim().min(1).optional(),
+    profileGenerationId: z.string().trim().min(1).optional(),
   })
   .passthrough()
+  .superRefine((value, ctx) => {
+    if (Boolean(value.profileId) !== Boolean(value.profileGenerationId)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'profileId and profileGenerationId must be provided together',
+        path: value.profileId ? ['profileGenerationId'] : ['profileId'],
+      });
+    }
+    if (value.profileId && value.runLocation === 'current_session') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'execution-run profiles require the execution-run host path',
+        path: ['runLocation'],
+      });
+    }
+  })
   // Intentionally no engine-specific requirements here: this is a generalized,
   // cross-surface intent input. Engines may interpret optional `engines.*` blocks.
   ;

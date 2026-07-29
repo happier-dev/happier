@@ -22,14 +22,11 @@ describe('browser-safe package exports', () => {
         });
     });
 
-    it('publishes usage from the stable subpath and retains the deprecated compatibility path', () => {
+    it('keeps usage explicitly experimental instead of publishing a normal compatibility path', () => {
         const packageJson = readPackageJson(new URL('../package.json', import.meta.url));
 
+        expect(packageJson.exports).not.toHaveProperty('./usage');
         expect(packageJson.exports).toMatchObject({
-            './usage': {
-                types: './dist/usage.d.ts',
-                default: './dist/usage.js',
-            },
             './experimental/usage': {
                 types: './dist/experimental/usage.d.ts',
                 default: './dist/experimental/usage.js',
@@ -45,10 +42,6 @@ describe('browser-safe package exports', () => {
                 types: './dist/plugins/hooks/catalog.d.ts',
                 default: './dist/plugins/hooks/catalog.js',
             },
-            './plugins/contributions/agentSettings': {
-                types: './dist/plugins/contributions/agentSettings.d.ts',
-                default: './dist/plugins/contributions/agentSettings.js',
-            },
             './plugins/contributions/browser': {
                 types: './dist/plugins/contributions/browser/index.d.ts',
                 default: './dist/plugins/contributions/browser/index.js',
@@ -57,6 +50,11 @@ describe('browser-safe package exports', () => {
                 types: './dist/plugins/contributions/ui/index.d.ts',
                 default: './dist/plugins/contributions/ui/index.js',
             },
+            './voice/modelPacks/contributionV1': {
+                types: './dist/voice/modelPacks/contributionV1.d.ts',
+                default: './dist/voice/modelPacks/contributionV1.js',
+            },
         });
+        expect(protocolPackageJson.exports).not.toHaveProperty('./plugins/contributions/agentSettings');
     });
 });

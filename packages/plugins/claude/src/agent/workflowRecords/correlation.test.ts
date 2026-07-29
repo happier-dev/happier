@@ -258,6 +258,99 @@ await parallel([
     }
   });
 
+  it('preserves the provider run identity from an exact local Workflow launch result', () => {
+    const fact = parseClaudeWorkflowFact({
+      type: 'user',
+      session_id: 'claude-session-1',
+      uuid: 'event-workflow-launch',
+      message: {
+        content: [{
+          type: 'tool_result',
+          tool_use_id: 'toolu_wf',
+          is_error: false,
+          content: 'Workflow launched in background.',
+        }],
+      },
+      toolUseResult: {
+        status: 'async_launched',
+        taskType: 'local_workflow',
+        taskId: 'workflow-task-1',
+        workflowName: 'workflow-name',
+        runId: 'workflow-provider-run-1',
+      },
+    });
+
+    expect(fact).toMatchObject({
+      kind: 'workflow-launch',
+      workflowToolUseId: 'toolu_wf',
+      taskId: 'workflow-task-1',
+      providerRunId: 'workflow-provider-run-1',
+      title: 'workflow-name',
+      sourceSessionId: 'claude-session-1',
+    });
+  });
+
+  it('extracts an exact successful local Workflow TaskStop result as a terminal fact', () => {
+    const fact = parseClaudeWorkflowFact({
+      type: 'user',
+      session_id: 'claude-session-1',
+      uuid: 'event-workflow-stopped',
+      message: {
+        content: [{
+          type: 'tool_result',
+          tool_use_id: 'toolu_task_stop',
+          is_error: false,
+          content: '{"message":"Successfully stopped task: workflow-task-1","task_id":"workflow-task-1","task_type":"local_workflow"}',
+        }],
+      },
+      toolUseResult: {
+        message: 'Successfully stopped task: workflow-task-1 (Workflow title)',
+        task_id: 'workflow-task-1',
+        task_type: 'local_workflow',
+      },
+    });
+
+    expect(fact).toMatchObject({
+      kind: 'task-lifecycle',
+      subtype: 'workflow_task_stopped',
+      taskId: 'workflow-task-1',
+      taskType: 'local_workflow',
+      status: 'cancelled',
+      sourceSessionId: 'claude-session-1',
+    });
+  });
+
+  it('does not infer Workflow termination from an unstructured or non-workflow stop result', () => {
+    expect(parseClaudeWorkflowFact({
+      type: 'user',
+      message: {
+        content: [{
+          type: 'tool_result',
+          tool_use_id: 'toolu_task_stop',
+          is_error: false,
+          content: 'Successfully stopped task: workflow-task-1',
+        }],
+      },
+    })).toBeNull();
+
+    expect(parseClaudeWorkflowFact({
+      type: 'user',
+      toolUseResult: {
+        message: 'Successfully stopped task: ordinary-task-1',
+        task_id: 'ordinary-task-1',
+        task_type: 'subagent',
+      },
+      message: {
+        content: [{
+          type: 'tool_result',
+          tool_use_id: 'toolu_task_stop',
+          is_error: false,
+          content: 'Successfully stopped task: ordinary-task-1',
+        }],
+      },
+    })).toBeNull();
+  });
+
   it('extracts clean journal result summaries instead of raw JSON previews', () => {
     const fact = parseClaudeWorkflowFact({
       type: 'happier_workflow_journal',

@@ -1,22 +1,19 @@
 import { z } from 'zod';
 
-import { PromptAssetCapabilitiesV1Schema } from '../../prompts/library/promptAssetsV1.js';
-
-export const PluginPromptAssetAdapterKindV1Schema = z.enum(['skillMd', 'markdownDoc']);
-export type PluginPromptAssetAdapterKindV1 = z.infer<typeof PluginPromptAssetAdapterKindV1Schema>;
-
-const PluginPromptAssetPathSegmentsV1Schema = z.array(z.string().trim().min(1)).min(1);
+import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
+import {
+  PluginAvailabilityDescriptorV2Schema,
+  PluginContributionReferenceV2Schema,
+  PluginJsonValueV2Schema,
+} from './publicTypes.js';
 
 export const PluginPromptAssetContributionV1Schema = z.object({
-  adapterKind: PluginPromptAssetAdapterKindV1Schema,
-  assetTypeId: z.string().trim().min(1),
-  providerId: z.string().trim().min(1),
-  title: z.string().trim().min(1),
-  description: z.string().trim().min(1),
-  projectRootPath: PluginPromptAssetPathSegmentsV1Schema,
-  projectRootDisplayPath: z.string().trim().min(1),
-  userRootPath: PluginPromptAssetPathSegmentsV1Schema,
-  userRootDisplayPath: z.string().trim().min(1),
-  capabilities: PromptAssetCapabilitiesV1Schema.optional(),
+  id: PluginContributionLocalIdSchema,
+  kind: z.enum(['systemPrompt', 'context', 'guidelines']),
+  resource: PluginContributionReferenceV2Schema,
+  target: z.object({ kind: z.literal('agent'), agent: PluginContributionReferenceV2Schema }).strict(),
+  priority: z.number().int().optional(),
+  availability: PluginAvailabilityDescriptorV2Schema.optional(),
+  metadata: z.record(z.string(), PluginJsonValueV2Schema).optional(),
 }).strict();
 export type PluginPromptAssetContributionV1 = z.infer<typeof PluginPromptAssetContributionV1Schema>;

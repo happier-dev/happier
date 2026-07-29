@@ -30,6 +30,13 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function hasOnlyKeys(
+  value: Readonly<Record<string, unknown>>,
+  allowedKeys: ReadonlySet<string>,
+): boolean {
+  return Object.keys(value).every((key) => allowedKeys.has(key));
+}
+
 function readAgentIdCompat(record: Readonly<Record<string, unknown>>): string | null {
   const hasAgentId = Object.hasOwn(record, 'agentId');
   const hasProviderId = Object.hasOwn(record, 'providerId');
@@ -78,4 +85,35 @@ export function readCanonicalPiAgentRuntimeDescriptorV1(
     providerSessionId: readProviderSessionIdCompat(agentPayload),
     sessionFile: normalizeTrimmedString(agentPayload.sessionFile),
   };
+}
+
+export function readStrictCanonicalPiAgentRuntimeDescriptorV1(
+  descriptor: unknown,
+): CanonicalPiAgentRuntimeDescriptorV1 | null {
+  const record = asRecord(descriptor);
+  if (
+    !record
+    || !hasOnlyKeys(
+      record,
+      new Set(['v', 'agentId', 'providerId', 'agent', 'provider']),
+    )
+  ) {
+    return null;
+  }
+  const payload = asRecord(record.agent) ?? asRecord(record.provider);
+  if (
+    !payload
+    || !hasOnlyKeys(
+      payload,
+      new Set([
+        'resumeStrategy',
+        'providerSessionId',
+        'vendorSessionId',
+        'sessionFile',
+      ]),
+    )
+  ) {
+    return null;
+  }
+  return readCanonicalPiAgentRuntimeDescriptorV1(descriptor);
 }

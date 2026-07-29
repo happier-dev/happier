@@ -80,8 +80,10 @@ describe('feature catalog', () => {
     expect(FEATURE_CATALOG['pets.sync']?.dependencies).toEqual([]);
   });
 
-  it('includes connected services quotas feature id', () => {
+  it('keeps Connected Accounts core while retaining independent quota and account-group feature ids', () => {
+    expect(isFeatureId('connectedServices')).toBe(false);
     expect(isFeatureId('connectedServices.quotas')).toBe(true);
+    expect(FEATURE_CATALOG['connectedServices.quotas']?.dependencies).toEqual([]);
   });
 
   it('includes connected-service account group and usage-limit recovery feature ids', () => {
@@ -89,7 +91,7 @@ describe('feature catalog', () => {
     expect(isFeatureId('connectedServices.accountGroups')).toBe(true);
     expect(isFeatureId('connectedServices.accountFallback')).toBe(true);
     expect(FEATURE_CATALOG['sessions.usageLimitRecovery']?.dependencies).toEqual(['sessions']);
-    expect(FEATURE_CATALOG['connectedServices.accountGroups']?.dependencies).toEqual(['connectedServices']);
+    expect(FEATURE_CATALOG['connectedServices.accountGroups']?.dependencies).toEqual([]);
     expect(FEATURE_CATALOG['connectedServices.accountFallback']?.dependencies).toEqual([
       'connectedServices.accountGroups',
       'sessions.usageLimitRecovery',
@@ -288,7 +290,6 @@ describe('feature catalog', () => {
     expect(isFeatureId('plugins')).toBe(true);
     expect(isFeatureId('plugins.ui')).toBe(true);
     expect(isFeatureId('plugins.ui.hostedWeb')).toBe(true);
-    expect(isFeatureId('plugins.ui.embeddedWebBundles')).toBe(true);
     expect(isFeatureId('plugins.ui.reactNativeBundles')).toBe(true);
     expect(isFeatureId('plugins.ui.reactNativeBundles.devHotReload')).toBe(true);
     expect(isFeatureId('plugins.ui.structuredMessages')).toBe(true);
@@ -297,7 +298,6 @@ describe('feature catalog', () => {
     expect(FEATURE_CATALOG['plugins.ui']?.representation).toBe('server');
     expect(FEATURE_CATALOG['plugins.ui']?.dependencies).toEqual(['plugins']);
     expect(FEATURE_CATALOG['plugins.ui.hostedWeb']?.dependencies).toEqual(['plugins.ui']);
-    expect(FEATURE_CATALOG['plugins.ui.embeddedWebBundles']?.dependencies).toEqual(['plugins.ui']);
     expect(FEATURE_CATALOG['plugins.ui.structuredMessages']?.dependencies).toEqual(['plugins.ui']);
     expect(FEATURE_CATALOG['plugins.ui.structuredMessages']?.defaultFailMode).toBe('fail_closed');
     // §4.1/§13.5.3: the plugin UI tiers are server-represented + default-ALLOW kill-switches; the
@@ -308,15 +308,9 @@ describe('feature catalog', () => {
       'plugins.ui.reactNativeBundles',
     ]);
     expect(FEATURE_CATALOG['plugins.ui.hostedWeb']?.representation).toBe('server');
-    expect(FEATURE_CATALOG['plugins.ui.embeddedWebBundles']?.representation).toBe('server');
     expect(FEATURE_CATALOG['plugins.ui.reactNativeBundles']?.representation).toBe('server');
     // The finer dev-only hot-reload tier stays client + fail-closed (author affordance, §4.1).
     expect(FEATURE_CATALOG['plugins.ui.reactNativeBundles.devHotReload']?.representation).toBe('client');
-    // RN-WEB-LOADER / LEDGER DEC-6: embeddedWeb is retired from the public
-    // authoring story (superseded by reactNative-on-web) — no
-    // `.devHotReload` child gate exists for it; the base gate stays live only
-    // to govern already-installed embeddedWeb artifact rendering.
-    expect(isFeatureId('plugins.ui.embeddedWebBundles.devHotReload')).toBe(false);
   });
 
   it('includes simulator preview feature ids', () => {

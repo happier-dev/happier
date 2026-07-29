@@ -3,26 +3,58 @@ title: SDK boundaries
 description: Public plugin contracts versus host implementation details.
 ---
 
-The public SDK is the plugin authoring seam. Host implementation modules are not public plugin dependencies.
+The public SDK is the plugin authoring seam. Host implementation modules are
+not public plugin dependencies.
 
-## Public
+## Normal entrypoints
 
-- `PluginManifestV2`
-- `PluginApiV1`
-- `PluginContextV1`
-- `AgentRuntimeV1` and `RegisterAgentRuntimeV1`
-- runtime session and execution-run types
-- UI, actions, events, hooks, ACP, MCP, SCM, reviews, and service types re-exported by the SDK
+The normal-path allowlist is exact:
+
+- `@happier-dev/plugin-sdk`
+- `@happier-dev/plugin-sdk/runtime`
+- `@happier-dev/plugin-sdk/agent-runtime`
+- `@happier-dev/plugin-sdk/manifest`
+- `@happier-dev/plugin-sdk/testing`
+- `@happier-dev/plugin-sdk/ui`
+- `@happier-dev/plugin-sdk/ui/build`
+- `@happier-dev/plugin-sdk/ui/client`
+
+Any other author-facing exported SDK path must live below `experimental/*` and
+is not a normal author contract. `internal/*` paths are reserved for exact
+host-package bridges and are not author-facing SDK contracts. Import each
+author concept from its owning entrypoint. The candidate minimal root contains
+only `JsonValue`, `Disposable`, `PluginApi`, `PluginInvocationContext`,
+`PluginDiagnosticData`, `PluginErrorData`, and `PluginError`. The package
+remains on prepublication hold pending consolidated API approval.
+
+External authors write `.happier-plugin/plugin.json` against the generated
+schema. Executable TypeScript does not construct a second manifest. The
+`manifest` entrypoint supplies types for tooling and typed contribution
+metadata; internal first-party authoring still emits the same JSON contract.
+Activation, actions, hooks, events, MCP, SCM, and service contracts belong to
+`runtime`. Agent runtime contracts belong to
+`agent-runtime`. Generated UI build metadata belongs to `ui/build`; client-side
+bridge contracts belong to `ui/client`.
+
+## Invocation UI
+
+Actions, hooks, and events receive `PluginInvocationContext`. Use `context.ui`
+for confirmations, questions, notifications, status, widgets, surface titles,
+and composer replacement. The SDK intentionally hides interaction request IDs,
+operation IDs, idempotency/replay records, presentation revisions, and the raw
+host interaction and presentation services.
 
 ## Internal
 
-- CLI engine registry implementation
-- daemon runtime registry
-- host plugin context factory implementation
+- CLI Agent catalog implementation
+- daemon activation and applied-state implementation
+- invocation UI request and presentation bridge implementation
+- interaction custody, request identity, replay, and revision mechanics
 - server database models
-- UI provider registry internals
+- UI projection internals
 - first-party plugin private modules
 
 ## Rule
 
-Plugins should import from `@happier-dev/plugin-sdk`, not from Happier source internals.
+Plugins should import from the normal SDK entrypoint that owns the contract,
+never from Happier source internals or an undocumented deep SDK path.

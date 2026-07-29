@@ -1,16 +1,15 @@
 export {
+  PluginConnectedAccountAuthenticationModeV2Schema,
+  PluginConnectedAccountAuthenticationV2Schema,
+  PluginConnectedAccountConfigurationFieldV2Schema,
+  PluginConnectedAccountConfigurationV2Schema,
   PluginConnectedAccountDescriptorContributionV2Schema,
-  PluginConnectedAccountDescriptorSchema,
-  ConnectedAccountConnectModeDescriptorSchema,
-  ConnectedAccountTokenKindSchema,
-  getConnectedAccountDescriptor,
-  requireConnectedAccountDescriptor,
 } from '@happier-dev/protocol';
-export { BITBUCKET_CONNECTED_ACCOUNT_DESCRIPTOR } from '@happier-dev/protocol';
 
 export type {
+  PluginConnectedAccountAuthenticationModeV2,
+  PluginConnectedAccountAuthenticationV2,
+  PluginConnectedAccountConfigurationFieldV2,
+  PluginConnectedAccountConfigurationV2,
   PluginConnectedAccountDescriptorContributionV2,
-  ConnectedAccountConnectModeDescriptor,
-  ConnectedAccountDescriptor,
-  ConnectedAccountTokenKind,
 } from '@happier-dev/protocol';

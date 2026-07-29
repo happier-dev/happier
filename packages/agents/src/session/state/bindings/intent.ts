@@ -12,6 +12,7 @@ import {
   AcpConfigOptionOverridesV1Schema,
   AcpSessionModeOverrideV1Schema,
   ModelOverrideV1Schema,
+  projectSessionModelSelectionIntentToLegacyModelOverrideV1,
   SessionModelSelectionIntentV1Schema,
 } from '@happier-dev/protocol';
 
@@ -157,14 +158,22 @@ export function writeModelIntentToMetadata(
     isEqual: (left, right) => JSON.stringify(left) === JSON.stringify(right),
   });
   if (!result.accepted) return metadata;
-  return {
+  const nextIntent = {
+    v: 1 as const,
+    updatedAt: result.updatedAt,
+    selection: candidate.selection,
+  };
+  const nextMetadata: MetadataRecord = {
     ...(metadata as MetadataRecord),
-    [MODEL_SELECTION_INTENT_KEY]: {
-      v: 1,
-      updatedAt: result.updatedAt,
-      selection: result.value,
-    },
-  } as SessionMetadata;
+    [MODEL_SELECTION_INTENT_KEY]: nextIntent,
+  };
+  const legacyProjection = projectSessionModelSelectionIntentToLegacyModelOverrideV1(nextIntent);
+  if (legacyProjection) {
+    nextMetadata[MODEL_OVERRIDE_KEY] = legacyProjection;
+  } else {
+    delete nextMetadata[MODEL_OVERRIDE_KEY];
+  }
+  return nextMetadata as SessionMetadata;
 }
 
 export function readPermissionModeIntentFromMetadata(
@@ -361,7 +370,7 @@ export function writeAcpConfigOptionIntentToMetadata(
   return nextMetadata as SessionMetadata;
 }
 
-export const modelIntentBinding = {
+export const modelIntentBinding: SessionStateBinding<'intent.model'> = {
   read: (metadata) => {
     const value = readModelIntentFromMetadata(metadata);
     return { value, updatedAt: value?.updatedAt ?? null };
@@ -371,7 +380,7 @@ export const modelIntentBinding = {
     selection: update.value.selection,
     updatedAt: update.updatedAt ?? update.value.updatedAt,
   }),
-} satisfies SessionStateBinding<'intent.model'>;
+};
 
 export const permissionModeIntentBinding = {
   read: (metadata) => {

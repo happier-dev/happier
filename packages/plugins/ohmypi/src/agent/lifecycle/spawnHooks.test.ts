@@ -36,13 +36,13 @@ describe('OhMyPi daemon spawn prerequisites', () => {
         cwd: '/repo',
       },
     }, fixture.context)).resolves.toMatchObject({
-      allowed: false,
+      decision: 'deny',
       reasonCode: 'ohmypi_models_unavailable',
       errorMessage: expect.stringContaining('No models available'),
     });
 
     expect(fixture.runSystemTool).toHaveBeenCalledWith(expect.objectContaining({
-      toolId: 'ohMyPi',
+      toolId: 'ohmypi-cli',
       args: ['--list-models'],
       cwd: '/repo',
       env: { CI: '1' },
@@ -64,7 +64,7 @@ describe('OhMyPi daemon spawn prerequisites', () => {
       payload: {
         cwd: '/repo',
       },
-    }, fixture.context)).resolves.toEqual({ allowed: true });
+    }, fixture.context)).resolves.toEqual({ decision: 'allow' });
   });
 
   it('passes materialized runtime-selection env to the pre-spawn model probe', async () => {
@@ -89,7 +89,7 @@ describe('OhMyPi daemon spawn prerequisites', () => {
           },
         },
       },
-    }, fixture.context)).resolves.toEqual({ allowed: true });
+    }, fixture.context)).resolves.toEqual({ decision: 'allow' });
 
     expect(fixture.runSystemTool).toHaveBeenCalledWith(expect.objectContaining({
       env: {
@@ -116,7 +116,7 @@ describe('OhMyPi daemon spawn prerequisites', () => {
         cwd: '/repo',
       },
     }, fixture.context)).resolves.toMatchObject({
-      allowed: false,
+      decision: 'deny',
       reasonCode: 'ohmypi_models_unavailable',
       errorMessage: expect.stringContaining('chat-capable models'),
     });

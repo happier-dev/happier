@@ -4,6 +4,7 @@ import {
   type ParsedProviderIpAddress,
 } from './locality.js';
 import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from './limits.js';
+import { isProviderMetadataHostname } from './metadataDestinations.js';
 import { isUnsafeTelemetryDataKey, normalizeTelemetryDataKey } from '../../common/sensitiveKeys.js';
 
 export type ProviderEndpointSafetyErrorCode =
@@ -215,6 +216,9 @@ export function normalizeProviderEndpointUrlSyntax(
   const hostname = parsed.hostname.replace(/^\[|\]$/gu, '').toLowerCase().replace(/\.$/u, '');
   if (!hostname || hostname.length > PROVIDER_ENDPOINT_SAFETY_LIMITS.maxHostnameChars) {
     fail('host_too_long', 'Provider endpoint hostname is missing or too long.');
+  }
+  if (isProviderMetadataHostname(hostname)) {
+    fail('unsafe_address', 'Provider endpoint targets a cloud metadata destination.');
   }
   const literalAddress = parseProviderIpAddress(hostname);
   if (!literalAddress && hostname.split('.').some((label) => label.length === 0 || label.length > 63)) {

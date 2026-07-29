@@ -1,10 +1,9 @@
 import type {
+  ApplyRuntimeConfigReason,
   RuntimeConfigOutcomeChangeKeyV1,
   RuntimeConfigOutcomeStatusV1,
   RuntimeConfigOutcomeTimingV1,
-} from '@happier-dev/plugin-sdk/experimental/runtime/session';
-
-import type { ApplyRuntimeConfigReason } from './types.js';
+} from './types.js';
 
 type LoggerLike = Readonly<{
   debug(message: string, ...args: unknown[]): void;

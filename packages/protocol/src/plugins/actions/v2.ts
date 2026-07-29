@@ -1,8 +1,16 @@
 import { z } from 'zod';
 
-import { ActionInputHintsSchema, ActionSafetySchema } from '../../actions/actionSpecs.js';
-import { PluginLooseJsonObjectSchema, PluginOptionalStringSchema } from '../_shared.js';
-import { PluginPermissionCapabilityV1Schema } from '../permissions/v1.js';
+import { ActionSafetySchema } from '../../actions/actionSpecs.js';
+import { PluginOptionalStringSchema } from '../_shared.js';
+import {
+  PluginAvailabilityDescriptorV2Schema,
+  PluginJsonSchemaV2Schema,
+  PluginJsonValueV2Schema,
+  PluginLocalizedStringV2Schema,
+} from '../contributions/publicTypes.js';
+import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
+export { PluginJsonSchemaV2Schema, type PluginJsonSchemaV2 as PluginJsonSchema } from '../contributions/publicTypes.js';
+export type { PluginJsonValueV2 as PluginJsonValue } from '../contributions/publicTypes.js';
 
 export const PluginActionDefinitionExamplesV1Schema = z
   .object({
@@ -10,26 +18,22 @@ export const PluginActionDefinitionExamplesV1Schema = z
       .object({
         argsExample: z.string().min(1).optional(),
       })
-      .passthrough()
-      .nullable()
+      .strict()
       .optional(),
     mcp: z
       .object({
         argsExample: z.string().min(1).optional(),
       })
-      .passthrough()
-      .nullable()
+      .strict()
       .optional(),
     sdk: z
       .object({
         codeExample: z.string().min(1).optional(),
       })
-      .passthrough()
-      .nullable()
+      .strict()
       .optional(),
   })
-  .passthrough()
-  .nullable();
+  .strict();
 export type PluginActionDefinitionExamplesV1 = z.infer<typeof PluginActionDefinitionExamplesV1Schema>;
 
 export const PluginActionScopeV2Schema = z.enum([
@@ -50,8 +54,11 @@ export const PluginActionSurfaceV2Schema = z.enum([
   'cli',
   'mcp',
   'agent',
+  'ui',
 ]);
 export type PluginActionSurfaceV2 = z.infer<typeof PluginActionSurfaceV2Schema>;
+
+const PluginToolSurfaceV2Schema = PluginActionSurfaceV2Schema.exclude(['ui']);
 
 export const PluginActionPlacementV2Schema = z.enum([
   'primary',
@@ -73,55 +80,43 @@ export const PluginActionDangerLevelV2Schema = z.enum([
 ]);
 export type PluginActionDangerLevelV2 = z.infer<typeof PluginActionDangerLevelV2Schema>;
 
-const PLUGIN_ACTION_PERMISSIONS_FIELD = 'permissions' as const;
-
-export const PluginExecutableHandlerRefV1Schema = z.object({
-  target: z.enum(['daemon', 'plugin']),
-  exportName: PluginOptionalStringSchema,
-  registrationId: PluginOptionalStringSchema,
-}).strict().superRefine((value, ctx) => {
-  if (value.exportName || value.registrationId) return;
-
-  ctx.addIssue({
-    code: z.ZodIssueCode.custom,
-    path: ['exportName'],
-    message: 'Plugin handler references must declare exportName or registrationId.',
-  });
-});
-export type PluginExecutableHandlerRefV1 = z.infer<typeof PluginExecutableHandlerRefV1Schema>;
-
-export const PluginActionAvailabilityV2Schema = z.object({
-  features: z.array(z.string().trim().min(1)).default([]),
-  agentIds: z.array(z.string().trim().min(1)).default([]),
-  sessionStates: z.array(z.string().trim().min(1)).default([]),
-  machineCapabilities: z.array(z.string().trim().min(1)).default([]),
-}).passthrough();
+export const PluginActionAvailabilityV2Schema = PluginAvailabilityDescriptorV2Schema;
 export type PluginActionAvailabilityV2 = z.infer<typeof PluginActionAvailabilityV2Schema>;
 
 export const PluginActionConfirmationV2Schema = z.object({
-  title: z.string().trim().min(1),
-  body: PluginOptionalStringSchema,
-  confirmLabel: PluginOptionalStringSchema,
+  title: PluginLocalizedStringV2Schema,
+  body: PluginLocalizedStringV2Schema.optional(),
+  confirmLabel: PluginLocalizedStringV2Schema.optional(),
 }).strict();
 export type PluginActionConfirmationV2 = z.infer<typeof PluginActionConfirmationV2Schema>;
 
 export const PluginActionContributionV2Schema = z.object({
-  id: z.string().trim().min(1),
-  title: z.string().trim().min(1),
-  description: PluginOptionalStringSchema,
+  id: PluginContributionLocalIdSchema,
+  title: PluginLocalizedStringV2Schema,
+  description: PluginLocalizedStringV2Schema.optional(),
   icon: z.string().trim().regex(/^[a-z][a-z0-9.-]*$/i).optional(),
   scopes: z.array(PluginActionScopeV2Schema).min(1),
   surfaces: z.array(PluginActionSurfaceV2Schema).min(1),
   placement: PluginActionPlacementV2Schema,
-  inputSchema: PluginLooseJsonObjectSchema.optional(),
-  resultSchema: PluginLooseJsonObjectSchema.optional(),
+  inputSchema: PluginJsonSchemaV2Schema.optional(),
+  resultSchema: PluginJsonSchemaV2Schema.optional(),
   availability: PluginActionAvailabilityV2Schema.optional(),
-  [PLUGIN_ACTION_PERMISSIONS_FIELD]: z.array(PluginPermissionCapabilityV1Schema).default([]),
-  handler: PluginExecutableHandlerRefV1Schema,
+  hostAccess: z.array(z.string().regex(/^[a-z0-9]+(?:[-/][a-z0-9]+)*$/)).min(1).superRefine((values, ctx) => {
+    const seen = new Set<string>();
+    values.forEach((value, index) => {
+      if (seen.has(value)) ctx.addIssue({ code: 'custom', path: [index], message: 'Duplicate hostAccess request id.' });
+      seen.add(value);
+    });
+  }).optional(),
   priority: z.number().int().optional(),
   dangerLevel: PluginActionDangerLevelV2Schema,
   confirmation: PluginActionConfirmationV2Schema.optional(),
-}).passthrough().superRefine((value, ctx) => {
+  metadata: z.record(z.string(), PluginJsonValueV2Schema).optional(),
+}).strict().superRefine((value, ctx) => {
+  if (value.dangerLevel === 'safe' && value.confirmation) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['confirmation'], message: 'Safe actions cannot request confirmation.' });
+    return;
+  }
   if (value.dangerLevel === 'safe' || value.confirmation) return;
 
   ctx.addIssue({
@@ -132,20 +127,54 @@ export const PluginActionContributionV2Schema = z.object({
 });
 export type PluginActionContributionV2 = z.infer<typeof PluginActionContributionV2Schema>;
 
+const PluginActionInputHintOptionV2Schema = z.object({
+  value: z.string(),
+  label: PluginLocalizedStringV2Schema,
+  description: PluginLocalizedStringV2Schema.optional(),
+  disabled: z.boolean().optional(),
+}).strict();
+
+export const PluginActionInputHintsV2Schema = z.object({
+  title: PluginLocalizedStringV2Schema.optional(),
+  description: PluginLocalizedStringV2Schema.optional(),
+  fields: z.array(z.object({
+    path: z.string().trim().min(1),
+    title: PluginLocalizedStringV2Schema,
+    description: PluginLocalizedStringV2Schema.optional(),
+    widget: z.enum(['text', 'textarea', 'text_list', 'select', 'multiselect', 'toggle', 'checkbox', 'json']),
+    listSeparator: z.enum(['comma', 'newline']).optional(),
+    required: z.boolean().optional(),
+    requireExplicitSelection: z.boolean().optional(),
+    maxSelections: z.number().int().positive().optional(),
+    options: z.array(PluginActionInputHintOptionV2Schema).optional(),
+    optionsSourceId: z.string().trim().min(1).optional(),
+  }).strict()),
+}).strict();
+
+const PluginToolJsonObjectSchemaV2Schema = PluginJsonSchemaV2Schema.refine(
+  (schema) => schema.type === 'object',
+  'Tool schemas must declare type "object" at the root',
+);
+
 export const PluginToolContributionV2Schema = z.object({
-  id: z.string().trim().min(1),
+  id: PluginContributionLocalIdSchema,
   name: z.string().trim().min(1),
-  title: z.string().trim().min(1),
-  description: PluginOptionalStringSchema,
+  title: PluginLocalizedStringV2Schema,
+  description: PluginLocalizedStringV2Schema.optional(),
   safety: ActionSafetySchema.default('safe'),
-  surfaces: z.array(PluginActionSurfaceV2Schema).default([]),
-  inputSchema: PluginLooseJsonObjectSchema.optional(),
-  outputSchema: PluginLooseJsonObjectSchema.optional(),
-  inputHints: ActionInputHintsSchema.nullable().optional(),
-  compatibility: PluginLooseJsonObjectSchema.optional(),
-  examples: PluginActionDefinitionExamplesV1Schema.nullable().optional(),
+  surfaces: z.array(PluginToolSurfaceV2Schema).default([]),
+  inputSchema: PluginToolJsonObjectSchemaV2Schema.optional(),
+  outputSchema: PluginToolJsonObjectSchemaV2Schema.optional(),
+  inputHints: PluginActionInputHintsV2Schema.optional(),
+  compatibility: z.record(z.string(), PluginJsonValueV2Schema).optional(),
+  examples: PluginActionDefinitionExamplesV1Schema.optional(),
   promptSnippet: PluginOptionalStringSchema,
   promptGuidelines: z.array(z.string().trim().min(1)).optional(),
-  handler: PluginExecutableHandlerRefV1Schema,
-}).passthrough();
+  action: z.union([
+    z.string().trim().min(1),
+    z.object({ pluginId: z.string().trim().min(1), localId: z.string().trim().min(1) }).strict(),
+  ]),
+  availability: PluginActionAvailabilityV2Schema.optional(),
+  metadata: z.record(z.string(), PluginJsonValueV2Schema).optional(),
+}).strict();
 export type PluginToolContributionV2 = z.infer<typeof PluginToolContributionV2Schema>;

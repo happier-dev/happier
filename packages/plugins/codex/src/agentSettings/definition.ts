@@ -1,36 +1,42 @@
-import {
-  buildAgentSettingsDefaults,
-  defineAgentSettingsContribution,
-  enumAgentSetting,
-  agentSettingsContributionToUiDescriptor,
-} from '@happier-dev/plugin-sdk/experimental/manifest/agentSettings';
+import type { PluginSettingsContribution } from '@happier-dev/plugin-sdk/manifest';
 
 const CODEX_BACKEND_MODE_VALUES = ['acp', 'appServer', 'mcp', 'mcp_resume'] as const;
 const CODEX_BACKEND_MODE_UI_VALUES = ['appServer', 'acp'] as const;
 
-type TranslationRef = Readonly<{ key: string }>;
+const CODEX_BACKEND_MODE_PRESENTATION = {
+  appServer: {
+    title: 'App Server',
+    description: 'Recommended official Codex app-server mode',
+  },
+  acp: {
+    title: 'ACP',
+    description: 'Route Codex through ACP (codex-acp)',
+  },
+} satisfies Record<(typeof CODEX_BACKEND_MODE_UI_VALUES)[number], { title: string; description: string }>;
 
-function translation(key: string): TranslationRef {
-  return { key };
-}
-
-function codexBackendModeOption(id: (typeof CODEX_BACKEND_MODE_UI_VALUES)[number]) {
-  return {
-    id,
-    title: translation(`settingsAgents.plugins.codex.fields.codexBackendMode.options.${id}.title`),
-    subtitle: translation(`settingsAgents.plugins.codex.fields.codexBackendMode.options.${id}.subtitle`),
-  } as const;
-}
-
-export const CODEX_AGENT_SETTINGS_CONTRIBUTION = defineAgentSettingsContribution({
-  id: 'codex.agentSettings.v1',
-  agentId: 'codex',
+export const CODEX_AGENT_SETTINGS_CONTRIBUTION = {
+  id: 'agent-settings',
+  version: 1,
+  title: { key: 'settingsAgents.plugins.codex.title', fallback: 'Codex' },
+  target: { kind: 'agent', agent: 'codex' },
+  scope: 'synced',
   fields: [
-    enumAgentSetting({
+    {
       id: 'codexBackendMode',
-      values: CODEX_BACKEND_MODE_VALUES,
+      title: {
+        key: 'settingsAgents.plugins.codex.fields.codexBackendMode.title',
+        fallback: 'Codex routing mode',
+      },
+      description: {
+        key: 'settingsAgents.plugins.codex.fields.codexBackendMode.subtitle',
+        fallback: 'Select App Server, ACP, or MCP.',
+      },
+      schema: {
+        type: 'string',
+        description: 'Preferred Codex backend mode',
+        enum: [...CODEX_BACKEND_MODE_VALUES],
+      },
       default: 'appServer',
-      description: 'Preferred Codex backend mode',
       analytics: {
         trackCurrentState: true,
         trackChanges: true,
@@ -38,33 +44,38 @@ export const CODEX_AGENT_SETTINGS_CONTRIBUTION = defineAgentSettingsContribution
         privacy: 'safe',
         identityScope: 'person',
       },
-      ui: {
-        kind: 'enum',
-        title: translation('settingsAgents.plugins.codex.fields.codexBackendMode.title'),
-        subtitle: translation('settingsAgents.plugins.codex.fields.codexBackendMode.subtitle'),
-        enumOptions: CODEX_BACKEND_MODE_UI_VALUES.map(codexBackendModeOption),
+      presentation: {
+        control: 'select',
+        options: CODEX_BACKEND_MODE_UI_VALUES.map((value) => ({
+          value,
+          title: {
+            key: `settingsAgents.plugins.codex.fields.codexBackendMode.options.${value}.title`,
+            fallback: CODEX_BACKEND_MODE_PRESENTATION[value].title,
+          },
+          description: {
+            key: `settingsAgents.plugins.codex.fields.codexBackendMode.options.${value}.subtitle`,
+            fallback: CODEX_BACKEND_MODE_PRESENTATION[value].description,
+          },
+        })),
       },
-    }),
+    },
   ],
-  ui: {
-    title: translation('settingsAgents.plugins.codex.title'),
+  presentation: {
     icon: { ionName: 'terminal-outline', color: { kind: 'theme', token: 'blue' } },
-    subagentSettingsSections: [],
+    subagentSections: [],
     sections: [
       {
-        id: 'codexMode',
-        title: translation('settingsAgents.plugins.codex.sections.backendMode.title'),
-        footer: translation('settingsAgents.plugins.codex.sections.backendMode.footer'),
+        id: 'codex-mode',
+        title: {
+          key: 'settingsAgents.plugins.codex.sections.backendMode.title',
+          fallback: 'Routing mode',
+        },
+        description: {
+          key: 'settingsAgents.plugins.codex.sections.backendMode.footer',
+          fallback: 'Choose how Codex is routed. App Server is the recommended default. Local/remote switching and resume work with App Server; ACP remains available as a legacy fallback.',
+        },
         fields: ['codexBackendMode'],
       },
     ],
   },
-});
-
-export const CODEX_AGENT_SETTINGS_DEFAULTS = buildAgentSettingsDefaults(
-  CODEX_AGENT_SETTINGS_CONTRIBUTION,
-);
-
-export const CODEX_AGENT_SETTINGS_DESCRIPTOR = agentSettingsContributionToUiDescriptor(
-  CODEX_AGENT_SETTINGS_CONTRIBUTION,
-);
+} satisfies PluginSettingsContribution;

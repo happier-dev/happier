@@ -3,40 +3,15 @@ import { describe, expect, it, vi } from 'vitest';
 import { resolveAntigravityDaemonSpawnPrerequisites } from './spawnHooks.js';
 
 describe('Antigravity daemon spawn prerequisites', () => {
-  it('requires the managed localharness sidecar for explicit SDK mode', async () => {
+  it('denies explicit SDK mode when the canonical managed-dependency owner cannot ensure localharness', async () => {
     const resolveManagedInstallable = vi.fn(async () => ({
       ok: false,
       errorMessage: 'Antigravity localharness is not installed.',
     }));
-
-    await expect(resolveAntigravityDaemonSpawnPrerequisites({
-      payload: {
-        runtimeSelection: {
-          providerRuntimeSelection: { antigravityRuntimeMode: 'sdk' },
-          env: { GEMINI_API_KEY: 'sdk-key' },
-        },
-      },
-    }, {
-      tools: { resolveManagedInstallable },
-    })).resolves.toMatchObject({
-      allowed: false,
-      reasonCode: 'antigravity_localharness_unavailable',
-      errorMessage: expect.stringContaining('Antigravity localharness is not installed'),
+    const ensure = vi.fn(async () => {
+      throw new Error('Antigravity localharness is not installed.');
     });
 
-    expect(resolveManagedInstallable).toHaveBeenCalledWith(expect.objectContaining({
-      installableId: 'dep.antigravity.localharness',
-      sourcePreference: 'managed-first',
-    }));
-  });
-
-  it('allows explicit SDK mode after resolving the managed sidecar', async () => {
-    const resolveManagedInstallable = vi.fn(async () => ({
-      ok: true,
-      command: '/managed/localharness',
-      args: [],
-    }));
-
     await expect(resolveAntigravityDaemonSpawnPrerequisites({
       payload: {
         runtimeSelection: {
@@ -46,7 +21,30 @@ describe('Antigravity daemon spawn prerequisites', () => {
       },
     }, {
       tools: { resolveManagedInstallable },
-    })).resolves.toEqual({ allowed: true });
+      services: { managed: { dependencies: { ensure } } },
+    })).resolves.toMatchObject({
+      decision: 'deny',
+      reasonCode: 'antigravity_localharness_unavailable',
+      errorMessage: 'Antigravity localharness is not installed.',
+    });
+
+    expect(resolveManagedInstallable).not.toHaveBeenCalled();
+    expect(ensure).toHaveBeenCalledWith('localharness', undefined);
+  });
+
+  it('allows explicit SDK mode after the canonical managed-dependency owner ensures localharness', async () => {
+    const ensure = vi.fn(async () => ({ state: 'ready' as const }));
+    await expect(resolveAntigravityDaemonSpawnPrerequisites({
+      payload: {
+        runtimeSelection: {
+          providerRuntimeSelection: { antigravityRuntimeMode: 'sdk' },
+          env: { GEMINI_API_KEY: 'sdk-key' },
+        },
+      },
+    }, {
+      services: { managed: { dependencies: { ensure } } },
+    })).resolves.toEqual({ decision: 'allow' });
+    expect(ensure).toHaveBeenCalledWith('localharness', undefined);
   });
 
   it('requires the agy executable for explicit cliPrint mode without resolving the Python wheel', async () => {
@@ -75,13 +73,13 @@ describe('Antigravity daemon spawn prerequisites', () => {
     }, {
       tools: { resolveManagedInstallable, runSystemTool },
     })).resolves.toMatchObject({
-      allowed: false,
+      decision: 'deny',
       reasonCode: 'antigravity_cli_print_unavailable',
       errorMessage: expect.stringContaining('agy was not found'),
     });
 
     expect(runSystemTool).toHaveBeenCalledWith(expect.objectContaining({
-      toolId: 'antigravity',
+      toolId: 'antigravity-cli',
       lookupNames: ['agy'],
       sourcePreference: 'system-first',
       args: ['models'],
@@ -115,7 +113,7 @@ describe('Antigravity daemon spawn prerequisites', () => {
       },
     }, {
       tools: { resolveManagedInstallable, runSystemTool },
-    })).resolves.toEqual({ allowed: true });
+    })).resolves.toEqual({ decision: 'allow' });
 
     expect(resolveManagedInstallable).not.toHaveBeenCalled();
   });
@@ -146,7 +144,7 @@ describe('Antigravity daemon spawn prerequisites', () => {
           errorMessage: 'unexpected localharness lookup',
         }),
       },
-    })).resolves.toEqual({ allowed: true });
+    })).resolves.toEqual({ decision: 'allow' });
 
     expect(runSystemTool).toHaveBeenCalledWith(expect.objectContaining({
       args: ['models'],
@@ -179,12 +177,12 @@ describe('Antigravity daemon spawn prerequisites', () => {
       },
     }, {
       tools: { resolveManagedInstallable, runSystemTool },
-    })).resolves.toEqual({ allowed: true });
+    })).resolves.toEqual({ decision: 'allow' });
 
     expect(resolveManagedInstallable).not.toHaveBeenCalled();
   });
 
-  it('allows auto mode through SDK when agy is unavailable but localharness is available', async () => {
+  it('allows auto mode through SDK when agy is unavailable without consulting the predecessor install owner', async () => {
     const resolveManagedInstallable = vi.fn(async () => ({
       ok: true as const,
       command: '/managed/localharness',
@@ -195,6 +193,7 @@ describe('Antigravity daemon spawn prerequisites', () => {
       reasonCode: 'tool_unavailable' as const,
       errorMessage: 'agy unavailable',
     }));
+    const ensure = vi.fn(async () => ({ state: 'ready' as const }));
 
     await expect(resolveAntigravityDaemonSpawnPrerequisites({
       payload: {
@@ -205,11 +204,11 @@ describe('Antigravity daemon spawn prerequisites', () => {
       },
     }, {
       tools: { resolveManagedInstallable, runSystemTool },
-    })).resolves.toEqual({ allowed: true });
+      services: { managed: { dependencies: { ensure } } },
+    })).resolves.toEqual({ decision: 'allow' });
 
-    expect(resolveManagedInstallable).toHaveBeenCalledWith(expect.objectContaining({
-      installableId: 'dep.antigravity.localharness',
-    }));
+    expect(resolveManagedInstallable).not.toHaveBeenCalled();
+    expect(ensure).toHaveBeenCalledWith('localharness', undefined);
   });
 
   it('returns diagnostics for both branches when auto mode has neither cliPrint nor SDK prerequisites', async () => {
@@ -232,7 +231,7 @@ describe('Antigravity daemon spawn prerequisites', () => {
     }, {
       tools: { resolveManagedInstallable, runSystemTool },
     })).resolves.toMatchObject({
-      allowed: false,
+      decision: 'deny',
       reasonCode: 'antigravity_runtime_unavailable',
       errorMessage: expect.stringContaining('agy unavailable'),
     });
@@ -258,6 +257,7 @@ describe('Antigravity daemon spawn prerequisites', () => {
     const runSystemTool = vi.fn(async () => {
       throw new Error('cliPrint should not be probed for a persisted sdk descriptor');
     });
+    const ensure = vi.fn(async () => ({ state: 'ready' as const }));
 
     await expect(resolveAntigravityDaemonSpawnPrerequisites({
       payload: {
@@ -283,9 +283,11 @@ describe('Antigravity daemon spawn prerequisites', () => {
       },
     }, {
       tools: { resolveManagedInstallable, runSystemTool },
-    })).resolves.toEqual({ allowed: true });
+      services: { managed: { dependencies: { ensure } } },
+    })).resolves.toEqual({ decision: 'allow' });
 
-    expect(resolveManagedInstallable).toHaveBeenCalledTimes(1);
+    expect(resolveManagedInstallable).not.toHaveBeenCalled();
+    expect(ensure).toHaveBeenCalledWith('localharness', undefined);
     expect(runSystemTool).not.toHaveBeenCalled();
   });
 
@@ -311,7 +313,7 @@ describe('Antigravity daemon spawn prerequisites', () => {
     }, {
       tools: { resolveManagedInstallable, runSystemTool },
     })).resolves.toMatchObject({
-      allowed: false,
+      decision: 'deny',
       reasonCode: 'antigravity_runtime_unavailable',
       errorMessage: expect.stringContaining('Gemini API-key or Vertex credentials'),
     });

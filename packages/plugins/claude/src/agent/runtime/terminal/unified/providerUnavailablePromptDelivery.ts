@@ -1,4 +1,6 @@
-import type { SessionRuntimeUsageLimitDetailsV1 } from '@happier-dev/plugin-sdk/experimental/runtime/session';
+import type {
+  ClaudeSessionRuntimeUsageLimitDetails,
+} from '../../issues/runtimeIssues.js';
 
 export type ClaudeUnifiedProviderUnavailablePromptDeliveryWindow = Readonly<{
   unavailableUntilMs: number;
@@ -17,7 +19,7 @@ function readPositiveDurationMs(value: unknown): number | null {
 }
 
 export function resolveClaudeUnifiedProviderUnavailableUntilMs(
-  details: SessionRuntimeUsageLimitDetailsV1,
+  details: ClaudeSessionRuntimeUsageLimitDetails,
   observedAtMs: number,
 ): number | null {
   const candidates = [

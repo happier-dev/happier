@@ -6,6 +6,7 @@ import {
   SESSION_MEDIA_MESSAGE_META_KIND_V1,
   createSessionMediaMessageMetaV1Schema,
 } from './sessionMediaV1.js';
+import { ConversationTurnOriginV1Schema } from '../../messages/structured/conversationTurnOriginV1.js';
 
 export type SessionUserMessageDeliveryIntentV1 =
   | 'default'
@@ -76,6 +77,7 @@ export function createSessionMessageMetaSchema(zod: typeof z) {
         .object({
           kind: zod.string(),
           payload: zod.unknown(),
+          conversationTurnOriginV1: ConversationTurnOriginV1Schema.optional(),
         })
         .passthrough()
         .superRefine((value, ctx) => {

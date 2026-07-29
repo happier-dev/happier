@@ -6,12 +6,35 @@ describe('peer mediation capabilities payload', () => {
   it('defaults observability to unavailable and body capture off', () => {
     const parsed = PeerMediationCapabilitiesSchema.parse({});
 
+    expect(parsed.directRouteGrantProofMintVersions).toEqual([]);
+    expect(parsed.tcpTunnelRelayAuthorizationMintVersions).toEqual([]);
     expect(parsed.observability.enabled).toBe(false);
     expect(parsed.observability.available).toBe(false);
     expect(parsed.observability.supportedFlowKinds).toEqual([]);
     expect(parsed.observability.bodyCapture).toBe('unavailable');
     expect(parsed.observability.payloadCapture).toBe('unavailable');
     expect(parsed.observability.publicPreviewScopedSummaries).toBe(false);
+  });
+
+  it('advertises only the socket-bound V2 TCP tunnel relay authorization mint capability', () => {
+    expect(PeerMediationCapabilitiesSchema.parse({
+      tcpTunnelRelayAuthorizationMintVersions: [2],
+    }).tcpTunnelRelayAuthorizationMintVersions).toEqual([2]);
+    expect(PeerMediationCapabilitiesSchema.safeParse({
+      tcpTunnelRelayAuthorizationMintVersions: [1],
+    }).success).toBe(false);
+  });
+
+  it('advertises only the explicit V2 ephemeral proof mint capability', () => {
+    expect(PeerMediationCapabilitiesSchema.parse({
+      directRouteGrantProofMintVersions: [2],
+    }).directRouteGrantProofMintVersions).toEqual([2]);
+    expect(PeerMediationCapabilitiesSchema.safeParse({
+      directRouteGrantProofMintVersions: [1],
+    }).success).toBe(false);
+    expect(PeerMediationCapabilitiesSchema.safeParse({
+      directRouteGrantProofMintVersions: [2, 2],
+    }).success).toBe(false);
   });
 
   it('parses observability flow support and bounded retention details', () => {

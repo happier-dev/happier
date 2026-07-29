@@ -1,27 +1,39 @@
 import type {
-  ExecRuntimeServiceV1,
-  ExecRunOptionsV1,
-  ExecRunResultV1,
-  FsScopedPathListDiagnosticV1,
-  FsScopedPathListFileInputV1,
-  FsScopedPathListFileResultV1,
-  SystemToolDiagnosticV1,
-  SystemToolLaunchGrantV1,
-} from '@happier-dev/plugin-sdk';
+  PluginExecService,
+  PluginProcessResult,
+  PluginResolvedSystemTool,
+  PluginSystemToolDiagnostic,
+} from '@happier-dev/plugin-sdk/runtime';
 
 import { buildDeepSecCommand, type DeepSecReviewMode } from './command.js';
 import { buildDeepSecCostWarning, type DeepSecCostWarningInput, type DeepSecCostWarningResult } from './costWarning.js';
 import { resolveDeepSecExecutable } from './executable.js';
-import { checkDeepSecReadiness, type DeepSecReadinessV1 } from './readiness.js';
+import { checkDeepSecReadiness, type DeepSecReadiness } from './readiness.js';
 
 export type DeepSecTempFileRequest = Readonly<{
   suffix: string;
   contents: string;
 }>;
 
+export type DeepSecScopedPathListDiagnostic = Readonly<{
+  code: string;
+  severity: 'warning' | 'error';
+  messageKey: string;
+  path?: string;
+}>;
+
+export type DeepSecScopedPathListFileInput = Readonly<{
+  suffix: string;
+  paths: readonly string[];
+}>;
+
+export type DeepSecScopedPathListFileResult =
+  | Readonly<{ status: 'created'; path: string; paths: readonly string[] }>
+  | Readonly<{ status: 'blocked'; diagnostics: readonly DeepSecScopedPathListDiagnostic[] }>;
+
 export type DeepSecTempFiles = Readonly<{
   createTextFile(request: DeepSecTempFileRequest): Promise<string>;
-  createScopedPathListFile?(request: FsScopedPathListFileInputV1): Promise<FsScopedPathListFileResultV1>;
+  createScopedPathListFile?(request: DeepSecScopedPathListFileInput): Promise<DeepSecScopedPathListFileResult>;
   readText(path: string): Promise<string>;
   cleanup(): Promise<void>;
 }>;
@@ -29,14 +41,14 @@ export type DeepSecTempFiles = Readonly<{
 export type DeepSecReviewRunResult =
   | Readonly<{
       status: 'completed' | 'failed';
-      result: ExecRunResultV1;
+      result: PluginProcessResult;
       commentOutMarkdown: string;
     }>
   | Readonly<{
       status: 'partial';
       stage: 'process';
       diagnostics: readonly DeepSecRuntimeDiagnostic[];
-      result: ExecRunResultV1;
+      result: PluginProcessResult;
       commentOutMarkdown: string;
     }>
   | Readonly<{
@@ -45,12 +57,12 @@ export type DeepSecReviewRunResult =
     }>
   | Readonly<{
       status: 'readiness_failed';
-      readiness: Extract<DeepSecReadinessV1, { status: 'missing' | 'blocked' }>;
+      readiness: Extract<DeepSecReadiness, { status: 'missing' | 'blocked' }>;
       commentOutMarkdown: '';
     }>
   | Readonly<{
       status: 'selected_scope_failed';
-      diagnostics: readonly FsScopedPathListDiagnosticV1[];
+      diagnostics: readonly DeepSecScopedPathListDiagnostic[];
       commentOutMarkdown: '';
     }>;
 
@@ -59,8 +71,8 @@ export type DeepSecRuntimeDiagnostic = Readonly<{
   severity: 'warning' | 'error';
   messageKey: string;
   detail: Readonly<{
-    exitCode: number | null;
-    signal: string | null;
+      exitCode: number | null;
+      signal: string | null;
   }>;
 }>;
 
@@ -71,10 +83,11 @@ export type RunDeepSecReviewParams = Readonly<{
   confirmedCostWarning: boolean;
   cost?: Omit<DeepSecCostWarningInput, 'mode'>;
   preferredExecutablePath?: string | null;
-  exec: Pick<ExecRuntimeServiceV1, 'systemTools' | 'run'>;
+  exec: Pick<PluginExecService, 'systemTools' | 'run'>;
   tempFiles: DeepSecTempFiles;
+  environment?: Readonly<Record<string, string>>;
   readiness?: Readonly<{
-    toolRuntime?: DeepSecReadinessV1['toolRuntime'];
+    toolRuntime?: DeepSecReadiness['toolRuntime'];
     agentCli?: 'claude' | 'codex' | 'both' | null;
     hasGatewayKey?: boolean | null;
   }>;
@@ -83,10 +96,6 @@ export type RunDeepSecReviewParams = Readonly<{
   maxStdoutBytes?: number;
   maxStderrBytes?: number;
 }>;
-
-function mergeArgs(baseArgs: readonly string[] | undefined, commandArgs: readonly string[]): readonly string[] {
-  return Object.freeze([...(baseArgs ?? []), ...commandArgs]);
-}
 
 function normalizeSelectedFiles(selectedFiles: readonly string[] | undefined): readonly string[] {
   if (!selectedFiles || selectedFiles.length === 0) {
@@ -123,19 +132,24 @@ function normalizeSelectedFiles(selectedFiles: readonly string[] | undefined): r
   return Object.freeze(normalizedFiles);
 }
 
-function commandFailed(result: ExecRunResultV1): boolean {
-  return result.exitCode !== 0 || result.signal !== null;
+function commandFailed(result: PluginProcessResult): boolean {
+  const observed = result.termination.observed;
+  return observed.kind !== 'exit' || observed.exitCode !== 0;
 }
 
-function processPartialDiagnostic(result: ExecRunResultV1): DeepSecRuntimeDiagnostic {
+function readTermination(result: PluginProcessResult): Readonly<{ exitCode: number | null; signal: string | null }> {
+  const observed = result.termination.observed;
+  if (observed.kind === 'exit') return { exitCode: observed.exitCode, signal: null };
+  if (observed.kind === 'signal') return { exitCode: null, signal: observed.signal };
+  return { exitCode: null, signal: null };
+}
+
+function processPartialDiagnostic(result: PluginProcessResult): DeepSecRuntimeDiagnostic {
   return {
     code: 'deepsec_process_failed',
     severity: 'warning',
     messageKey: 'plugins.deepsec.runtime.partial',
-    detail: {
-      exitCode: result.exitCode,
-      signal: result.signal,
-    },
+    detail: readTermination(result),
   };
 }
 
@@ -150,7 +164,7 @@ function resolveReadinessGatewayKey(readiness: RunDeepSecReviewParams['readiness
 }
 
 function readDiagnosticString(
-  diagnostic: SystemToolDiagnosticV1,
+  diagnostic: PluginSystemToolDiagnostic,
   key: string,
 ): string | null {
   const value = diagnostic.detail?.[key];
@@ -158,14 +172,14 @@ function readDiagnosticString(
 }
 
 function readDiagnosticNumber(
-  diagnostic: SystemToolDiagnosticV1,
+  diagnostic: PluginSystemToolDiagnostic,
   key: string,
 ): number | null {
   const value = diagnostic.detail?.[key];
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
-function resolveToolRuntimeFromGrant(grant: SystemToolLaunchGrantV1): DeepSecReadinessV1['toolRuntime'] {
+function resolveToolRuntimeFromGrant(grant: PluginResolvedSystemTool): DeepSecReadiness['toolRuntime'] {
   const runtimeDiagnostics = (grant.diagnostics ?? []).filter((diagnostic) => (
     diagnostic.code === 'system_tool_runtime_unknown'
     || diagnostic.code === 'system_tool_runtime_node'
@@ -189,7 +203,7 @@ function resolveToolRuntimeFromGrant(grant: SystemToolLaunchGrantV1): DeepSecRea
   };
 }
 
-function missingScopedPathListDiagnostic(): FsScopedPathListDiagnosticV1 {
+function missingScopedPathListDiagnostic(): DeepSecScopedPathListDiagnostic {
   return {
     code: 'scope_unavailable',
     severity: 'error',
@@ -198,37 +212,37 @@ function missingScopedPathListDiagnostic(): FsScopedPathListDiagnosticV1 {
 }
 
 export async function runDeepSecReview(params: RunDeepSecReviewParams): Promise<DeepSecReviewRunResult> {
-  const selectedFiles = params.mode === 'selected_files'
-    ? normalizeSelectedFiles(params.selectedFiles)
-    : undefined;
-  const warning = buildDeepSecCostWarning({ mode: params.mode, ...(params.cost ?? {}) });
-  if (warning.status === 'requires_confirmation' && !params.confirmedCostWarning) {
-    return { status: 'requires_confirmation', warning };
-  }
-
-  const grant = await resolveDeepSecExecutable({
-    systemTools: params.exec.systemTools,
-    cwd: params.cwd,
-    preferredExecutablePath: params.preferredExecutablePath,
-    signal: params.signal,
-  });
-  const readiness = checkDeepSecReadiness({
-    executablePath: grant.executablePath,
-    toolRuntime: params.readiness?.toolRuntime ?? resolveToolRuntimeFromGrant(grant),
-    agentCli: resolveReadinessAgentCli(params.readiness),
-    hasGatewayKey: resolveReadinessGatewayKey(params.readiness),
-  });
-  if (readiness.status !== 'ready') {
-    return {
-      status: 'readiness_failed',
-      readiness,
-      commentOutMarkdown: '',
-    };
-  }
-
-  let commentOutPath: string | undefined;
-  let filesFromPath: string | undefined;
   try {
+    const selectedFiles = params.mode === 'selected_files'
+      ? normalizeSelectedFiles(params.selectedFiles)
+      : undefined;
+    const warning = buildDeepSecCostWarning({ mode: params.mode, ...(params.cost ?? {}) });
+    if (warning.status === 'requires_confirmation' && !params.confirmedCostWarning) {
+      return { status: 'requires_confirmation', warning };
+    }
+
+    const grant = await resolveDeepSecExecutable({
+      systemTools: params.exec.systemTools,
+      cwd: params.cwd,
+      preferredExecutablePath: params.preferredExecutablePath,
+      signal: params.signal,
+    });
+    const readiness = checkDeepSecReadiness({
+      executablePath: grant.executablePath,
+      toolRuntime: params.readiness?.toolRuntime ?? resolveToolRuntimeFromGrant(grant),
+      agentCli: resolveReadinessAgentCli(params.readiness),
+      hasGatewayKey: resolveReadinessGatewayKey(params.readiness),
+    });
+    if (readiness.status !== 'ready') {
+      return {
+        status: 'readiness_failed',
+        readiness,
+        commentOutMarkdown: '',
+      };
+    }
+
+    let commentOutPath: string | undefined;
+    let filesFromPath: string | undefined;
     if (params.mode === 'selected_files') {
       const selectedFileList = await params.tempFiles.createScopedPathListFile?.({
         suffix: '.files.txt',
@@ -252,26 +266,21 @@ export async function runDeepSecReview(params: RunDeepSecReviewParams): Promise<
       commentOutPath,
       filesFromPath,
     });
-    const options: ExecRunOptionsV1 = {
-      signal: params.signal,
-      timeoutMs: params.timeoutMs,
-      maxStdoutBytes: params.maxStdoutBytes,
-      maxStderrBytes: params.maxStderrBytes,
-    };
-    const result = await params.exec.run({
-      ...grant.launch,
-      args: mergeArgs(grant.launch.args, commandArgs),
-      cwd: params.cwd,
-    }, options);
+    const run = (args: readonly string[]) => params.exec.run({
+      executable: grant.executable,
+      args,
+      cwd: { root: 'workspace', relativePath: '' },
+      ...(params.environment ? { env: params.environment } : {}),
+      ...(params.timeoutMs === undefined ? {} : { timeoutMs: params.timeoutMs }),
+      ...(params.maxStdoutBytes === undefined ? {} : { maxStdoutBytes: params.maxStdoutBytes }),
+      ...(params.maxStderrBytes === undefined ? {} : { maxStderrBytes: params.maxStderrBytes }),
+    }, { signal: params.signal });
+    const result = await run(commandArgs);
     if (params.mode === 'repository_security_audit' && !commandFailed(result)) {
-      const processResult = await params.exec.run({
-        ...grant.launch,
-        args: mergeArgs(grant.launch.args, buildDeepSecCommand({
-          mode: 'repository_security_audit_process',
-          commentOutPath,
-        })),
-        cwd: params.cwd,
-      }, options);
+      const processResult = await run(buildDeepSecCommand({
+        mode: 'repository_security_audit_process',
+        commentOutPath,
+      }));
       const commentOutMarkdown = await params.tempFiles.readText(commentOutPath);
       if (commandFailed(processResult)) {
         return {
