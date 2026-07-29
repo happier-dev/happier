@@ -23,7 +23,7 @@ export const BUILT_IN_VOICE_UI_ENTRIES: readonly VoiceUiRuntimeContribution[] = 
     providerId: 'local_conversation',
     settingsSectionId: 'voice.provider.local_conversation',
     roles: ['conversation_stt', 'conversation_tts', 'vad', 'endpointing'],
-    requirements: ['runtime', 'execution_machine'],
+    requirements: ['runtime', 'model', 'execution_machine', 'endpoint'],
     selectionOptions: [{
       id: 'local',
       modeId: null,

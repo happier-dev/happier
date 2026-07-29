@@ -14,6 +14,7 @@ describe('resolveVoiceProviderReadinessPresentation', () => {
       reasonKey: 'voice.readiness.server_feature_disabled',
       recoveryAction: 'switch_provider',
     }, translate)).toEqual({
+      summary: 'voice.readiness.server_feature_disabled',
       reason: 'voice.readiness.server_feature_disabled',
       action: 'voice.readiness.actions.switch_provider',
     });
@@ -27,6 +28,10 @@ describe('resolveVoiceProviderReadinessPresentation', () => {
       code: 'ready',
       reasonKey: 'voice.readiness.ready',
       recoveryAction: 'none',
-    }, translate)).toEqual({ reason: null, action: null });
+    }, translate)).toEqual({
+      summary: 'voice.readiness.ready',
+      reason: null,
+      action: null,
+    });
   });
 });

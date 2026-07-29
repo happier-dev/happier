@@ -18,6 +18,7 @@ type VoiceReadinessCopy = {
   execution_machine_incompatible: string;
   execution_machine_unknown: string;
   credential_missing: string;
+  credential_approval_required: string;
   credential_installing: string;
   credential_incompatible: string;
   credential_unknown: string;
@@ -38,6 +39,7 @@ type VoiceReadinessCopy = {
     open_provider_settings: string;
     select_execution_machine: string;
     configure_credential: string;
+    review_credential_access: string;
     configure_endpoint: string;
     install_model: string;
     switch_provider: string;
@@ -69,6 +71,7 @@ export const voiceReadinessTranslations = {
     execution_machine_incompatible: 'The selected machine is incompatible with this Voice provider.',
     execution_machine_unknown: 'The Voice execution machine could not be checked.',
     credential_missing: 'Add the credential required by this Voice provider.',
+    credential_approval_required: 'Review credential access before using this Voice provider.',
     credential_installing: 'The provider credential is still being prepared.',
     credential_incompatible: 'The selected credential is incompatible with this Voice provider.',
     credential_unknown: 'The provider credential could not be checked.',
@@ -89,6 +92,7 @@ export const voiceReadinessTranslations = {
       open_provider_settings: 'Review provider settings',
       select_execution_machine: 'Choose a machine',
       configure_credential: 'Add credentials',
+      review_credential_access: 'Review credential access',
       configure_endpoint: 'Configure endpoint',
       install_model: 'Install a model',
       switch_provider: 'Choose another provider',
@@ -114,6 +118,7 @@ export const voiceReadinessTranslations = {
     execution_machine_incompatible: 'Выбранная машина несовместима с этим голосовым провайдером.',
     execution_machine_unknown: 'Не удалось проверить машину для голосового режима.',
     credential_missing: 'Добавьте учётные данные, необходимые этому голосовому провайдеру.',
+    credential_approval_required: 'Проверьте доступ к учётным данным перед использованием этого голосового провайдера.',
     credential_installing: 'Учётные данные провайдера ещё подготавливаются.',
     credential_incompatible: 'Выбранные учётные данные несовместимы с этим голосовым провайдером.',
     credential_unknown: 'Не удалось проверить учётные данные провайдера.',
@@ -134,6 +139,7 @@ export const voiceReadinessTranslations = {
       open_provider_settings: 'Проверить настройки провайдера',
       select_execution_machine: 'Выбрать машину',
       configure_credential: 'Добавить учётные данные',
+      review_credential_access: 'Проверить доступ к учётным данным',
       configure_endpoint: 'Настроить конечную точку',
       install_model: 'Установить модель',
       switch_provider: 'Выбрать другого провайдера',
@@ -159,6 +165,7 @@ export const voiceReadinessTranslations = {
     execution_machine_incompatible: 'Wybrana maszyna jest niezgodna z tym dostawcą obsługi głosowej.',
     execution_machine_unknown: 'Nie udało się sprawdzić maszyny do obsługi głosowej.',
     credential_missing: 'Dodaj dane uwierzytelniające wymagane przez tego dostawcę obsługi głosowej.',
+    credential_approval_required: 'Sprawdź dostęp do danych uwierzytelniających przed użyciem tego dostawcy obsługi głosowej.',
     credential_installing: 'Dane uwierzytelniające dostawcy są nadal przygotowywane.',
     credential_incompatible: 'Wybrane dane uwierzytelniające są niezgodne z tym dostawcą obsługi głosowej.',
     credential_unknown: 'Nie udało się sprawdzić danych uwierzytelniających dostawcy.',
@@ -179,6 +186,7 @@ export const voiceReadinessTranslations = {
       open_provider_settings: 'Sprawdź ustawienia dostawcy',
       select_execution_machine: 'Wybierz maszynę',
       configure_credential: 'Dodaj dane uwierzytelniające',
+      review_credential_access: 'Sprawdź dostęp do danych uwierzytelniających',
       configure_endpoint: 'Skonfiguruj punkt końcowy',
       install_model: 'Zainstaluj model',
       switch_provider: 'Wybierz innego dostawcę',
@@ -204,6 +212,7 @@ export const voiceReadinessTranslations = {
     execution_machine_incompatible: 'La máquina seleccionada no es compatible con este proveedor de voz.',
     execution_machine_unknown: 'No se ha podido comprobar la máquina de ejecución de voz.',
     credential_missing: 'Añade la credencial que necesita este proveedor de voz.',
+    credential_approval_required: 'Revisa el acceso a la credencial antes de usar este proveedor de voz.',
     credential_installing: 'La credencial del proveedor aún se está preparando.',
     credential_incompatible: 'La credencial seleccionada no es compatible con este proveedor de voz.',
     credential_unknown: 'No se ha podido comprobar la credencial del proveedor.',
@@ -224,6 +233,7 @@ export const voiceReadinessTranslations = {
       open_provider_settings: 'Revisar la configuración del proveedor',
       select_execution_machine: 'Elegir una máquina',
       configure_credential: 'Añadir credenciales',
+      review_credential_access: 'Revisar el acceso a la credencial',
       configure_endpoint: 'Configurar el endpoint',
       install_model: 'Instalar un modelo',
       switch_provider: 'Elegir otro proveedor',
@@ -249,6 +259,7 @@ export const voiceReadinessTranslations = {
     execution_machine_incompatible: 'La macchina selezionata non è compatibile con questo provider vocale.',
     execution_machine_unknown: 'Non è stato possibile controllare la macchina di esecuzione Voce.',
     credential_missing: 'Aggiungi la credenziale richiesta da questo provider vocale.',
+    credential_approval_required: 'Controlla l’accesso alla credenziale prima di usare questo provider vocale.',
     credential_installing: 'La credenziale del provider è ancora in preparazione.',
     credential_incompatible: 'La credenziale selezionata non è compatibile con questo provider vocale.',
     credential_unknown: 'Non è stato possibile controllare la credenziale del provider.',
@@ -269,6 +280,7 @@ export const voiceReadinessTranslations = {
       open_provider_settings: 'Controlla le impostazioni del provider',
       select_execution_machine: 'Scegli una macchina',
       configure_credential: 'Aggiungi credenziali',
+      review_credential_access: 'Controlla l’accesso alla credenziale',
       configure_endpoint: 'Configura l’endpoint',
       install_model: 'Installa un modello',
       switch_provider: 'Scegli un altro provider',
@@ -294,6 +306,7 @@ export const voiceReadinessTranslations = {
     execution_machine_incompatible: 'A máquina selecionada não é compatível com este provedor de Voz.',
     execution_machine_unknown: 'Não foi possível verificar a máquina de execução de Voz.',
     credential_missing: 'Adicione a credencial exigida por este provedor de Voz.',
+    credential_approval_required: 'Revise o acesso à credencial antes de usar este provedor de Voz.',
     credential_installing: 'A credencial do provedor ainda está sendo preparada.',
     credential_incompatible: 'A credencial selecionada não é compatível com este provedor de Voz.',
     credential_unknown: 'Não foi possível verificar a credencial do provedor.',
@@ -314,6 +327,7 @@ export const voiceReadinessTranslations = {
       open_provider_settings: 'Revisar as configurações do provedor',
       select_execution_machine: 'Escolher uma máquina',
       configure_credential: 'Adicionar credenciais',
+      review_credential_access: 'Revisar o acesso à credencial',
       configure_endpoint: 'Configurar o endpoint',
       install_model: 'Instalar um modelo',
       switch_provider: 'Escolher outro provedor',
@@ -339,6 +353,7 @@ export const voiceReadinessTranslations = {
     execution_machine_incompatible: 'La màquina seleccionada no és compatible amb aquest proveïdor de veu.',
     execution_machine_unknown: 'No s’ha pogut comprovar la màquina d’execució de veu.',
     credential_missing: 'Afegeix la credencial que necessita aquest proveïdor de veu.',
+    credential_approval_required: 'Revisa l’accés a la credencial abans d’utilitzar aquest proveïdor de veu.',
     credential_installing: 'La credencial del proveïdor encara s’està preparant.',
     credential_incompatible: 'La credencial seleccionada no és compatible amb aquest proveïdor de veu.',
     credential_unknown: 'No s’ha pogut comprovar la credencial del proveïdor.',
@@ -359,6 +374,7 @@ export const voiceReadinessTranslations = {
       open_provider_settings: 'Revisar la configuració del proveïdor',
       select_execution_machine: 'Triar una màquina',
       configure_credential: 'Afegir credencials',
+      review_credential_access: 'Revisar l’accés a la credencial',
       configure_endpoint: 'Configurar el punt final',
       install_model: 'Instal·lar un model',
       switch_provider: 'Triar un altre proveïdor',
@@ -384,6 +400,7 @@ export const voiceReadinessTranslations = {
     execution_machine_incompatible: '所选机器与此语音提供商不兼容。',
     execution_machine_unknown: '无法检查语音执行机器。',
     credential_missing: '请添加此语音提供商所需的凭据。',
+    credential_approval_required: '请先检查凭据访问权限，再使用此语音提供商。',
     credential_installing: '提供商凭据仍在准备中。',
     credential_incompatible: '所选凭据与此语音提供商不兼容。',
     credential_unknown: '无法检查提供商凭据。',
@@ -404,6 +421,7 @@ export const voiceReadinessTranslations = {
       open_provider_settings: '检查提供商设置',
       select_execution_machine: '选择机器',
       configure_credential: '添加凭据',
+      review_credential_access: '检查凭据访问权限',
       configure_endpoint: '配置端点',
       install_model: '安装模型',
       switch_provider: '选择其他提供商',
@@ -429,6 +447,7 @@ export const voiceReadinessTranslations = {
     execution_machine_incompatible: '所選機器與此語音提供者不相容。',
     execution_machine_unknown: '無法檢查語音執行機器。',
     credential_missing: '請新增此語音提供者所需的憑證。',
+    credential_approval_required: '請先檢查憑證存取權，再使用此語音提供者。',
     credential_installing: '提供者憑證仍在準備中。',
     credential_incompatible: '所選憑證與此語音提供者不相容。',
     credential_unknown: '無法檢查提供者憑證。',
@@ -449,6 +468,7 @@ export const voiceReadinessTranslations = {
       open_provider_settings: '檢查提供者設定',
       select_execution_machine: '選擇機器',
       configure_credential: '新增憑證',
+      review_credential_access: '檢查憑證存取權',
       configure_endpoint: '設定端點',
       install_model: '安裝模型',
       switch_provider: '選擇其他提供者',
@@ -474,6 +494,7 @@ export const voiceReadinessTranslations = {
     execution_machine_incompatible: '選択したマシンはこの音声プロバイダーに対応していません。',
     execution_machine_unknown: '音声実行マシンを確認できませんでした。',
     credential_missing: 'この音声プロバイダーに必要な認証情報を追加してください。',
+    credential_approval_required: 'この音声プロバイダーを使用する前に、認証情報へのアクセスを確認してください。',
     credential_installing: 'プロバイダーの認証情報はまだ準備中です。',
     credential_incompatible: '選択した認証情報はこの音声プロバイダーに対応していません。',
     credential_unknown: 'プロバイダーの認証情報を確認できませんでした。',
@@ -494,6 +515,7 @@ export const voiceReadinessTranslations = {
       open_provider_settings: 'プロバイダー設定を確認',
       select_execution_machine: 'マシンを選択',
       configure_credential: '認証情報を追加',
+      review_credential_access: '認証情報へのアクセスを確認',
       configure_endpoint: 'エンドポイントを設定',
       install_model: 'モデルをインストール',
       switch_provider: '別のプロバイダーを選択',

@@ -76,6 +76,7 @@ function createDeps(overrides: Partial<VoiceHistoryConsumerDeps> = {}): VoiceHis
         ? 'Grok Realtime'
         : 'Voice provider',
     deleteSession: vi.fn(async () => ({ success: true })),
+    canDeleteSession: () => true,
     retireLocalSession: vi.fn(),
     now: () => new Date('2026-07-29T12:34:56.000Z'),
     ...overrides,
@@ -457,6 +458,27 @@ describe('createVoiceHistoryConsumer', () => {
       'voice-history-recreated',
       { key: 'server-a/account-a' },
     );
+  });
+
+  it('refuses whole-session deletion while the carrier belongs to an active targetless attempt', async () => {
+    const deleteSession = vi.fn(async () => ({ success: true }));
+    const retireLocalSession = vi.fn();
+    const consumer = createVoiceHistoryConsumer(createDeps({
+      deleteSession,
+      canDeleteSession: () => false,
+      retireLocalSession,
+    }));
+    await consumer.open();
+
+    await expect(consumer.clear()).rejects.toMatchObject({
+      name: 'VoiceHistoryClearActiveCallError',
+      code: 'voice_history_clear_active_call',
+    });
+    expect(deleteSession).not.toHaveBeenCalled();
+    expect(retireLocalSession).not.toHaveBeenCalled();
+    expect(consumer.read()).toMatchObject({
+      sessionId: 'voice-history-session',
+    });
   });
 
   it('drops its stale local binding even when post-delete local cache retirement reports a failure', async () => {

@@ -16,6 +16,7 @@ import {
 import { t, tLoose } from '@/text';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 import type { VoiceProviderRegistry } from '@/voice/registry/providerRegistry';
+import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
 
 import {
   createVoiceHistoryConsumer,
@@ -92,6 +93,7 @@ export type DefaultVoiceHistoryRuntime = Readonly<{
     sessionId: string,
     authority: ServerAccountSessionRequestAuthority,
   ): Promise<Readonly<{ success: boolean; message?: string }>>;
+  canDeleteSession(sessionId: string): boolean;
   retireLocalSession(sessionId: string): void;
 }>;
 
@@ -130,9 +132,17 @@ export function createDefaultVoiceHistoryConsumerFromRuntime(
     },
     deleteSession: (sessionId, scope) =>
       runtime.deleteSession(sessionId, scope.authority),
+    canDeleteSession: runtime.canDeleteSession,
     retireLocalSession: runtime.retireLocalSession,
     now: () => new Date(),
   });
+}
+
+export function canDeleteVoiceHistorySession(sessionId: string): boolean {
+  const binding =
+    voiceSessionBindingStore.getState().getByConversationSessionId(sessionId);
+  return binding?.lifetime !== 'runtime_attempt'
+    || binding.targetSessionId !== null;
 }
 
 export function createDefaultVoiceHistoryConsumer() {
@@ -173,6 +183,7 @@ export function createDefaultVoiceHistoryConsumer() {
     readMessages: (sessionId) =>
       readStoredSessionMessages(storage.getState(), sessionId),
     deleteSession: sessionDeleteWithServerAccountAuthority,
+    canDeleteSession: canDeleteVoiceHistorySession,
     retireLocalSession: (sessionId) => storage.getState().deleteSession(sessionId),
   };
   return createDefaultVoiceHistoryConsumerFromRuntime(runtime, providerRegistry);

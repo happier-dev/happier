@@ -9650,6 +9650,7 @@ settingsSession: {
       clearConfirmBody: 'Esto elimina permanentemente todo el historial de voz independiente de esta cuenta. No se puede deshacer.',
       clearConfirmAction: 'Borrar historial',
       clearSucceeded: 'Se borró el historial de voz.',
+      clearActiveCall: 'Finaliza la conversación por voz antes de borrar el historial de voz.',
       clearFailed: 'No se pudo borrar el historial de voz.',
       errorTitle: 'El historial de voz no está disponible',
       errorBody: 'Happier no pudo cargar el historial cifrado de esta cuenta. Comprueba la conexión e inténtalo de nuevo.',

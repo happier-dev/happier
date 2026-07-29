@@ -7885,6 +7885,7 @@ settingsSession: {
             clearConfirmBody: '這會永久刪除此帳戶的全部獨立語音歷史，且無法復原。',
             clearConfirmAction: '清除歷史',
             clearSucceeded: '語音歷史已清除。',
+            clearActiveCall: '清除語音歷史前，請先結束語音。',
             clearFailed: '無法清除語音歷史。',
             errorTitle: '語音歷史無法使用',
             errorBody: 'Happier 無法載入此帳戶的加密歷史。請檢查連線並重試。',

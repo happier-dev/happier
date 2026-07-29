@@ -9,6 +9,7 @@ import {
     ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS,
 } from '../../../../../../packages/plugins/elevenlabs/src/protocol/voice/index';
 import {
+    XAI_REALTIME_PROVIDER_ID,
     XAI_REALTIME_DEFAULT_SETTINGS,
 } from '../../../../../../packages/plugins/xai/src/protocol/voice/settings';
 
@@ -127,6 +128,25 @@ describe('VoiceProviderSection', () => {
             hasAccountCredentialSlot: false,
             hasAccountCredentialReference: false,
         }), providerId).toBe('unknown');
+        expect(resolveCredentialFact({
+            sourceKind: 'bundled',
+            projectedCredential: { status: 'missing' },
+            hasAccountCredentialSlot: true,
+            hasAccountCredentialReference: false,
+            accountCredentialApprovalRequired: true,
+        }), providerId).toBe('approval_required');
+    }, 120_000);
+
+    it('does not let a stale SavedSecret approval override a bundled non-SavedSecret credential projection', async () => {
+        const { resolveVoiceProviderCredentialFact: resolveCredentialFact } = await import('./VoiceProviderSection');
+
+        expect(resolveCredentialFact({
+            sourceKind: 'bundled',
+            projectedCredential: { status: 'unknown' },
+            hasAccountCredentialSlot: true,
+            hasAccountCredentialReference: false,
+            accountCredentialApprovalRequired: true,
+        })).toBe('unknown');
     }, 120_000);
 
     it.each([
@@ -163,6 +183,78 @@ describe('VoiceProviderSection', () => {
         },
         120_000,
     );
+
+    it.each([
+        ['realtime_openai', 'OpenAI'],
+        [XAI_REALTIME_PROVIDER_ID, 'xAI'],
+    ] as const)(
+        'renders the selected disclosure-only %s manifest as provider data without empty setting controls',
+        async (providerId, providerName) => {
+            const defaultConfig = providerId === XAI_REALTIME_PROVIDER_ID
+                ? XAI_REALTIME_DEFAULT_SETTINGS
+                : (await import('../../../../../../packages/plugins/openai/src/protocol/voice/settings'))
+                    .OPENAI_REALTIME_DEFAULT_SETTINGS;
+            const { VoiceProviderSection } = await import('./VoiceProviderSection');
+            const { tree } = await renderScreen(React.createElement(VoiceProviderSection, {
+                voice: {
+                    providerId,
+                    providers: {
+                        [providerId]: {
+                            schemaVersion: 1,
+                            config: defaultConfig,
+                        },
+                    },
+                } as any,
+                setVoice: vi.fn(),
+                happierVoiceSupported: true,
+                platformOs: 'web',
+            }));
+
+            const disclosure = findTestInstanceByTypeWithProps(tree, 'Item' as any, {
+                testID: `settings.voice.provider.disclosure.${providerId}`,
+            });
+            expect(disclosure?.props.mode).toBe('info');
+            expect(disclosure?.props.title).toBe('settingsVoice.realtimeProviders.links.privacy.title');
+            expect(disclosure?.props.subtitle).toContain(providerName);
+            expect(disclosure?.props.subtitle).toMatch(/may retain/iu);
+            expect(disclosure?.props.showChevron).toBe(false);
+            expect(tree.findAllByType('DropdownMenu' as any)).toHaveLength(0);
+            expect(tree.findAllByType('VoiceGlobalConnectedServicesBindingField' as any)).toHaveLength(0);
+        },
+        120_000,
+    );
+
+    it('renders localized readiness for the selected provider without exposing its internal id', async () => {
+        const { VoiceProviderSection } = await import('./VoiceProviderSection');
+        const providerId = XAI_REALTIME_PROVIDER_ID;
+        const { tree } = await renderScreen(React.createElement(VoiceProviderSection, {
+            voice: {
+                providerId,
+                providers: {
+                    [providerId]: {
+                        schemaVersion: 1,
+                        config: XAI_REALTIME_DEFAULT_SETTINGS,
+                    },
+                },
+            } as any,
+            setVoice: vi.fn(),
+            happierVoiceSupported: true,
+            platformOs: 'web',
+        }));
+
+        await act(async () => {
+            findTestInstanceByTypeWithProps(tree, 'Item' as any, {
+                testID: 'settings.voice.provider.checkSetup',
+            })?.props.onPress();
+        });
+        const readiness = findTestInstanceByTypeWithProps(tree, 'Item' as any, {
+            testID: 'settings.voice.provider.readiness',
+        });
+
+        expect(readiness?.props.subtitle).toContain('voice.readiness.credential_missing');
+        expect(readiness?.props.detail).toBeUndefined();
+        expect(JSON.stringify(readiness?.props)).not.toContain(providerId);
+    }, 120_000);
 
     it.each([
         'connected_service_api_key',
@@ -264,6 +356,19 @@ describe('VoiceProviderSection', () => {
         });
 
         expect(row?.props?.detail).toBe('settingsVoice.externalCredentials.reviewRequired');
+
+        await act(async () => {
+            findTestInstanceByTypeWithProps(tree, 'Item' as any, {
+                testID: 'settings.voice.provider.checkSetup',
+            })?.props.onPress();
+        });
+        const readiness = findTestInstanceByTypeWithProps(tree, 'Item' as any, {
+            testID: 'settings.voice.provider.readiness',
+        });
+        expect(readiness?.props.subtitle).toContain('voice.readiness.credential_approval_required');
+        expect(readiness?.props.subtitle).toContain('voice.readiness.actions.review_credential_access');
+        expect(readiness?.props.subtitle).not.toContain('voice.readiness.credential_missing');
+        expect(readiness?.props.subtitle).not.toContain('voice.readiness.actions.configure_credential');
     }, 120_000);
 
     it('exposes every provider choice as the same radio control with selected state', async () => {
@@ -660,12 +765,37 @@ describe('VoiceProviderSection', () => {
         'projects selected Local execution-machine readiness for $label instead of hard-coded placeholders',
         async ({ executionMachineId, executionMachine, daemon, expectedCode }) => {
             const { VoiceProviderSection } = await import('./VoiceProviderSection');
+            const {
+                readLocalConversationVoiceSettings,
+                voiceSettingsDefaults,
+                writeLocalConversationVoiceSettings,
+            } = await import('@/sync/domains/settings/voiceSettings');
+            const local = readLocalConversationVoiceSettings(voiceSettingsDefaults);
+            const voice = writeLocalConversationVoiceSettings(
+                {
+                    ...voiceSettingsDefaults,
+                    providerId: 'local_conversation',
+                    executionMachine,
+                },
+                {
+                    ...local,
+                    stt: {
+                        ...local.stt,
+                        provider: 'local_neural',
+                        localNeural: {
+                            ...local.stt.localNeural,
+                            execution: 'daemon',
+                        },
+                    },
+                    tts: {
+                        ...local.tts,
+                        provider: 'device',
+                    },
+                },
+            );
             const { tree } = await renderScreen(
                 React.createElement(VoiceProviderSection, {
-                    voice: {
-                        providerId: 'local_conversation',
-                        executionMachine,
-                    } as any,
+                    voice,
                     executionMachineId,
                     setVoice: vi.fn(),
                     happierVoiceSupported: true,
@@ -689,6 +819,145 @@ describe('VoiceProviderSection', () => {
         },
         120_000,
     );
+
+    it.each([
+        {
+            label: 'daemon inference is unavailable',
+            daemon: {
+                featureEnabled: true,
+                route: 'direct' as const,
+                modelState: 'unknown' as const,
+                runtimeState: 'unavailable' as const,
+                pcmCapture: 'available' as const,
+            },
+            expectedCode: 'voice.readiness.runtime_missing',
+        },
+        {
+            label: 'the selected Local Neural model is missing',
+            daemon: {
+                featureEnabled: true,
+                route: 'direct' as const,
+                modelState: 'missing' as const,
+                runtimeState: 'available' as const,
+                pcmCapture: 'available' as const,
+            },
+            expectedCode: 'voice.readiness.model_missing',
+        },
+    ])(
+        'does not let an unrelated runnable browser path make Local Voice ready when $label',
+        async ({ daemon, expectedCode }) => {
+            const {
+                readLocalConversationVoiceSettings,
+                voiceSettingsDefaults,
+                writeLocalConversationVoiceSettings,
+            } = await import('@/sync/domains/settings/voiceSettings');
+            const local = readLocalConversationVoiceSettings(voiceSettingsDefaults);
+            const voice = writeLocalConversationVoiceSettings(
+                { ...voiceSettingsDefaults, providerId: 'local_conversation' },
+                {
+                    ...local,
+                    stt: {
+                        ...local.stt,
+                        provider: 'local_neural',
+                        localNeural: {
+                            ...local.stt.localNeural,
+                            execution: 'daemon',
+                        },
+                    },
+                    tts: {
+                        ...local.tts,
+                        provider: 'device',
+                    },
+                },
+            );
+            const { VoiceProviderSection } = await import('./VoiceProviderSection');
+            const { tree } = await renderScreen(
+                React.createElement(VoiceProviderSection, {
+                    voice,
+                    executionMachineId: 'machine-online',
+                    setVoice: vi.fn(),
+                    happierVoiceSupported: true,
+                    platformOs: 'web',
+                    localAvailability: {
+                        browserSpeech: { support: 'cloud_only', onDevice: 'unsupported' },
+                        daemon,
+                        nativeDevice: { requested: false },
+                    },
+                }),
+            );
+
+            await act(async () => {
+                findTestInstanceByTypeWithProps(tree, 'Item' as any, {
+                    testID: 'settings.voice.provider.checkSetup',
+                })?.props.onPress();
+            });
+            const readiness = findTestInstanceByTypeWithProps(tree, 'Item' as any, {
+                testID: 'settings.voice.provider.readiness',
+            });
+            expect(readiness?.props.subtitle).toContain(expectedCode);
+            expect(readiness?.props.subtitle).not.toContain('voice.readiness.ready');
+        },
+        120_000,
+    );
+
+    it('does not report selected OpenAI-compatible Local STT as ready without its endpoint', async () => {
+        const {
+            readLocalConversationVoiceSettings,
+            voiceSettingsDefaults,
+            writeLocalConversationVoiceSettings,
+        } = await import('@/sync/domains/settings/voiceSettings');
+        const local = readLocalConversationVoiceSettings(voiceSettingsDefaults);
+        const voice = writeLocalConversationVoiceSettings(
+            { ...voiceSettingsDefaults, providerId: 'local_conversation' },
+            {
+                ...local,
+                stt: {
+                    ...local.stt,
+                    provider: 'openai_compat',
+                    openaiCompat: {
+                        ...local.stt.openaiCompat,
+                        baseUrl: null,
+                    },
+                },
+                tts: {
+                    ...local.tts,
+                    provider: 'device',
+                },
+            },
+        );
+        const { VoiceProviderSection } = await import('./VoiceProviderSection');
+        const { tree } = await renderScreen(
+            React.createElement(VoiceProviderSection, {
+                voice,
+                executionMachineId: 'machine-online',
+                setVoice: vi.fn(),
+                happierVoiceSupported: true,
+                platformOs: 'web',
+                localAvailability: {
+                    browserSpeech: { support: 'cloud_only', onDevice: 'unsupported' },
+                    daemon: {
+                        featureEnabled: true,
+                        route: 'direct',
+                        modelState: 'ready',
+                        runtimeState: 'available',
+                        pcmCapture: 'available',
+                    },
+                    nativeDevice: { requested: false },
+                },
+            }),
+        );
+
+        await act(async () => {
+            findTestInstanceByTypeWithProps(tree, 'Item' as any, {
+                testID: 'settings.voice.provider.checkSetup',
+            })?.props.onPress();
+        });
+        const readiness = findTestInstanceByTypeWithProps(tree, 'Item' as any, {
+            testID: 'settings.voice.provider.readiness',
+        });
+        expect(readiness?.props.subtitle).toContain('voice.readiness.endpoint_missing');
+        expect(readiness?.props.subtitle).not.toContain('voice.readiness.ready');
+    }, 120_000);
 
     it('updates an already-mounted provider selector when an external activation is added and removed', async () => {
         const { VoiceProviderSection } = await import('./VoiceProviderSection');

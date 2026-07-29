@@ -101,6 +101,7 @@ describe('createDefaultVoiceHistoryConsumerFromRuntime', () => {
       }),
       readMessages: () => [],
       deleteSession: async () => ({ success: true }),
+      canDeleteSession: () => true,
       retireLocalSession: () => undefined,
     };
     const registry = {
@@ -171,6 +172,7 @@ describe('createDefaultVoiceHistoryConsumerFromRuntime', () => {
         calls.push({ operation: 'delete', authority });
         return { success: true };
       },
+      canDeleteSession: () => true,
       retireLocalSession: () => undefined,
     };
     const registry = {
@@ -250,6 +252,7 @@ describe('createDefaultVoiceHistoryConsumerFromRuntime', () => {
         seenAuthorities.push(authority);
         return { success: true };
       },
+      canDeleteSession: () => true,
       retireLocalSession: () => undefined,
     };
     const registry = {

@@ -411,8 +411,29 @@ describe('resolveVoiceProviderLocalAvailability', () => {
         });
 
         expect(missing.modelState).toBe('missing');
+        expect(missing.runtimeState).toBe('available');
         expect(installing.modelState).toBe('installing');
+        expect(installing.runtimeState).toBe('available');
         expect(errored.modelState).toBe('error');
+        expect(errored.runtimeState).toBe('available');
+    });
+
+    it('does not let an unselected Local Neural TTS pack block selected daemon STT readiness', () => {
+        expect(resolveVoiceDaemonModelAvailabilityFromCatalogState({
+            loading: false,
+            errorCode: null,
+            statuses: [
+                modelStatus('stt_sherpa'),
+                modelStatus('tts_sherpa', { installState: 'not_installed', runtimeState: undefined }),
+            ],
+            selectedSttPackId: null,
+            selectedTtsPackId: null,
+            requireStt: true,
+            requireTts: false,
+        })).toEqual({
+            modelState: 'ready',
+            runtimeState: 'available',
+        });
     });
 
     it('derives daemon runtime-unavailable without treating it as a model install error', () => {

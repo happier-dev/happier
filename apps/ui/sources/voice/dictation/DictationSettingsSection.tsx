@@ -213,7 +213,6 @@ export function DictationSettingsSection(props: Readonly<{
             mode="info"
             title={t('settingsVoice.dictation.readiness.result')}
             subtitle={readinessSubtitle(checkedReadiness.status)}
-            detail={checkedReadiness.providerId ?? undefined}
           />
         ) : null}
       </ItemGroup>

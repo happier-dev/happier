@@ -176,6 +176,20 @@ describe('resolveVoiceRoleReadiness', () => {
     })).toMatchObject({ status, code, recoveryAction });
   });
 
+  it('distinguishes a retained credential awaiting recipient approval from a missing credential', () => {
+    expect(resolveVoiceRoleReadiness({
+      registry,
+      role: 'conversation_stt',
+      providerId: 'cloud_stt',
+      platform: 'web',
+      facts: { ...readyFacts, credential: 'approval_required' },
+    })).toMatchObject({
+      status: 'needs_setup',
+      code: 'credential_approval_required',
+      recoveryAction: 'review_credential_access',
+    });
+  });
+
   it('does not conflate a missing installable runtime with an incompatible runtime family', () => {
     expect(resolveVoiceRoleReadiness({
       registry,

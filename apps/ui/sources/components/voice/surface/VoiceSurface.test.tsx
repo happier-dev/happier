@@ -555,6 +555,54 @@ describe('VoiceSurface', () => {
   });
 
   it.each([
+    ['voice_saved_secret', 'settingsVoice.realtimeProviders.authentication.savedSecret.subtitle'],
+    ['connected_service_api_key', 'settingsVoice.realtimeProviders.authentication.openAiApiKey.subtitle'],
+    ['connected_service_oauth', 'settingsVoice.realtimeProviders.authentication.openAiCodex.subtitle'],
+  ] as const)('identifies the selected OpenAI authentication source in credential recovery for %s', async (
+    source,
+    expectedSubtitle,
+  ) => {
+    vi.resetModules();
+    featureEnabledState['voice.agent'] = true;
+    voiceSettingState.current = {
+      providerId: 'realtime_openai',
+      ui: {
+        activityFeedEnabled: false,
+        scopeDefault: 'global',
+        surfaceLocation: 'auto',
+      },
+      providers: {
+        realtime_openai: {
+          schemaVersion: 1,
+          config: {
+            ...OPENAI_REALTIME_DEFAULT_SETTINGS,
+            authentication: { source },
+          },
+        },
+      },
+    };
+    const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
+    setVoiceSessionSnapshot({
+      adapterId: 'realtime_openai',
+      sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+      status: 'error',
+      mode: 'idle',
+      canStop: false,
+      errorCode: 'provider_auth_invalid',
+      errorMessage: 'credential_unavailable',
+      errorRecoveryAction: 'review_credentials',
+      errorPresentation: 'error',
+    });
+
+    const { VoiceSurface } = await import('./VoiceSurface');
+    const screen = await renderVoiceSurface(React.createElement(VoiceSurface, { variant: 'sidebar' }));
+
+    expect(screen.getTextContent()).toContain(expectedSubtitle);
+    expect(screen.getTextContent()).not.toContain('settingsVoice.local.machineErrors.provider_auth_invalid');
+    expect(screen.findByProps({ accessibilityLabel: 'voiceSurface.reviewCredentials' })).toBeTruthy();
+  });
+
+  it.each([
     'session_unavailable',
     'feature_unavailable',
   ] as const)('does not expose Start or Retry for the non-retryable %s hard error until the snapshot clears', async (errorCode) => {

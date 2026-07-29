@@ -7,13 +7,14 @@ import type {
 import type { VoiceProviderRegistry, VoiceProviderRegistryEntry } from './providerRegistry';
 
 export type VoiceReadinessFact = 'ready' | 'missing' | 'installing' | 'incompatible' | 'unknown';
+export type VoiceCredentialReadinessFact = VoiceReadinessFact | 'approval_required';
 export type VoiceSettingsReadinessFact = 'ready' | 'needs_migration' | 'invalid' | 'unsupported_version' | 'unknown';
 
 export type VoiceRoleReadinessFacts = Readonly<{
   settings: VoiceSettingsReadinessFact;
   serverFeature?: VoiceReadinessFact;
   executionMachine?: VoiceReadinessFact;
-  credential?: VoiceReadinessFact;
+  credential?: VoiceCredentialReadinessFact;
   /** Canonical endpoint-policy fact, including exact-origin + selected-machine-bound consent. */
   endpoint?: VoiceReadinessFact;
   runtime?: VoiceReadinessFact;
@@ -26,7 +27,7 @@ export type VoiceRoleReadiness = Readonly<{
   status: 'ready' | 'needs_setup' | 'unavailable' | 'installing' | 'incompatible';
   code: string;
   reasonKey: string;
-  recoveryAction: 'none' | 'select_provider' | 'open_provider_settings' | 'select_execution_machine' | 'configure_credential' | 'configure_endpoint' | 'install_model' | 'switch_provider';
+  recoveryAction: 'none' | 'select_provider' | 'open_provider_settings' | 'select_execution_machine' | 'configure_credential' | 'review_credential_access' | 'configure_endpoint' | 'install_model' | 'switch_provider';
 }>;
 
 export function isVoiceRoleSelectableForConfiguration(input: Readonly<{
@@ -78,9 +79,12 @@ function projectRequirement(
   role: VoiceReadinessRole,
   providerId: string,
   requirement: VoiceReadinessRequirement,
-  fact: VoiceReadinessFact | undefined,
+  fact: VoiceCredentialReadinessFact | undefined,
 ): VoiceRoleReadiness | null {
   if (fact === 'ready') return null;
+  if (requirement === 'credential' && fact === 'approval_required') {
+    return result(role, providerId, 'needs_setup', 'credential_approval_required', 'review_credential_access');
+  }
   if (fact === 'installing') {
     return result(role, providerId, 'installing', `${requirement}_installing`, RECOVERY_BY_REQUIREMENT[requirement]);
   }
@@ -146,7 +150,7 @@ export function resolveVoiceRoleReadiness(input: Readonly<{
       input.role,
       input.providerId,
       requirement,
-      input.facts[FACT_FIELD_BY_REQUIREMENT[requirement]] as VoiceReadinessFact | undefined,
+      input.facts[FACT_FIELD_BY_REQUIREMENT[requirement]] as VoiceCredentialReadinessFact | undefined,
     );
     if (projected) return projected;
   }

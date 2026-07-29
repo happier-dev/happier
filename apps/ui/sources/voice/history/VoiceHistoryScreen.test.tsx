@@ -87,6 +87,7 @@ function createDeps(
       source?.pluginId === XAI_SOURCE.pluginId ? 'Grok Realtime' : 'OpenAI Realtime'
     ),
     deleteSession: vi.fn(async () => ({ success: true })),
+    canDeleteSession: () => true,
     retireLocalSession: vi.fn(),
     now: () => new Date('2026-07-29T12:34:56.000Z'),
     ...overrides,
@@ -343,6 +344,34 @@ describe('VoiceHistoryScreen', () => {
     expect(screen.findByTestId('voice-history-empty')).not.toBeNull();
     expect(screen.findByTestId('voice-history-export')).toBeNull();
     expect(screen.findByTestId('voice-history-clear')).toBeNull();
+  });
+
+  it('tells the user to end Voice before clearing when an active-call clear is refused', async () => {
+    const messages: Message[] = [
+      voiceMessage({
+        id: 'one',
+        role: 'assistant',
+        text: 'Keep me during the active call',
+        createdAt: 100,
+        source: OPENAI_SOURCE,
+      }),
+    ];
+    const deleteSession = vi.fn(async () => ({ success: true }));
+    const consumer = createVoiceHistoryConsumer(createDeps(messages, {
+      deleteSession,
+      canDeleteSession: () => false,
+    }));
+    const { VoiceHistoryScreen } = await import('./VoiceHistoryScreen');
+    const screen = await renderScreen(
+      <VoiceHistoryScreen consumer={consumer} saveExportArtifact={vi.fn()} />,
+    );
+
+    await screen.pressByTestIdAsync('voice-history-clear');
+
+    expect(screen.findByTestId('voice-history-action-message')?.props.children)
+      .toBe('End Voice before clearing Voice History.');
+    expect(screen.getTextContent()).not.toContain('Voice History could not be cleared.');
+    expect(deleteSession).not.toHaveBeenCalled();
   });
 
   it('renders distinct empty, error, and superseded recovery states', async () => {

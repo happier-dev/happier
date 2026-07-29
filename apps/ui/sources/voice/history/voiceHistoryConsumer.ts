@@ -61,6 +61,25 @@ export class VoiceHistoryOperationSupersededError extends Error {
   }
 }
 
+export class VoiceHistoryClearActiveCallError extends Error {
+  readonly code = 'voice_history_clear_active_call';
+
+  constructor() {
+    super('Voice History cannot be cleared during an active standalone call');
+    this.name = 'VoiceHistoryClearActiveCallError';
+  }
+}
+
+export function isVoiceHistoryClearActiveCallError(error: unknown): boolean {
+  return error instanceof VoiceHistoryClearActiveCallError
+    || (
+      typeof error === 'object'
+      && error !== null
+      && 'code' in error
+      && error.code === 'voice_history_clear_active_call'
+    );
+}
+
 export type VoiceHistoryPageResult = Readonly<{
   loaded: number;
   hasMore: boolean;
@@ -85,6 +104,7 @@ export type VoiceHistoryConsumerDeps<
     sessionId: string,
     scope: TScope,
   ): Promise<Readonly<{ success: boolean; message?: string }>>;
+  canDeleteSession(sessionId: string): boolean;
   retireLocalSession(sessionId: string): void;
   now(): Date;
 }>;
@@ -355,6 +375,9 @@ export function createVoiceHistoryConsumer<
       if (!sessionId || !capturedScope || !isScopeCurrent()) return { cleared: false };
       const deletingSessionId = sessionId;
       const deletingScope = capturedScope;
+      if (!deps.canDeleteSession(deletingSessionId)) {
+        throw new VoiceHistoryClearActiveCallError();
+      }
       const result = await deps.deleteSession(deletingSessionId, deletingScope);
       if (!result.success) {
         assertOperationCurrent(epoch);

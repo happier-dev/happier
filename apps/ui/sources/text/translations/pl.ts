@@ -9660,6 +9660,7 @@ settingsSession: {
       clearConfirmBody: 'Spowoduje to trwałe usunięcie całej samodzielnej historii głosu dla tego konta. Tej operacji nie można cofnąć.',
       clearConfirmAction: 'Wyczyść historię',
       clearSucceeded: 'Historia głosu została wyczyszczona.',
+      clearActiveCall: 'Zakończ rozmowę głosową przed wyczyszczeniem historii głosu.',
       clearFailed: 'Nie udało się wyczyścić historii głosu.',
       errorTitle: 'Historia głosu jest niedostępna',
       errorBody: 'Happier nie mógł wczytać zaszyfrowanej historii tego konta. Sprawdź połączenie i spróbuj ponownie.',

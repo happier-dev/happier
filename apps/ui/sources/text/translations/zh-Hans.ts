@@ -9374,6 +9374,7 @@ settingsSession: {
       clearConfirmBody: '这会永久删除此账户的全部独立语音历史，且无法撤销。',
       clearConfirmAction: '清除历史',
       clearSucceeded: '语音历史已清除。',
+      clearActiveCall: '清除语音历史前，请先结束语音。',
       clearFailed: '无法清除语音历史。',
       errorTitle: '语音历史不可用',
       errorBody: 'Happier 无法加载此账户的加密历史。请检查连接并重试。',

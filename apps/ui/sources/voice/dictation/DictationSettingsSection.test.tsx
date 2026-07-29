@@ -126,8 +126,9 @@ describe('DictationSettingsSection', () => {
     await act(async () => {
       tree.root.findByProps({ testID: 'settings.voice.dictation.checkSetup' }).props.onPress();
     });
-    expect(tree.root.findByProps({ testID: 'settings.voice.dictation.readiness' }).props.subtitle)
-      .toBe('settingsVoice.dictation.readiness.ready');
+    const readiness = tree.root.findByProps({ testID: 'settings.voice.dictation.readiness' });
+    expect(readiness.props.subtitle).toBe('settingsVoice.dictation.readiness.ready');
+    expect(readiness.props.detail).toBeUndefined();
     expect(setVoice).not.toHaveBeenCalled();
   });
 });

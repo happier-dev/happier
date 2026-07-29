@@ -9796,6 +9796,7 @@ settingsSession: {
             clearConfirmBody: 'This permanently deletes the whole standalone Voice History for this account. This cannot be undone.',
             clearConfirmAction: 'Clear history',
             clearSucceeded: 'Voice History was cleared.',
+            clearActiveCall: 'End Voice before clearing Voice History.',
             clearFailed: 'Voice History could not be cleared.',
             errorTitle: 'Voice History is unavailable',
             errorBody: 'Happier could not load the encrypted history for this account. Check your connection and try again.',

@@ -298,9 +298,7 @@ export function resolveVoiceDaemonModelKindAvailabilityFromCatalogState(input: R
         modelState,
         runtimeState: !isSelectedDaemonRuntimeSupported(status)
             ? 'unavailable'
-            : modelState === 'ready'
-                ? 'available'
-                : 'unknown',
+            : 'available',
     };
 }
 
@@ -326,7 +324,14 @@ export function resolveVoiceDaemonModelAvailabilityFromCatalogState(input: Reado
     statuses: readonly DaemonVoiceInferenceModelStatus[];
     selectedSttPackId: string | null;
     selectedTtsPackId: string | null;
+    requireStt?: boolean;
+    requireTts?: boolean;
 }>): VoiceDaemonModelCatalogAvailability {
+    const requireStt = input.requireStt ?? true;
+    const requireTts = input.requireTts ?? true;
+    if (!requireStt && !requireTts) {
+        return { modelState: 'ready', runtimeState: 'available' };
+    }
     if (
         input.errorCode === 'runtime_unavailable'
         || input.errorCode === 'unsupported_runtime_family'
@@ -337,17 +342,21 @@ export function resolveVoiceDaemonModelAvailabilityFromCatalogState(input: Reado
         return { modelState: 'unknown', runtimeState: 'unknown' };
     }
 
-    const selectedSttPackId = resolveSelectedCatalogPackId('stt_sherpa', input.selectedSttPackId);
-    const selectedTtsPackId = resolveSelectedCatalogPackId('tts_sherpa', input.selectedTtsPackId);
-    if (!selectedSttPackId || !selectedTtsPackId) {
+    const selectedSttPackId = requireStt
+        ? resolveSelectedCatalogPackId('stt_sherpa', input.selectedSttPackId)
+        : null;
+    const selectedTtsPackId = requireTts
+        ? resolveSelectedCatalogPackId('tts_sherpa', input.selectedTtsPackId)
+        : null;
+    if ((requireStt && !selectedSttPackId) || (requireTts && !selectedTtsPackId)) {
         return { modelState: 'unknown', runtimeState: 'unknown' };
     }
 
     const statusByPackId = new Map(input.statuses.map((status) => [status.packId, status]));
     const selectedStatuses = [
-        statusByPackId.get(selectedSttPackId) ?? null,
-        statusByPackId.get(selectedTtsPackId) ?? null,
-    ] as const;
+        ...(selectedSttPackId ? [statusByPackId.get(selectedSttPackId) ?? null] : []),
+        ...(selectedTtsPackId ? [statusByPackId.get(selectedTtsPackId) ?? null] : []),
+    ];
     const modelState = combineModelStates(selectedStatuses.map(resolveModelStateForStatus));
     const runtimeSupported = selectedStatuses.every(isSelectedDaemonRuntimeSupported);
 
@@ -355,9 +364,7 @@ export function resolveVoiceDaemonModelAvailabilityFromCatalogState(input: Reado
         modelState,
         runtimeState: !runtimeSupported
             ? 'unavailable'
-            : modelState === 'ready'
-                ? 'available'
-                : 'unknown',
+            : 'available',
     };
 }
 
